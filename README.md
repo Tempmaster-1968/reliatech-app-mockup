@@ -17,4 +17,4 @@ This is the permanent address. Future updates are published to the same URL.
 
 ## What’s in the app
 
-Jobs, customers, money, and capture tabs; color-coded job cards from the Housecall Pro import; a three-step New call flow; cooling and heating readings; and a flat-rate price book and estimate preview. New notes, readings, and estimates you add in this mockup stay on the phone and are not saved to a server.
+Jobs, customers, money, and capture tabs; color-coded job cards from the Housecall Pro import; a customer profile with equipment assets (furnace/air handler, coil, condenser/heat pump, and others); a New job button on the customer page that pre-fills the customer and assigns the next ReliaTech job number (starting at 25076); a three-step New call flow; cooling and heating readings; and a flat-rate price book and estimate preview. New jobs, equipment, notes, readings, and estimates you add in this mockup stay on this phone or browser only (localStorage). They are not uploaded to a shared server.

@@ -196,7 +196,16 @@
     const urg = urgency === "today" ? "Urgent — needs a visit today" : urgency === "soon" ? "Soon" : "To be scheduled";
     return bits.length ? bits.join(" — ") + ". " + urg + "." : urg;
   }
-  function nextJobId(jobs) { return String(jobs.reduce((m, j) => Math.max(m, Number(j.id)), 25061) + 1); }
+  function reliaTechJobNum(id) {
+    const n = Number(id);
+    /* ReliaTech jobs start at 25076. Historical Housecall Pro jobs are 55xxx (and a few 25062–25075 estimates). */
+    return (Number.isFinite(n) && n >= 25076 && n < 50000) ? n : 0;
+  }
+  function nextJobId(jobs) {
+    const lists = (jobs || []).concat((state && state.moneyJobs) ? state.moneyJobs : []);
+    const maxRt = lists.reduce(function (m, j) { return Math.max(m, reliaTechJobNum(j.id)); }, 25075);
+    return String(maxRt + 1);
+  }
   function draftTotal(lines) { return lines.reduce((s, l) => s + l.amount * l.qty, 0); }
   function draftLabel(l) { return l.unit === "lb" ? l.label + ", " + l.qty + " lb" : l.qty > 1 ? l.label + " × " + l.qty : l.label; }
   function defaultMode(job) {
@@ -209,6 +218,82 @@
   function initials(name) {
     return name.split(" ").filter((w) => w !== "The" && w !== "household").slice(0, 2).map((w) => w[0]).join("");
   }
+
+  const EQUIPMENT_TYPES = [
+    { id: "furnace", label: "Furnace / air handler" },
+    { id: "coil", label: "Evaporator coil" },
+    { id: "condenser", label: "Condenser / heat pump" },
+    { id: "thermostat", label: "Thermostat" },
+    { id: "minisplit", label: "Mini split" },
+    { id: "other", label: "Other" }
+  ];
+  const EQUIPMENT_LOCATIONS = ["Attic", "Garage", "Side yard", "Closet", "Roof", "Crawlspace", "Laundry", "Other"];
+  const STORE_KEY = "reliatech-app-state-v1";
+
+  function equipmentTypeLabel(a) {
+    if (!a) return "Equipment";
+    if (a.type === "other" && a.typeOther) return a.typeOther;
+    const t = EQUIPMENT_TYPES.find(function (x) { return x.id === a.type; });
+    return t ? t.label : (a.type || "Equipment");
+  }
+  function assetTitle(a) {
+    const mm = [a.make, a.model].filter(Boolean).join(" · ");
+    return mm ? equipmentTypeLabel(a) + " · " + mm : equipmentTypeLabel(a);
+  }
+  function assetSub(a) {
+    const parts = [];
+    if (a.capacity) parts.push(a.capacity);
+    if (a.refrigerant) parts.push(a.refrigerant);
+    if (a.location) parts.push(a.location);
+    if (a.serial) parts.push("S/N " + a.serial);
+    if (a.filterSize) parts.push("Filter " + a.filterSize);
+    return parts.join(" · ");
+  }
+  function emptyAsset() {
+    return {
+      id: "a" + Date.now(),
+      type: "furnace",
+      typeOther: "",
+      make: "",
+      model: "",
+      serial: "",
+      installDate: "",
+      manufactureDate: "",
+      capacity: "",
+      refrigerant: "",
+      filterSize: "",
+      location: "",
+      warranty: "",
+      notes: "",
+      photo: "",
+      sample: false
+    };
+  }
+  function isAssetShape(e) {
+    return !!(e && (e.type || e.make || e.model || e.serial || e.capacity || e.location || e.filterSize || e.refrigerant));
+  }
+  function normalizeCustomer(c) {
+    const copy = JSON.parse(JSON.stringify(c));
+    const assets = Array.isArray(copy.assets) ? copy.assets.slice() : [];
+    const mentions = Array.isArray(copy.mentions) ? copy.mentions.slice() : [];
+    (copy.equipment || []).forEach(function (e) {
+      if (!e) return;
+      if (isAssetShape(e)) assets.push(e);
+      else if (e.name) mentions.push({ name: e.name, detail: e.detail || "From Housecall Pro job or estimate description" });
+    });
+    copy.assets = assets;
+    copy.mentions = mentions;
+    delete copy.equipment;
+    return copy;
+  }
+  function customerAssets(c) { return (c && c.assets) ? c.assets : []; }
+  function assetPreview(c) {
+    const assets = customerAssets(c);
+    if (assets.length) return assetTitle(assets[0]) + (assets.length > 1 ? " +" + (assets.length - 1) : "");
+    if (c.mentions && c.mentions[0]) return c.mentions[0].name;
+    return "";
+  }
+  function getCustomer(id) { return state.customers.find(function (c) { return c.id === id; }) || null; }
 
   const ICONS = {
     jobs: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 5V4h8v1M8 10h8M8 14h5"/>',
@@ -250,6 +335,51 @@
   /* state and remaining UI will be appended */
   window.__RT_BOOT = { INITIAL_CUSTOMERS: INITIAL_CUSTOMERS, INITIAL_JOBS: INITIAL_JOBS, PAST_JOBS: PAST_JOBS };
 
+  function loadPersisted() {
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+  function mergeCustomers(initial, saved) {
+    const byId = {};
+    initial.forEach(function (c) { byId[c.id] = c; });
+    const extraIds = [];
+    (saved || []).forEach(function (sc) {
+      const n = normalizeCustomer(sc);
+      if (byId[n.id]) {
+        const base = byId[n.id];
+        byId[n.id] = Object.assign({}, base, {
+          name: n.name || base.name,
+          address: n.address != null ? n.address : base.address,
+          city: n.city != null ? n.city : base.city,
+          phone: n.phone != null ? n.phone : base.phone,
+          email: n.email != null ? n.email : base.email,
+          assets: n.assets || [],
+          mentions: (n.mentions && n.mentions.length) ? n.mentions : base.mentions
+        });
+      } else {
+        byId[n.id] = n;
+        extraIds.push(n.id);
+      }
+    });
+    return initial.map(function (c) { return byId[c.id]; }).concat(extraIds.map(function (id) { return byId[id]; }));
+  }
+  function mergeJobs(initial, saved) {
+    const byId = {};
+    initial.forEach(function (j) { byId[j.id] = j; });
+    const extra = [];
+    (saved || []).forEach(function (sj) {
+      if (byId[sj.id]) byId[sj.id] = sj;
+      else extra.push(sj);
+    });
+    return extra.concat(initial.map(function (j) { return byId[j.id]; }));
+  }
+
+  const _saved = loadPersisted();
+  const _initialCustomers = INITIAL_CUSTOMERS.map(normalizeCustomer);
+  const _initialJobs = INITIAL_JOBS.map(function (j) { return JSON.parse(JSON.stringify(j)); });
+
   let state = {
     tab: "jobs",
     filter: "open",
@@ -258,18 +388,25 @@
     openCustomerId: null,
     sheet: null,
     toast: "",
-    jobs: INITIAL_JOBS.map((j) => JSON.parse(JSON.stringify(j))),
-    customers: INITIAL_CUSTOMERS.map((c) => JSON.parse(JSON.stringify(c))),
+    jobs: mergeJobs(_initialJobs, _saved && _saved.jobs),
+    customers: mergeCustomers(_initialCustomers, _saved && _saved.customers),
     moneyJobs: PAST_JOBS.map((j) => JSON.parse(JSON.stringify(j))),
     newCallStep: 1,
-    newCall: { chips: [], detail: "", urgency: "today", customerId: "", isNew: false, newName: "", newPhone: "", newAddress: "", newCity: "Long Beach", newEmail: "", custQuery: "" },
+    newCall: { chips: [], detail: "", urgency: "today", customerId: "", isNew: false, fromCustomer: false, newName: "", newPhone: "", newAddress: "", newCity: "Long Beach", newEmail: "", custQuery: "" },
     readingDraft: { mode: "cooling", label: "Arrival", values: {}, fromScreenshot: false },
+    assetDraft: emptyAsset(),
+    assetEditingId: null,
     compareIds: [],
     packTab: "repair",
     packQuery: "",
     packTons: 3,
     packDraft: []
   };
+  function persist() {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify({ v: 1, customers: state.customers, jobs: state.jobs }));
+    } catch (e) {}
+  }
   let toastTimer = null;
 
   function setState(patch) { Object.assign(state, patch); render(); }
@@ -298,7 +435,15 @@
     setNote: function (v) { state._note = v; },
     setPackQ: function (v) { state.packQuery = v; renderKeepFocus("pack-q"); },
     setReadLabel: function (v) { state.readingDraft.label = v; renderKeepFocus("rd-label"); },
-    setReadVal: function (k, v) { state.readingDraft.values[k] = v; }
+    setReadVal: function (k, v) { state.readingDraft.values[k] = v; },
+    setAsset: function (k, v) { state.assetDraft[k] = v; renderKeepFocus("eq-" + k); },
+    setAssetPhoto: function (el) {
+      const f = el.files && el.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = function () { state.assetDraft.photo = String(reader.result || ""); render(); };
+      reader.readAsDataURL(f);
+    }
   };
 
   function renderKeepFocus(id) {
@@ -379,6 +524,7 @@
       '<div class="h1">' + esc(job.problem) + "</div>" +
       '<div class="teal">' + esc(job.phone) + "</div>" +
       '<div style="margin-bottom:16px">' + pill(st.label, col.text, col.bg) + (job.schedule ? '<span class="muted" style="margin-left:8px;font-size:12px">' + esc(job.schedule) + "</span>" : "") + "</div>" +
+      jobEquipmentSection(job) +
       '<div class="panel" style="margin-bottom:16px">' + stepper(job.status) + "</div>" +
       '<div class="section">Quick capture</div><div class="quick">' +
       '<button class="quick-btn" ' + act("sheet", "note") + ">" + icon("note") + "<span>Note</span></button>" +
@@ -434,6 +580,31 @@
       sets.map(function (s) { return setCard(job, s, false); }).join("");
   }
 
+  function jobEquipmentSection(job) {
+    const c = getCustomer(job.customerId);
+    const assets = c ? customerAssets(c) : [];
+    let html = '<div class="section-row"><div class="section" style="margin:0">Equipment at this home</div>';
+    if (c) html += '<button class="link-btn" style="margin:0" ' + act("openCustomer", c.id) + ">Customer profile</button>";
+    html += "</div>";
+    if (!assets.length) {
+      html += '<div class="muted" style="margin:8px 0 16px">No equipment on this customer profile yet.</div>';
+      return html;
+    }
+    html += '<div class="stack" style="margin:8px 0 16px">' + assets.map(function (a) {
+      return assetCard(a, c ? c.id : "", true);
+    }).join("") + "</div>";
+    return html;
+  }
+  function assetCard(a, customerId, compact) {
+    return '<button class="eq-card" ' + act("openAsset", (customerId || state.openCustomerId || "") + "|" + a.id) + ">" +
+      (a.photo ? '<img class="eq-thumb" src="' + esc(a.photo) + '" alt="Nameplate">' : '<div class="eq-thumb ph">' + icon("photo", 18) + "</div>") +
+      '<div class="eq-body"><div class="eq-type">' + esc(equipmentTypeLabel(a)) + (a.sample ? ' · Example only' : "") + "</div>" +
+      '<div class="h2">' + esc([a.make, a.model].filter(Boolean).join(" · ") || "Make and model not entered") + "</div>" +
+      (assetSub(a) ? '<div class="muted" style="margin-top:2px">' + esc(assetSub(a)) + "</div>" : "") +
+      (!compact && a.warranty ? '<div class="meta" style="margin-top:4px">Warranty · ' + esc(a.warranty) + "</div>" : "") +
+      "</div>" + icon("chevron", 18) + "</button>";
+  }
+
   function customersList() {
     const q = state.query.trim().toLowerCase();
     const list = state.customers.filter(function (c) {
@@ -443,29 +614,37 @@
       '<div class="content"><div class="pad">' +
       '<div class="search">' + icon("search", 16) + '<input id="search-q" type="search" placeholder="Search customers" value="' + esc(state.query) + '" oninput="RT.setQuery(this.value)"></div>' +
       '<div class="stack">' + list.map(function (c) {
-        const eq = c.equipment[0];
+        const preview = assetPreview(c);
         return '<button class="list-card" ' + act("openCustomer", c.id) + '><div class="job-body" style="display:flex;gap:12px;align-items:flex-start">' +
           '<div class="avatar">' + esc(initials(c.name)) + "</div><div style=\"min-width:0\"><div class=\"job-name\" style=\"margin-top:0\">" + esc(c.name) + "</div>" +
           '<div class="muted">' + esc(c.address) + ", " + esc(c.city) + "</div><div class=\"muted\">" + esc(c.phone) + "</div>" +
-          (eq ? '<div class="meta" style="margin-top:4px">' + esc(eq.name) + "</div>" : "") +
+          (preview ? '<div class="meta" style="margin-top:4px">' + esc(preview) + "</div>" : "") +
           "</div></div><div class=\"chev\">" + icon("chevron", 18) + "</div></button>";
       }).join("") + "</div></div></div>" + tabBar();
   }
   function customerDetail(c) {
     const jobs = state.jobs.concat(state.moneyJobs).filter(function (j) { return j.customerId === c.id; });
+    const assets = customerAssets(c);
+    const mentions = c.mentions || [];
+    const nextId = nextJobId(state.jobs);
     return topBar({ back: "closeCustomer", title: c.name, badge: SHOW_SAMPLE_BADGE }) +
       '<div class="content screen"><div class="pad">' +
       '<div class="panel" style="margin-bottom:14px"><div class="muted">' + esc(c.address) + (c.city ? ", " + esc(c.city) : "") + "</div>" +
       (c.phone ? '<div class="teal" style="margin:6px 0 0">' + esc(c.phone) + "</div>" : "") +
       (c.email ? '<div class="muted" style="margin-top:4px">' + esc(c.email) + "</div>" : "") + "</div>" +
-      '<div class="section">Equipment</div>' + ((c.equipment && c.equipment.length) ? c.equipment.map(function (e) {
+      '<button class="btn" style="margin-bottom:16px" ' + act("newJobFromCustomer", c.id) + ">New job · #" + nextId + "</button>" +
+      '<div class="section-row"><div class="section" style="margin:0">Equipment</div></div>' +
+      '<button class="dash" style="margin:10px 0 12px" ' + act("addEquipment", c.id) + ">Add equipment</button>" +
+      (assets.length ? '<div class="stack" style="margin-bottom:16px">' + assets.map(function (a) { return assetCard(a, c.id, false); }).join("") + "</div>" :
+        '<div class="muted" style="margin-bottom:16px">No equipment recorded yet. Add the furnace, coil, and condenser from the nameplate when you are on site.</div>') +
+      (mentions.length ? '<div class="section">Mentioned in job history</div><div class="muted" style="margin:-4px 0 10px">These came from Housecall Pro job or estimate descriptions. They are not full equipment records.</div>' + mentions.map(function (e) {
         return '<div class="panel" style="margin-bottom:10px"><div class="h2">' + esc(e.name) + "</div><div class=\"muted\" style=\"margin-top:4px\">" + esc(e.detail) + "</div></div>";
-      }).join("") : '<div class="muted" style="margin-bottom:12px">No equipment listed in the Housecall Pro export.</div>') +
-      '<div class="section">Past jobs</div><div class="stack">' + jobs.map(function (j) {
+      }).join("") : "") +
+      '<div class="section">Jobs</div><div class="stack">' + (jobs.length ? jobs.map(function (j) {
         if (state.jobs.some(function (x) { return x.id === j.id; })) return jobCard(j);
         const col = sc(j.status);
         return '<div class="job-card" style="cursor:default"><div class="stripe" style="background:' + col.bar + '"></div><div class="job-body"><div class="row"><div class="meta">#' + j.id + "</div>" + pill(STATUS[j.status].label, col.text, col.bg) + "</div><div class=\"job-prob\" style=\"margin-top:6px\">" + esc(j.problem) + "</div><div class=\"row\"><div class=\"addr\">" + (j.invoiceId || "") + "</div><div class=\"amt\">" + money(j.total) + "</div></div></div></div>";
-      }).join("") + "</div></div></div>";
+      }).join("") : '<div class="muted">No jobs for this customer yet.</div>') + "</div></div></div>";
   }
 
   function moneyScreen() {
@@ -516,13 +695,23 @@
     const nc = state.newCall;
     const jobId = nextJobId(state.jobs);
     const step = state.newCallStep;
-    const steps = '<div class="steps">' +
-      '<span style="color:' + (step === 1 ? TEAL : "var(--muted)") + '">1. Report</span>' +
-      '<span style="color:' + (step === 2 ? TEAL : "var(--muted)") + '">2. Customer</span>' +
-      '<span style="color:' + (step === 3 ? TEAL : "var(--muted)") + '">3. Confirm</span></div>';
-    const head = '<div class="sheet-head"><div class="sheet-title">New call</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" + steps;
+    const fromCust = !!nc.fromCustomer;
+    const steps = fromCust
+      ? '<div class="steps">' +
+        '<span style="color:' + (step === 1 ? TEAL : "var(--muted)") + '">1. Report</span>' +
+        '<span style="color:' + (step === 3 ? TEAL : "var(--muted)") + '">2. Confirm</span></div>'
+      : '<div class="steps">' +
+        '<span style="color:' + (step === 1 ? TEAL : "var(--muted)") + '">1. Report</span>' +
+        '<span style="color:' + (step === 2 ? TEAL : "var(--muted)") + '">2. Customer</span>' +
+        '<span style="color:' + (step === 3 ? TEAL : "var(--muted)") + '">3. Confirm</span></div>';
+    const head = '<div class="sheet-head"><div class="sheet-title">' + (fromCust ? "New job" : "New call") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" + steps;
     if (step === 1) {
-      return backdrop(head +
+      const lockedCust = fromCust ? getCustomer(nc.customerId) : null;
+      const locked = lockedCust
+        ? '<div class="panel" style="margin-bottom:12px;padding:12px"><div class="k-up">Customer</div><div class="h2">' + esc(lockedCust.name) + '</div><div class="muted">' + esc(lockedCust.address) + (lockedCust.city ? ", " + esc(lockedCust.city) : "") + "</div>" +
+          (lockedCust.phone ? '<div class="teal" style="margin:4px 0 0">' + esc(lockedCust.phone) + "</div>" : "") + "</div>"
+        : "";
+      return backdrop(head + locked +
         '<div class="muted" style="margin-bottom:10px">What\'s going on? Pick one or more, then add a little detail.</div>' +
         '<div class="chips">' + REPORT_CHIPS.map(function (c) {
           const on = nc.chips.indexOf(c) !== -1;
@@ -534,7 +723,7 @@
           const on = nc.urgency === u.id;
           return '<button class="list-card" style="margin-bottom:8px;padding:12px;display:block;border:' + (on ? "1.5px solid " + TEAL : "1.5px solid transparent") + '" ' + act("urgency", u.id) + "><div style=\"font-weight:750\">" + esc(u.label) + '</div><div class="muted">' + esc(u.hint) + "</div></button>";
         }).join("") +
-        '<button class="btn" ' + act("ncNext") + ">Next · Customer</button>");
+        '<button class="btn" ' + act("ncNext") + ">" + (fromCust ? "Next · Confirm" : "Next · Customer") + "</button>");
     }
     if (step === 2) {
       const q = (nc.custQuery || "").trim().toLowerCase();
@@ -557,10 +746,10 @@
           '<button class="dash" style="margin-bottom:12px" ' + act("ncNewCust") + ">New customer</button>" +
           '<div class="stack">' + matches.map(function (c) {
             const on = nc.customerId === c.id;
-            const eq = c.equipment[0];
+            const preview = assetPreview(c);
             return '<button class="list-card' + (on ? " sel" : "") + '" style="border:1.5px solid ' + (on ? TEAL : "transparent") + '" ' + act("pickCust", c.id) + ">" +
               '<div class="job-body"><div class="job-name" style="margin-top:0">' + esc(c.name) + "</div><div class=\"muted\">" + esc(c.address) + ", " + esc(c.city) + "</div><div class=\"muted\">" + esc(c.phone) + "</div>" +
-              (eq ? '<div class="meta" style="margin-top:4px">' + esc(eq.name) + "</div>" : "") + "</div></button>";
+              (preview ? '<div class="meta" style="margin-top:4px">' + esc(preview) + "</div>" : "") + "</div></button>";
           }).join("") + "</div>" +
           (nc.customerId ? '<div style="height:12px"></div><button class="btn" ' + act("ncNext") + ">Next · Confirm</button>" : "");
       }
@@ -574,11 +763,27 @@
       const c = state.customers.find(function (x) { return x.id === nc.customerId; });
       custName = c ? c.name : "—"; custAddr = c ? c.address + ", " + c.city : "—"; custPhone = c ? c.phone : "—";
     }
+    let equipmentHtml = "";
+    if (!nc.isNew && nc.customerId) {
+      const cust = getCustomer(nc.customerId);
+      const assets = cust ? customerAssets(cust) : [];
+      if (assets.length) {
+        equipmentHtml = '<div class="section">Equipment on file</div><div class="stack" style="margin-bottom:12px">' + assets.map(function (a) {
+          return '<div class="panel" style="padding:12px"><div class="eq-type">' + esc(equipmentTypeLabel(a)) + (a.sample ? " · Example only" : "") + "</div>" +
+            '<div class="h2">' + esc([a.make, a.model].filter(Boolean).join(" · ") || "Make and model not entered") + "</div>" +
+            (assetSub(a) ? '<div class="muted">' + esc(assetSub(a)) + "</div>" : "") + "</div>";
+        }).join("") + "</div>";
+      } else {
+        equipmentHtml = '<div class="muted" style="margin-bottom:12px">No equipment on this customer profile yet. You can add it from the customer page.</div>';
+      }
+    }
     return backdrop(head +
       '<div class="panel" style="margin-bottom:12px;box-shadow:none;background:var(--field)">' +
       '<div class="k-up">Next job</div><div class="h1" style="margin:4px 0">#' + jobId + "</div>" +
       '<div class="h2">' + esc(custName) + "</div><div class=\"muted\">" + esc(custAddr) + "</div><div class=\"teal\">" + esc(custPhone) + "</div>" +
       '<div style="margin-top:10px">' + esc(report) + "</div></div>" +
+      equipmentHtml +
+      '<div class="note" style="margin-top:0;margin-bottom:12px">This job is saved on this phone only. It is not uploaded to a shared server.</div>' +
       '<button class="btn accent" ' + act("createJob") + ">Create job</button>");
   }
 
@@ -754,10 +959,56 @@
       '<button class="btn" style="margin-top:12px" ' + act("saveEstimate") + ">Save estimate to job</button>");
   }
 
+  function equipmentSheet() {
+    const d = state.assetDraft || emptyAsset();
+    const editing = !!state.assetEditingId;
+    const locOther = d.location && EQUIPMENT_LOCATIONS.indexOf(d.location) === -1;
+    const fields = [
+      ["make", "Make", "text", "Carrier, Rheem, Payne…"],
+      ["model", "Model", "text", "From the nameplate"],
+      ["serial", "Serial", "text", "From the nameplate"],
+      ["installDate", "Install date", "date", ""],
+      ["manufactureDate", "Manufacture date", "date", ""],
+      ["capacity", "Tonnage or BTU", "text", "e.g. 3 ton or 80,000 BTU"],
+      ["refrigerant", "Refrigerant", "text", "e.g. R-410A"],
+      ["filterSize", "Filter size", "text", "e.g. 16x25x1"],
+      ["warranty", "Warranty", "text", "Parts, labor, or remaining term"]
+    ];
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">' + (editing ? "Equipment" : "Add equipment") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="field-lab">Type</div><div class="chips">' + EQUIPMENT_TYPES.map(function (t) {
+        const on = d.type === t.id;
+        return '<button class="chip' + (on ? " on teal" : "") + '" ' + act("assetType", t.id) + ">" + esc(t.label) + "</button>";
+      }).join("") + "</div>" +
+      (d.type === "other" ? '<label class="field"><div class="field-lab">Type name</div><input id="eq-typeOther" value="' + esc(d.typeOther || "") + '" placeholder="e.g. Humidifier" oninput="RT.setAsset(\'typeOther\', this.value)"></label>' : "") +
+      fields.map(function (f) {
+        return '<label class="field"><div class="field-lab">' + esc(f[1]) + '</div><input id="eq-' + f[0] + '" type="' + f[2] + '" value="' + esc(d[f[0]] || "") + '" placeholder="' + esc(f[3]) + '" oninput="RT.setAsset(\'' + f[0] + '\', this.value)"></label>';
+      }).join("") +
+      '<div class="field-lab">Location</div><div class="chips">' + EQUIPMENT_LOCATIONS.map(function (loc) {
+        const on = loc === "Other" ? locOther : d.location === loc;
+        return '<button class="chip' + (on ? " on" : "") + '" ' + act("assetLocation", loc) + ">" + esc(loc) + "</button>";
+      }).join("") + "</div>" +
+      ((locOther || !d.location) ? '<label class="field"><div class="field-lab">' + (locOther ? "Location" : "Location (or type one)") + '</div><input id="eq-location" value="' + esc(locOther ? d.location : "") + '" placeholder="Attic, garage, side yard…" oninput="RT.setAsset(\'location\', this.value)"></label>' : "") +
+      '<label class="field"><div class="field-lab">Notes</div><textarea id="eq-notes" rows="3" placeholder="Condition, access, anything to remember" oninput="RT.setAsset(\'notes\', this.value)">' + esc(d.notes || "") + "</textarea></label>" +
+      '<div class="field"><div class="field-lab">Nameplate photo</div>' +
+      '<div class="nameplate">' +
+        (d.photo ? '<img src="' + esc(d.photo) + '" alt="Nameplate">' : '<div class="nameplate-empty">' + icon("photo", 28) + "<span>Tap to add a nameplate photo</span></div>") +
+        '<input type="file" accept="image/*" capture="environment" aria-label="Nameplate photo" onchange="RT.setAssetPhoto(this)">' +
+      "</div>" +
+      (d.photo ? '<button class="link-btn" ' + act("clearAssetPhoto") + ">Remove photo</button>" : "") +
+      "</div>" +
+      '<button class="dash' + (d.sample ? " sel" : "") + '" style="margin-bottom:14px" ' + act("toggleAssetSample") + ">" + (d.sample ? "Marked as example only — not a real unit" : "Mark as example only (not a real unit)") + "</button>" +
+      '<div class="note" style="margin-top:0;margin-bottom:12px">Saved on this phone only. Not uploaded to a shared server.</div>' +
+      '<button class="btn" ' + act("saveEquipment") + ">" + (editing ? "Save equipment" : "Add equipment") + "</button>" +
+      (editing ? '<button class="btn ghost" style="margin-top:8px" ' + act("removeEquipment") + ">Remove</button>" : "")
+    );
+  }
+
   function sheetHtml() {
     const s = state.sheet;
     if (!s) return "";
     if (s === "newCall") return newCallSheet();
+    if (s === "equipment") return equipmentSheet();
     const job = getJob(state.openJobId);
     if (s === "note") return noteSheet();
     if (s === "photo") return photoSheet();
@@ -805,6 +1056,7 @@
     if (!root) return;
     const toast = state.toast ? '<div class="toast">' + esc(state.toast) + "</div>" : "";
     root.innerHTML = mainHtml() + sheetHtml() + toast;
+    persist();
   }
 
   function handle(name, arg) {
@@ -818,8 +1070,74 @@
     if (name === "sheet") { state.sheet = arg; if (arg === "reading") { const j = getJob(state.openJobId); state.readingDraft = { mode: defaultMode(j), label: "Arrival", values: {}, fromScreenshot: false }; } render(); return; }
     if (name === "openNewCall") {
       state.sheet = "newCall"; state.newCallStep = 1;
-      state.newCall = { chips: [], detail: "", urgency: "today", customerId: "", isNew: false, newName: "", newPhone: "", newAddress: "", newCity: "Long Beach", newEmail: "", custQuery: "" };
+      state.newCall = { chips: [], detail: "", urgency: "today", customerId: "", isNew: false, fromCustomer: false, newName: "", newPhone: "", newAddress: "", newCity: "Long Beach", newEmail: "", custQuery: "" };
       render(); return;
+    }
+    if (name === "newJobFromCustomer") {
+      const c = getCustomer(arg);
+      if (!c) return;
+      state.openCustomerId = c.id;
+      state.sheet = "newCall";
+      state.newCallStep = 1;
+      state.newCall = { chips: [], detail: "", urgency: "today", customerId: c.id, isNew: false, fromCustomer: true, newName: "", newPhone: "", newAddress: "", newCity: "Long Beach", newEmail: "", custQuery: c.name };
+      render(); return;
+    }
+    if (name === "addEquipment") {
+      state.openCustomerId = arg || state.openCustomerId;
+      state.assetCustomerId = state.openCustomerId;
+      state.assetDraft = emptyAsset();
+      state.assetEditingId = null;
+      state.sheet = "equipment";
+      render(); return;
+    }
+    if (name === "openAsset") {
+      const parts = String(arg || "").split("|");
+      const cid = parts[0];
+      const aid = parts.slice(1).join("|");
+      const c = getCustomer(cid);
+      const a = c && (c.assets || []).find(function (x) { return x.id === aid; });
+      if (!c || !a) return;
+      state.assetCustomerId = cid;
+      state.assetDraft = JSON.parse(JSON.stringify(a));
+      state.assetEditingId = a.id;
+      state.sheet = "equipment";
+      render(); return;
+    }
+    if (name === "assetType") { state.assetDraft.type = arg; if (arg !== "other") state.assetDraft.typeOther = ""; render(); return; }
+    if (name === "assetLocation") {
+      if (arg === "Other") {
+        if (EQUIPMENT_LOCATIONS.indexOf(state.assetDraft.location) !== -1) state.assetDraft.location = "";
+      } else {
+        state.assetDraft.location = arg;
+      }
+      render(); return;
+    }
+    if (name === "toggleAssetSample") { state.assetDraft.sample = !state.assetDraft.sample; render(); return; }
+    if (name === "clearAssetPhoto") { state.assetDraft.photo = ""; render(); return; }
+    if (name === "saveEquipment") {
+      const c = getCustomer(state.assetCustomerId || state.openCustomerId);
+      if (!c) return;
+      const draft = JSON.parse(JSON.stringify(state.assetDraft));
+      if (!draft.id) draft.id = "a" + Date.now();
+      if (!c.assets) c.assets = [];
+      if (state.assetEditingId) {
+        const i = c.assets.findIndex(function (x) { return x.id === state.assetEditingId; });
+        if (i >= 0) c.assets[i] = draft;
+        else c.assets.push(draft);
+      } else {
+        c.assets.push(draft);
+      }
+      state.sheet = null;
+      showToast(draft.sample ? "Example equipment saved on this phone only" : "Equipment saved on this phone only");
+      return;
+    }
+    if (name === "removeEquipment") {
+      const c = getCustomer(state.assetCustomerId || state.openCustomerId);
+      if (!c || !state.assetEditingId) return;
+      c.assets = (c.assets || []).filter(function (x) { return x.id !== state.assetEditingId; });
+      state.sheet = null;
+      showToast("Equipment removed");
+      return;
     }
     if (name === "toggleChip") {
       const chips = state.newCall.chips.slice();
@@ -829,7 +1147,7 @@
     }
     if (name === "urgency") { state.newCall.urgency = arg; render(); return; }
     if (name === "ncNext") {
-      if (state.newCallStep === 1) state.newCallStep = 2;
+      if (state.newCallStep === 1) state.newCallStep = state.newCall.fromCustomer ? 3 : 2;
       else if (state.newCallStep === 2) state.newCallStep = 3;
       render(); return;
     }
@@ -844,7 +1162,7 @@
       if (nc.isNew) {
         customerId = nextCustomerId();
         customer = nc.newName.trim(); address = nc.newAddress.trim(); city = nc.newCity.trim() || "Long Beach"; phone = nc.newPhone.trim();
-        state.customers = [{ id: customerId, name: customer, address: address, city: city, phone: phone, equipment: [] }].concat(state.customers);
+        state.customers = [{ id: customerId, name: customer, address: address, city: city, phone: phone, email: (nc.newEmail || "").trim(), assets: [], mentions: [] }].concat(state.customers);
       } else {
         const c = state.customers.find(function (x) { return x.id === customerId; });
         customer = c.name; address = c.address; city = c.city; phone = c.phone;
@@ -852,8 +1170,12 @@
       const problem = reportText(nc.chips, nc.detail, nc.urgency);
       const job = { id: id, customerId: customerId, customer: customer, address: address, city: city, phone: phone, problem: problem, status: "new", lineItems: [{ label: "Diagnostic", amount: 150 }], total: 150, readingSets: [], timeline: [t("t" + id, "call", "Just now", "Call", problem)] };
       state.jobs = [job].concat(state.jobs);
-      state.sheet = null; state.openJobId = null; state.tab = "jobs"; state.filter = "all";
-      showToast("Job " + id + " created · New call");
+      state.sheet = null;
+      state.openCustomerId = null;
+      state.openJobId = id;
+      state.tab = "jobs";
+      state.filter = "open";
+      showToast("Job " + id + " created");
       return;
     }
     if (name === "saveNote") {
