@@ -1,30 +1,58 @@
-name: GitHub Pages
+name: Enable GitHub Pages
 on:
   push:
     branches: [main]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
-concurrency:
-  group: pages
-  cancel-in-progress: true
 jobs:
-  deploy:
+  setup:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Decode app icons
+      - name: Decode and commit app icons
         run: |
           base64 -d icon-180.b64 > icon-180.png
           base64 -d icon-512.b64 > icon-512.png
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: .
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add icon-180.png icon-512.png
+          if git diff --cached --quiet; then
+            echo "Icons unchanged"
+          else
+            git commit -m "Add generated app icons"
+            git push
+          fi
+      - name: Enable Pages from main branch root
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}/pages"
+          AUTH=( -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" )
+          echo "Current Pages config:"
+          curl -sS "${AUTH[@]}" "$API" || true
+          echo
+          echo "POST enable legacy Pages from main /"
+          CODE=$(curl -sS -o /tmp/pages-post.json -w "%{http_code}" -X POST "${AUTH[@]}" \
+            "$API" -d '{"build_type":"legacy","source":{"branch":"main","path":"/"}}')
+          echo "POST status: $CODE"
+          cat /tmp/pages-post.json
+          echo
+          if [ "$CODE" = "409" ] || [ "$CODE" = "422" ]; then
+            echo "PUT update source to main /"
+            curl -sS -o /tmp/pages-put.json -w "PUT status: %{http_code}\n" -X PUT "${AUTH[@]}" \
+              "$API" -d '{"build_type":"legacy","source":{"branch":"main","path":"/"}}'
+            cat /tmp/pages-put.json
+            echo
+          fi
+          echo "Final Pages config:"
+          curl -sS -D /tmp/pages-head.txt "${AUTH[@]}" "$API"
+          echo
+          echo "--- response headers ---"
+          cat /tmp/pages-head.txt
+          # Do not fail the job solely because Pages could not be enabled;
+          # the icon commit is still useful.
+          exit 0
