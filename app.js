@@ -1,4 +1,4 @@
-/* ReliaTech job-flow mockup. Sample data only. */
+/* ReliaTech job-flow app. Customer and job records load from data.js (Housecall Pro import). */
 (function () {
   const BRAND = "#0B3A4F";
   const TEAL = "#148A8A";
@@ -19,7 +19,7 @@
     { step: 3, label: "Appr." }, { step: 4, label: "Work" }, { step: 5, label: "Inv." }, { step: 6, label: "Paid" }
   ];
   const FILTERS = [
-    ["all", "All"], ["new", "New call"], ["diagnosis", "Diagnosis"], ["estimate", "Estimate sent"],
+    ["open", "Open"], ["all", "All"], ["new", "New call"], ["diagnosis", "Diagnosis"], ["estimate", "Estimate sent"],
     ["approved", "Approved"], ["progress", "In progress"], ["done", "Work done"], ["invoiced", "Invoiced"], ["paid", "Paid"]
   ];
   const MODE_META = { cooling: { label: "Cooling", short: "Cooling" }, furnace: { label: "Heating · furnace", short: "Furnace" }, heatPumpHeat: { label: "Heating · heat pump", short: "Heat pump" } };
@@ -68,36 +68,7 @@
     heatPumpHeat: ["dischargePsi", "suctionPsi", "supplyTemp", "returnTemp", "deltaT", "defrost"]
   };
   const TIER = { good: { label: "Good", color: TEAL }, better: { label: "Better", color: BRAND }, best: { label: "Best", color: ACCENT } };
-  const PRICE_BOOK = [
-    { id: "diag", kind: "repair", name: "Diagnostic", detail: "Service call diagnosis", price: 150 },
-    { id: "cap", kind: "repair", name: "Run capacitor", detail: "Test and replace", price: 215 },
-    { id: "contactor", kind: "repair", name: "Contactor", detail: "Replace and test", price: 245 },
-    { id: "igniter", kind: "repair", name: "Hot surface igniter", detail: "Replace and cycle", price: 265 },
-    { id: "flame", kind: "repair", name: "Flame sensor", detail: "Clean or replace", price: 185 },
-    { id: "coilclean", kind: "repair", name: "Coil cleaning", detail: "Evaporator or condenser", price: 320 },
-    { id: "r410", kind: "repair", name: "Refrigerant R-410A", detail: "Per pound", price: 95, unit: "lb" },
-    { id: "drain", kind: "repair", name: "Drain clear", detail: "Clear and flush the condensate drain", price: 175 },
-    { id: "blower", kind: "repair", name: "Blower motor", detail: "Replace and set airflow", price: 685 },
-    { id: "pkg-2-g", kind: "package", name: "2-ton 14 SEER2 heat pump", detail: "Equipment, coil, and standard install labor", price: 9800, tier: "good", tons: 2 },
-    { id: "pkg-2-b", kind: "package", name: "2-ton 16 SEER2 heat pump", detail: "Quieter, higher efficiency", price: 11240, tier: "better", tons: 2 },
-    { id: "pkg-2-t", kind: "package", name: "2-ton 18 SEER2 communicating heat pump", detail: "Communicating controls", price: 12980, tier: "best", tons: 2 },
-    { id: "pkg-3-g", kind: "package", name: "3-ton 14 SEER2 heat pump", detail: "Equipment, coil, and standard install labor", price: 11280, tier: "good", tons: 3 },
-    { id: "pkg-3-b", kind: "package", name: "3-ton 16 SEER2 heat pump", detail: "Quieter, higher efficiency", price: 12630, tier: "better", tons: 3 },
-    { id: "pkg-3-t", kind: "package", name: "3-ton 18 SEER2 communicating heat pump", detail: "Communicating controls", price: 14490, tier: "best", tons: 3 },
-    { id: "pkg-4-g", kind: "package", name: "4-ton 14 SEER2 heat pump", detail: "Equipment, coil, and standard install labor", price: 12840, tier: "good", tons: 4 },
-    { id: "pkg-4-b", kind: "package", name: "4-ton 16 SEER2 heat pump", detail: "Quieter, higher efficiency", price: 14220, tier: "better", tons: 4 },
-    { id: "pkg-4-t", kind: "package", name: "4-ton 18 SEER2 communicating heat pump", detail: "Communicating controls", price: 16350, tier: "best", tons: 4 },
-    { id: "stat", kind: "addon", name: "Thermostat", detail: "Programmable", price: 285 },
-    { id: "surge", kind: "addon", name: "Surge protector", price: 195 },
-    { id: "pad", kind: "addon", name: "Condenser pad", price: 145 },
-    { id: "lineset", kind: "addon", name: "Line set", price: 890 },
-    { id: "disconnect", kind: "addon", name: "Disconnect and whip", price: 225 },
-    { id: "permit", kind: "addon", name: "Permit", price: 480 },
-    { id: "duct", kind: "addon", name: "Duct repair or modification", price: 1480 },
-    { id: "filterbase", kind: "addon", name: "Filter base", price: 165 },
-    { id: "float", kind: "addon", name: "Float switch", price: 125 },
-    { id: "warranty", kind: "addon", name: "Extended labor warranty", detail: "5-year", price: 450 }
-  ];
+  const PRICE_BOOK = (window.RT_DATA && window.RT_DATA.priceBook) ? window.RT_DATA.priceBook : [];
   const DEMO = {
     cooling: { outdoorDb: "76", indoorDb: "78", indoorWb: "66", returnTemp: "78", supplyTemp: "67", deltaT: "11", refrigerant: "R-410A", suctionPsi: "108", suctionSat: "36", liquidPsi: "255", liquidSat: "84", superheat: "28", targetSH: "11", subcool: "4", targetSC: "9", returnStatic: "0.52", supplyStatic: "0.38", tesp: "0.90", cfm: "680", compAmps: "9.4", compVolts: "239", fanAmps: "0.9", fanVolts: "239" },
     furnace: { inletGas: "7.0", manifoldGas: "3.8", returnTemp: "70", supplyTemp: "142", tempRise: "72", nameplateRise: "40–70", co: "18", o2: "7.2", stackTemp: "325", blowerAmps: "5.8", returnStatic: "0.42", supplyStatic: "0.48", tesp: "0.90" },
@@ -267,76 +238,21 @@
     return '<div class="shot"><div class="s1">SCREENSHOT</div><div><div style="font-size:9px;opacity:.7">SH</div><div class="s2">28°</div></div><div class="s3">Job Link · sample</div></div>';
   }
 
-  /* —— sample data —— */
-  const BROOKS_A = {
-    id: "rs-25067-a", label: "Arrival", time: "Today, 10:12 AM", mode: "cooling", hasScreenshot: true,
-    values: flagAll("cooling", { outdoorDb: rv(76, "°F", "ok", 1), indoorDb: rv(78, "°F", "watch", 1), indoorWb: rv(66, "°F", "ok", 1), returnTemp: rv(78, "°F", "ok", 1), supplyTemp: rv(67, "°F", "ok", 1), deltaT: rv(11, "°F", "alert", 1), refrigerant: rv("R-410A", "", "ok", 1), suctionPsi: rv(108, "psig", "ok", 1), suctionSat: rv(36, "°F", "ok", 1), liquidPsi: rv(255, "psig", "ok", 1), liquidSat: rv(84, "°F", "ok", 1), superheat: rv(28, "°F", "alert", 1), targetSH: rv(11, "°F", "ok", 1), subcool: rv(4, "°F", "alert", 1), targetSC: rv(9, "°F", "ok", 1), returnStatic: rv("0.52", "in. WC", "ok", 1), supplyStatic: rv("0.38", "in. WC", "ok", 1), tesp: rv("0.90", "in. WC", "alert", 1), cfm: rv(680, "CFM", "alert", 1), compAmps: rv("9.4", "A", "watch", 1), compVolts: rv(239, "V", "ok", 1), fanAmps: rv("0.9", "A", "ok", 1), fanVolts: rv(239, "V", "ok", 1) }),
-    evaluation: { tone: "alert", summary: "Superheat high vs target, likely undercharged or a restriction; static 0.90 in. WC is high. Delta T is only 11°F and airflow is 680 CFM — clean the filter and coil before adding charge." }
-  };
-  const BROOKS_B = {
-    id: "rs-25067-b", label: "After cleaning coil", time: "Today, 10:40 AM", mode: "cooling", hasScreenshot: true,
-    values: flagAll("cooling", { outdoorDb: rv(77, "°F", "ok", 1), indoorDb: rv(77, "°F", "ok", 1), indoorWb: rv(65, "°F", "ok", 1), returnTemp: rv(77, "°F", "ok", 1), supplyTemp: rv(61, "°F", "ok", 1), deltaT: rv(16, "°F", "ok", 1), refrigerant: rv("R-410A", "", "ok", 1), suctionPsi: rv(114, "psig", "ok", 1), suctionSat: rv(38, "°F", "ok", 1), liquidPsi: rv(262, "psig", "ok", 1), liquidSat: rv(86, "°F", "ok", 1), superheat: rv(24, "°F", "alert", 1), targetSH: rv(11, "°F", "ok", 1), subcool: rv(5, "°F", "alert", 1), targetSC: rv(9, "°F", "ok", 1), returnStatic: rv("0.34", "in. WC", "ok", 1), supplyStatic: rv("0.28", "in. WC", "ok", 1), tesp: rv("0.62", "in. WC", "ok", 1), cfm: rv(920, "CFM", "ok", 1), compAmps: rv("10.6", "A", "ok", 1), compVolts: rv(239, "V", "ok", 1), fanAmps: rv("0.9", "A", "ok", 1), fanVolts: rv(239, "V", "ok", 1) }),
-    evaluation: { tone: "alert", summary: "Static and airflow improved after the filter and coil face were cleaned (0.62 in. WC, 920 CFM, 16° split). Superheat is still 24°F vs target 11°F and subcool 5°F vs 9°F — charge or a restriction is the next check, not airflow." }
-  };
-  const ELENA_A = {
-    id: "rs-25062-a", label: "Arrival", time: "Nov 17, 11:22 AM", mode: "cooling", hasScreenshot: true,
-    values: flagAll("cooling", { outdoorDb: rv(79, "°F", "ok", 1), indoorDb: rv(76, "°F", "ok", 1), indoorWb: rv(64, "°F", "ok", 1), returnTemp: rv(76, "°F", "ok", 1), supplyTemp: rv(64, "°F", "ok", 1), deltaT: rv(12, "°F", "alert", 1), refrigerant: rv("R-410A", "", "ok", 1), suctionPsi: rv(102, "psig", "ok", 1), suctionSat: rv(32, "°F", "ok", 1), liquidPsi: rv(268, "psig", "ok", 1), liquidSat: rv(88, "°F", "ok", 1), superheat: rv(26, "°F", "alert", 1), targetSH: rv(12, "°F", "ok", 1), subcool: rv(4, "°F", "alert", 1), targetSC: rv(10, "°F", "ok", 1), returnStatic: rv("0.48", "in. WC", "ok", 1), supplyStatic: rv("0.41", "in. WC", "ok", 1), tesp: rv("0.89", "in. WC", "alert", 1), cfm: rv(720, "CFM", "alert", 1), compAmps: rv("11.8", "A", "watch", 1), compVolts: rv(241, "V", "ok", 1), fanAmps: rv("1.1", "A", "ok", 1), fanVolts: rv(241, "V", "ok", 1) }),
-    evaluation: { tone: "alert", summary: "Delta T only 12°F with TESP at 0.89 in. WC and 720 CFM — the evap coil is restricting airflow. Superheat 26°F vs target 12°F and subcool 4°F vs 10°F. Clean the coil before adding charge." }
-  };
-  const ELENA_B = {
-    id: "rs-25062-b", label: "After cleaning coil", time: "Nov 17, 1:15 PM", mode: "cooling", hasScreenshot: false,
-    values: flagAll("cooling", { outdoorDb: rv(80, "°F"), indoorDb: rv(75, "°F"), indoorWb: rv(63, "°F"), returnTemp: rv(75, "°F"), supplyTemp: rv(58, "°F"), deltaT: rv(17, "°F", "ok"), refrigerant: rv("R-410A", ""), suctionPsi: rv(118, "psig"), suctionSat: rv(40, "°F"), liquidPsi: rv(275, "psig"), liquidSat: rv(90, "°F"), superheat: rv(22, "°F", "alert"), targetSH: rv(12, "°F"), subcool: rv(5, "°F", "alert"), targetSC: rv(10, "°F"), returnStatic: rv("0.32", "in. WC"), supplyStatic: rv("0.28", "in. WC"), tesp: rv("0.60", "in. WC", "ok"), cfm: rv("1,080", "CFM", "ok"), compAmps: rv("13.2", "A"), compVolts: rv(241, "V"), fanAmps: rv("1.1", "A"), fanVolts: rv(241, "V") }),
-    evaluation: { tone: "alert", summary: "Airflow is back in range (0.60 in. WC, 1,080 CFM, 17° split). Superheat is still 22°F vs target 12°F and subcool 5°F vs 10°F — likely undercharged. Weigh in charge and recheck." }
-  };
-  const ELENA_C = {
-    id: "rs-25062-c", label: "Final", time: "Nov 17, 1:48 PM", mode: "cooling", hasScreenshot: true,
-    values: flagAll("cooling", { outdoorDb: rv(80, "°F", "ok", 1), indoorDb: rv(74, "°F", "ok", 1), indoorWb: rv(62, "°F", "ok", 1), returnTemp: rv(74, "°F", "ok", 1), supplyTemp: rv(54, "°F", "ok", 1), deltaT: rv(20, "°F", "ok", 1), refrigerant: rv("R-410A", "", "ok", 1), suctionPsi: rv(125, "psig", "ok", 1), suctionSat: rv(43, "°F", "ok", 1), liquidPsi: rv(280, "psig", "ok", 1), liquidSat: rv(91, "°F", "ok", 1), superheat: rv(12, "°F", "ok", 1), targetSH: rv(12, "°F", "ok", 1), subcool: rv(10, "°F", "ok", 1), targetSC: rv(10, "°F", "ok", 1), returnStatic: rv("0.30", "in. WC", "ok", 1), supplyStatic: rv("0.28", "in. WC", "ok", 1), tesp: rv("0.58", "in. WC", "ok", 1), cfm: rv("1,120", "CFM", "ok", 1), compAmps: rv("14.1", "A", "ok", 1), compVolts: rv(241, "V", "ok", 1), fanAmps: rv("1.1", "A", "ok", 1), fanVolts: rv(241, "V", "ok", 1) }),
-    evaluation: { tone: "ok", summary: "Charge and airflow look good. Superheat and subcool are on target, 20° split, static 0.58 in. WC." }
-  };
-  const DENISE_A = {
-    id: "rs-25064-a", label: "After igniter", time: "Nov 22, 11:35 AM", mode: "furnace", hasScreenshot: false,
-    values: flagAll("furnace", { inletGas: rv("7.0", "in. WC", "ok"), manifoldGas: rv("3.8", "in. WC", "watch"), returnTemp: rv(70, "°F"), supplyTemp: rv(142, "°F"), tempRise: rv(72, "°F", "alert"), nameplateRise: rv("40–70", "°F"), co: rv(18, "ppm", "ok"), o2: rv("7.2", "%"), stackTemp: rv(325, "°F"), blowerAmps: rv("5.8", "A", "watch"), returnStatic: rv("0.42", "in. WC"), supplyStatic: rv("0.48", "in. WC"), tesp: rv("0.90", "in. WC", "alert") }),
-    evaluation: { tone: "alert", summary: "Temperature rise 72°F vs nameplate 40–70°F. Static 0.90 in. WC is high and the blower is not moving enough air. Check the filter, returns, and blower speed. Gas pressure and combustion look acceptable." }
-  };
-  const DENISE_B = {
-    id: "rs-25064-b", label: "Final", time: "Nov 22, 12:10 PM", mode: "furnace", hasScreenshot: true,
-    values: flagAll("furnace", { inletGas: rv("7.0", "in. WC", "ok", 1), manifoldGas: rv("3.5", "in. WC", "ok", 1), returnTemp: rv(70, "°F", "ok", 1), supplyTemp: rv(128, "°F", "ok", 1), tempRise: rv(58, "°F", "ok", 1), nameplateRise: rv("40–70", "°F", "ok", 1), co: rv(12, "ppm", "ok", 1), o2: rv("7.5", "%", "ok", 1), stackTemp: rv(310, "°F", "ok", 1), blowerAmps: rv("6.4", "A", "ok", 1), returnStatic: rv("0.30", "in. WC", "ok", 1), supplyStatic: rv("0.32", "in. WC", "ok", 1), tesp: rv("0.62", "in. WC", "ok", 1) }),
-    evaluation: { tone: "ok", summary: "Temperature rise 58°F is in the 40–70°F nameplate range. Static dropped to 0.62 in. WC after the filter and blower speed change. Combustion is clean." }
-  };
-
-  const INITIAL_CUSTOMERS = [
-    { id: "c1", name: "Elena Vasquez", address: "1420 E 4th St", city: "Long Beach", phone: "(562) 555-0142", equipment: [{ name: "2018 Carrier 24ACC636", detail: "3-ton split AC, 16 SEER" }] },
-    { id: "c2", name: "James Okonkwo", address: "318 Rose Ave", city: "Signal Hill", phone: "(562) 555-0198", equipment: [{ name: "2015 Goodman GSX140361", detail: "3-ton condenser" }] },
-    { id: "c3", name: "Denise Alvarez", address: "5521 E Atherton St", city: "Long Beach", phone: "(562) 555-0174", equipment: [{ name: "2012 Rheem RGRC-07", detail: "70k BTU gas furnace" }] },
-    { id: "c4", name: "The Nguyen household", address: "8902 Cerritos Ave", city: "Los Alamitos", phone: "(562) 555-0116", equipment: [{ name: "2010 Trane XR14", detail: "3-ton, compressor failing" }] },
-    { id: "c5", name: "Robert Kim", address: "2101 Clark Ave", city: "Lakewood", phone: "(562) 555-0133", equipment: [{ name: "2019 Lennox ML14XC1", detail: "3.5-ton, leaky return trunk" }] },
-    { id: "c6", name: "Sarah Brooks", address: "745 Pacific Ave", city: "Long Beach", phone: "(562) 555-0160", equipment: [{ name: "2016 Bryant 126B", detail: "2.5-ton split system" }] },
-    { id: "c7", name: "Anthony Ruiz", address: "119 Orange Ave", city: "Seal Beach", phone: "(562) 555-0187", equipment: [{ name: "2017 Rheem RA14", detail: "2-ton condenser" }] },
-    { id: "c8", name: "Linda Cho", address: "4410 Bellflower Blvd", city: "Bellflower", phone: "(562) 555-0121", equipment: [{ name: "2014 York YCJF36", detail: "3-ton, fan motor seized" }] }
-  ];
-
   function t(id, kind, time, title, body) { return { id: id, kind: kind, time: time, title: title, body: body }; }
 
-  const INITIAL_JOBS = [
-    { id: "25062", customerId: "c1", customer: "Elena Vasquez", address: "1420 E 4th St", city: "Long Beach", phone: "(562) 555-0142", problem: "Dirty evaporator coil, weak airflow, house not cooling evenly", status: "paid", invoiceId: "25062-01", lineItems: [{ label: "Diagnostic", amount: 150 }, { label: "Evaporator coil cleaning", amount: 320 }, { label: "Labor, 2 hrs at $85/hr", amount: 170 }], total: 640, readingSets: [ELENA_A, ELENA_B, ELENA_C], timeline: [t("t620", "call", "Nov 17, 9:10 AM", "Call", "Rooms at the back of the house stay warm. Filter was changed last month."), t("t621", "reading", "Nov 17, 11:22 AM", "Readings · Arrival", "Delta T 12°F, TESP 0.89 in. WC, superheat 26°F, subcool 4°F. Coil face packed with dust."), t("t622", "note", "Nov 17, 1:40 PM", "Note", "Deep-cleaned the evap coil, then weighed in charge. Temperature split back to 20°."), t("t623", "system", "Nov 18, 4:05 PM", "Paid", "Invoice 25062-01 paid in full, $640.")] },
-    { id: "25063", customerId: "c2", customer: "James Okonkwo", address: "318 Rose Ave", city: "Signal Hill", phone: "(562) 555-0198", problem: "AC runs but is not cooling — weak run capacitor", status: "invoiced", invoiceId: "25063-01", lineItems: [{ label: "Diagnostic", amount: 150 }, { label: "45/5 µF run capacitor", amount: 86 }, { label: "Labor, 1 hr at $85/hr", amount: 85 }], total: 321, readingSets: [], timeline: [t("t630", "call", "Nov 20, 2:15 PM", "Call", "Outdoor fan seemed slow and the air from the vents was barely cool."), t("t631", "reading", "Nov 21, 9:48 AM", "Readings", "Capacitor measured 32 µF on a 45 µF rating. Compressor and fan both weak."), t("t632", "note", "Nov 21, 10:30 AM", "Note", "Replaced the run capacitor. Pressures and amps look normal. House is pulling down."), t("t633", "system", "Nov 21, 11:05 AM", "Invoice sent", "Invoice 25063-01 for $321, due on completion.")] },
-    { id: "25064", customerId: "c3", customer: "Denise Alvarez", address: "5521 E Atherton St", city: "Long Beach", phone: "(562) 555-0174", problem: "Furnace will not fire — failed hot surface igniter", status: "done", lineItems: [{ label: "Diagnostic", amount: 150 }, { label: "Hot surface igniter", amount: 94 }, { label: "Labor, 1.5 hrs at $85/hr", amount: 127.5 }], total: 371.5, readingSets: [DENISE_A, DENISE_B], timeline: [t("t640", "call", "Nov 22, 7:05 AM", "Call", "No heat this morning. Furnace tries to start, then shuts off."), t("t641", "note", "Nov 22, 10:20 AM", "Note", "Igniter is cracked and open. Gas valve and flame sensor check out."), t("t642", "photo", "Nov 22, 10:22 AM", "Photo", "Cracked hot surface igniter on the burner tray."), t("t643", "reading", "Nov 22, 11:35 AM", "Readings · After igniter", "Fired cleanly. Temperature rise 72°F vs nameplate 40–70°F. Static 0.90 in. WC."), t("t644", "note", "Nov 22, 12:10 PM", "Note", "Raised blower speed and replaced a packed filter. Rise now 58°. Three clean heat cycles. Ready to invoice.")] },
-    { id: "25065", customerId: "c4", customer: "The Nguyen household", address: "8902 Cerritos Ave", city: "Los Alamitos", phone: "(562) 555-0116", problem: "16-year-old 3-ton system, compressor failing — full replacement", status: "approved", estimateId: "25065-E01", schedule: "Install window Dec 2–3", lineItems: [{ label: "3-ton 16 SEER2 heat pump system", amount: 9840 }, { label: "New coil and line set", amount: 1120 }, { label: "Permit and haul-away", amount: 480 }, { label: "Labor, 14 hrs at $85/hr", amount: 1190 }], total: 12630, readingSets: [], timeline: [t("t650", "call", "Nov 19, 8:40 AM", "Call", "Weak cooling all summer and a sharp jump in the electric bill."), t("t651", "reading", "Nov 19, 1:15 PM", "Readings", "Compressor amps high, slight oil on the suction service valve. System is 16 years old."), t("t652", "system", "Nov 20, 9:00 AM", "Estimate sent", "Estimate 25065-E01 for $12,630 sent for approval."), t("t653", "system", "Nov 21, 3:42 PM", "Approved", "Customer approved the replacement. Scheduled Dec 2–3.")] },
-    { id: "25066", customerId: "c5", customer: "Robert Kim", address: "2101 Clark Ave", city: "Lakewood", phone: "(562) 555-0133", problem: "Crushed, leaky return trunk in the attic — weak rooms at the back", status: "estimate", estimateId: "25066-E01", lineItems: [{ label: "Repair and seal return trunk", amount: 1480 }, { label: "New return drop", amount: 390 }, { label: "Labor, 6 hrs at $85/hr", amount: 510 }], total: 2380, readingSets: [], timeline: [t("t660", "call", "Nov 20, 4:50 PM", "Call", "Back bedrooms never get enough air, even with the system running hard."), t("t661", "photo", "Nov 21, 2:10 PM", "Photo", "Return trunk crushed against a truss, with obvious leakage at the joints."), t("t662", "reading", "Nov 21, 2:18 PM", "Readings", "Return static 0.68 in. WC. Supply at the back rooms is weak."), t("t663", "system", "Nov 22, 8:30 AM", "Estimate sent", "Estimate 25066-E01 for $2,380 sent, waiting on approval.")] },
-    { id: "25067", customerId: "c6", customer: "Sarah Brooks", address: "745 Pacific Ave", city: "Long Beach", phone: "(562) 555-0160", problem: "AC runs but the house stays warm — diagnosis in progress", status: "diagnosis", lineItems: [{ label: "Diagnostic", amount: 150 }], total: 150, readingSets: [BROOKS_A, BROOKS_B], timeline: [t("t670", "call", "Today, 7:40 AM", "Call", "AC has been running since last night and the house is still at 78°."), t("t671", "note", "Today, 10:05 AM", "Note", "Outdoor unit is running. Filter is dirty. Pulled a first set of readings."), t("t672", "reading", "Today, 10:12 AM", "Readings · Arrival", "Superheat 28°F (high), subcool 4°F (low), TESP 0.90 in. WC."), t("t673", "photo", "Today, 10:14 AM", "Photo", "Dirty filter and a packed coil face."), t("t674", "reading", "Today, 10:40 AM", "Readings · After cleaning coil", "Airflow improved. Superheat still 24°F and subcool 5°F — charge or restriction next.")] },
-    { id: "25068", customerId: "c7", customer: "Anthony Ruiz", address: "119 Orange Ave", city: "Seal Beach", phone: "(562) 555-0187", problem: "No cooling since last night — outdoor fan may not be spinning", status: "new", lineItems: [{ label: "Diagnostic", amount: 150 }], total: 150, readingSets: [], timeline: [t("t680", "call", "Today, 8:12 AM", "Call", "Woke up to a warm house. Thinks the outdoor fan was still when he looked.")] },
-    { id: "25069", customerId: "c8", customer: "Linda Cho", address: "4410 Bellflower Blvd", city: "Bellflower", phone: "(562) 555-0121", problem: "Condenser fan motor seized — replacement underway", status: "progress", estimateId: "25069-E01", lineItems: [{ label: "Diagnostic", amount: 150 }, { label: "Condenser fan motor", amount: 214 }, { label: "Labor, 2 hrs at $85/hr", amount: 170 }], total: 534, schedule: "On site today", readingSets: [], timeline: [t("t690", "call", "Nov 22, 5:20 PM", "Call", "Outdoor unit humming, no air moving across the coil, breaker has not tripped."), t("t691", "system", "Nov 22, 6:10 PM", "Approved", "Estimate 25069-E01 for $534 approved. Parts on the truck for this morning."), t("t692", "note", "Today, 9:05 AM", "Note", "On site. Old motor is locked up. Pulling the new motor in now.")] }
-  ];
-  const PAST_JOBS = [
-    { id: "25058", customerId: "c1", customer: "Elena Vasquez", address: "1420 E 4th St", city: "Long Beach", phone: "(562) 555-0142", problem: "Fall maintenance visit", status: "paid", invoiceId: "25058-01", lineItems: [{ label: "Maintenance visit", amount: 125 }], total: 125, readingSets: [], timeline: [t("t580", "system", "Nov 4, 2:00 PM", "Paid", "Fall maintenance, invoice 25058-01 paid, $125.")] }
-  ];
+  const INITIAL_CUSTOMERS = (window.RT_DATA && window.RT_DATA.customers) ? window.RT_DATA.customers : [];
+  const INITIAL_JOBS = (window.RT_DATA && window.RT_DATA.jobs) ? window.RT_DATA.jobs : [];
+  const PAST_JOBS = (window.RT_DATA && window.RT_DATA.moneyJobs) ? window.RT_DATA.moneyJobs : [];
+  const SHOW_SAMPLE_BADGE = !!(window.RT_DATA && window.RT_DATA.showSampleBadge);
+  const PRICE_BOOK_NOTE = (window.RT_DATA && window.RT_DATA.priceBookNote) || "Prices come from ReliaTech Price Books in Drive.";
+  const MONEY_NOTE = (window.RT_DATA && window.RT_DATA.moneyNote) || "";
 
   /* state and remaining UI will be appended */
   window.__RT_BOOT = { INITIAL_CUSTOMERS: INITIAL_CUSTOMERS, INITIAL_JOBS: INITIAL_JOBS, PAST_JOBS: PAST_JOBS };
 
   let state = {
     tab: "jobs",
-    filter: "all",
+    filter: "open",
     query: "",
     openJobId: null,
     openCustomerId: null,
@@ -417,9 +333,10 @@
     const q = state.query.trim().toLowerCase();
     const list = state.jobs.filter(function (j) {
       const hit = !q || [j.id, j.customer, j.address, j.city, j.problem].join(" ").toLowerCase().indexOf(q) !== -1;
-      return hit && (state.filter === "all" || j.status === state.filter);
+      const statusHit = state.filter === "all" || (state.filter === "open" ? j.status !== "paid" : j.status === state.filter);
+      return hit && statusHit;
     });
-    return topBar({ kicker: "ReliaTech Services", title: "Jobs", badge: true }) +
+    return topBar({ kicker: "ReliaTech Services", title: "Jobs", badge: SHOW_SAMPLE_BADGE }) +
       '<div class="content"><div class="pad pad-fab">' +
       '<div class="search">' + icon("search", 16) + '<input id="search-q" type="search" placeholder="Search jobs or addresses" value="' + esc(state.query) + '" oninput="RT.setQuery(this.value)"></div>' +
       '<div class="chips">' + FILTERS.map(function (f) {
@@ -456,7 +373,7 @@
   function jobDetail(job) {
     const st = STATUS[job.status], col = sc(job.status);
     const iconFor = { call: "phone", note: "note", photo: "photo", reading: "reading", system: "chat" };
-    return topBar({ back: "closeJob", title: "Job " + job.id, badge: true }) +
+    return topBar({ back: "closeJob", title: "Job " + job.id, badge: SHOW_SAMPLE_BADGE }) +
       '<div class="content screen"><div class="pad">' +
       '<div class="linkish" ' + act("openCustomer", job.customerId) + ' style="cursor:pointer">' + icon("pin", 16) + "<span>" + esc(job.customer) + " · " + esc(job.address) + ", " + esc(job.city) + "</span></div>" +
       '<div class="h1">' + esc(job.problem) + "</div>" +
@@ -522,7 +439,7 @@
     const list = state.customers.filter(function (c) {
       return !q || [c.name, c.address, c.city, c.phone].join(" ").toLowerCase().indexOf(q) !== -1;
     });
-    return topBar({ kicker: "ReliaTech Services", title: "Customers", badge: true }) +
+    return topBar({ kicker: "ReliaTech Services", title: "Customers", badge: SHOW_SAMPLE_BADGE }) +
       '<div class="content"><div class="pad">' +
       '<div class="search">' + icon("search", 16) + '<input id="search-q" type="search" placeholder="Search customers" value="' + esc(state.query) + '" oninput="RT.setQuery(this.value)"></div>' +
       '<div class="stack">' + list.map(function (c) {
@@ -536,12 +453,14 @@
   }
   function customerDetail(c) {
     const jobs = state.jobs.concat(state.moneyJobs).filter(function (j) { return j.customerId === c.id; });
-    return topBar({ back: "closeCustomer", title: c.name, badge: true }) +
+    return topBar({ back: "closeCustomer", title: c.name, badge: SHOW_SAMPLE_BADGE }) +
       '<div class="content screen"><div class="pad">' +
-      '<div class="panel" style="margin-bottom:14px"><div class="muted">' + esc(c.address) + ", " + esc(c.city) + "</div><div class=\"teal\" style=\"margin:6px 0 0\">" + esc(c.phone) + "</div></div>" +
-      '<div class="section">Equipment</div>' + c.equipment.map(function (e) {
+      '<div class="panel" style="margin-bottom:14px"><div class="muted">' + esc(c.address) + (c.city ? ", " + esc(c.city) : "") + "</div>" +
+      (c.phone ? '<div class="teal" style="margin:6px 0 0">' + esc(c.phone) + "</div>" : "") +
+      (c.email ? '<div class="muted" style="margin-top:4px">' + esc(c.email) + "</div>" : "") + "</div>" +
+      '<div class="section">Equipment</div>' + ((c.equipment && c.equipment.length) ? c.equipment.map(function (e) {
         return '<div class="panel" style="margin-bottom:10px"><div class="h2">' + esc(e.name) + "</div><div class=\"muted\" style=\"margin-top:4px\">" + esc(e.detail) + "</div></div>";
-      }).join("") +
+      }).join("") : '<div class="muted" style="margin-bottom:12px">No equipment listed in the Housecall Pro export.</div>') +
       '<div class="section">Past jobs</div><div class="stack">' + jobs.map(function (j) {
         if (state.jobs.some(function (x) { return x.id === j.id; })) return jobCard(j);
         const col = sc(j.status);
@@ -551,17 +470,17 @@
 
   function moneyScreen() {
     const all = state.jobs.concat(state.moneyJobs);
-    const collected = all.filter(function (j) { return j.status === "paid"; }).reduce(function (s, j) { return s + j.total; }, 0);
-    const outstanding = all.filter(function (j) { return j.status === "invoiced"; }).reduce(function (s, j) { return s + j.total; }, 0);
-    const openEst = all.filter(function (j) { return j.status === "estimate" || j.status === "approved"; }).reduce(function (s, j) { return s + j.total; }, 0);
-    const unpaid = all.filter(function (j) { return j.status === "invoiced"; });
-    return topBar({ kicker: "ReliaTech Services", title: "Money", badge: true }) +
+    const collected = (window.RT_DATA && typeof window.RT_DATA.collected === "number") ? window.RT_DATA.collected : all.filter(function (j) { return j.status === "paid"; }).reduce(function (s, j) { return s + j.total; }, 0);
+    const outstanding = (window.RT_DATA && typeof window.RT_DATA.outstanding === "number") ? window.RT_DATA.outstanding : all.filter(function (j) { return j.status === "invoiced"; }).reduce(function (s, j) { return s + (j.dueAmount || j.total); }, 0);
+    const openEst = (window.RT_DATA && typeof window.RT_DATA.openEstimates === "number") ? window.RT_DATA.openEstimates : all.filter(function (j) { return j.status === "estimate" || j.status === "approved"; }).reduce(function (s, j) { return s + j.total; }, 0);
+    const unpaid = all.filter(function (j) { return (j.dueAmount || 0) > 0 || j.status === "invoiced"; });
+    return topBar({ kicker: "ReliaTech Services", title: "Money", badge: SHOW_SAMPLE_BADGE }) +
       '<div class="content"><div class="pad">' +
-      '<div class="money-tile brand" style="margin-bottom:10px"><div class="k-up" style="color:rgba(255,255,255,.7)">Collected · sample</div><div class="money-val">' + money(collected) + '</div><div style="font-size:12px;opacity:.8">Paid jobs in this mockup, including past work</div></div>' +
+      '<div class="money-tile brand" style="margin-bottom:10px"><div class="k-up" style="color:rgba(255,255,255,.7)">Collected</div><div class="money-val">' + money(collected) + '</div><div style="font-size:12px;opacity:.8">' + (MONEY_NOTE || "From Housecall Pro job amounts minus remaining balances.") + '</div></div>' +
       '<div style="display:flex;gap:10px;margin-bottom:16px">' +
       '<div class="money-tile" style="flex:1"><div class="k-up">Outstanding</div><div class="money-val" style="font-size:22px">' + money(outstanding) + "</div></div>" +
       '<div class="money-tile" style="flex:1"><div class="k-up">Open estimates</div><div class="money-val" style="font-size:22px">' + money(openEst) + "</div></div></div>" +
-      '<div class="section">Unpaid invoices</div><div class="stack">' + unpaid.map(jobCard).join("") + (unpaid.length ? "" : '<div class="muted">No unpaid invoices in the sample data.</div>') +
+      '<div class="section">Unpaid invoices</div><div class="stack">' + unpaid.map(jobCard).join("") + (unpaid.length ? "" : '<div class="muted">No job balances are marked due in the import.</div>') +
       "</div></div></div>" + tabBar();
   }
 
@@ -571,7 +490,7 @@
       (j.readingSets || []).forEach(function (s) { recent.push({ job: j, set: s }); });
     });
     recent.sort(function (a, b) { return 0; });
-    return topBar({ kicker: "ReliaTech Services", title: "Capture", badge: true }) +
+    return topBar({ kicker: "ReliaTech Services", title: "Capture", badge: SHOW_SAMPLE_BADGE }) +
       '<div class="content"><div class="pad">' +
       '<div class="muted" style="margin-bottom:14px">Start a note, photo, or reading, then attach it to a job. Or open a job and use Quick capture there.</div>' +
       '<div class="quick" style="margin-bottom:20px">' +
@@ -676,11 +595,8 @@
       '<button class="btn" ' + act("savePhoto") + ">Add sample photo</button>");
   }
   function askSheet(job) {
-    const special = job.id === "25067";
-    const q = special ? "Does this look like a charge issue or airflow?" : "What should I check first?";
-    const a = special
-      ? "Arrival looked like both: TESP was 0.90 in. WC and the split was only 11°. After you cleaned the coil, static and airflow came back into range, but superheat is still 24°F vs a 11° target and subcool is 5°F vs 9°. That’s a charge or restriction question now, not airflow. Check for a restriction, then weigh in charge and take a Final set."
-      : "I’d start with the complaint, then a first set of readings and a look at the obvious parts (filter, cap, igniter, or fan). Capture a Job Link screenshot or log the readings here, and I can help you read them.";
+    const q = "What should I check first?";
+    const a = "I'd start with the complaint, then a first set of readings and a look at the obvious parts (filter, cap, igniter, or fan). Capture a Job Link screenshot or log the readings here, and I can help you read them.";
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Ask ReliaTech</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
       '<div class="muted" style="margin-bottom:12px">Sample conversation for job ' + job.id + "</div>" +
@@ -699,7 +615,7 @@
       '<div class="doc"><div class="k-up">Invoice ' + job.id + "-01</div><div class=\"h2\" style=\"margin:6px 0\">" + esc(job.customer) + "</div>" +
       (job.lineItems || []).map(function (l) { return '<div class="row" style="margin-top:6px"><div>' + esc(l.label) + "</div><div>" + money(l.amount) + "</div></div>"; }).join("") +
       '<div class="row" style="margin-top:10px;font-weight:750"><div>Total</div><div>' + money(job.total) + "</div></div></div>" +
-      '<button class="btn teal" ' + act("makeInvoice") + ">Create invoice (sample)</button>");
+      '<button class="btn teal" ' + act("makeInvoice") + ">Create invoice</button>");
   }
   function paidSheet(job) {
     return backdrop(
@@ -809,16 +725,16 @@
     }
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Price book</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      '<div class="muted" style="margin-bottom:10px">Sample prices. Real prices come from Steve’s Price Books in Drive.</div>' +
+      '<div class="muted" style="margin-bottom:10px">' + PRICE_BOOK_NOTE + '</div>' +
       (state.packDraft.length ? '<div class="cart"><div class="k-up">This estimate</div>' + state.packDraft.map(lineRow).join("") + '<div class="row" style="font-weight:750;margin-top:6px"><div>Total</div><div>' + money(total) + "</div></div></div>" : "") +
       '<div class="search">' + icon("search", 16) + '<input id="pack-q" type="search" placeholder="Search the price book" value="' + esc(state.packQuery) + '" oninput="RT.setPackQ(this.value)"></div>' +
       '<div class="chips"><button class="chip' + (tab === "repair" ? " on" : "") + '" ' + act("packTab", "repair") + ">Repairs</button><button class=\"chip" + (tab === "replace" ? " on" : "") + '" ' + act("packTab", "replace") + ">Replacements</button></div>" +
-      (tab === "replace" ? '<div class="chips">' + [2, 3, 4].map(function (t) { return '<button class="chip teal' + (state.packTons === t ? " on" : "") + '" ' + act("packTons", String(t)) + ">" + t + "-ton</button>"; }).join("") + "</div>" : "") +
+      (tab === "replace" ? '<div class="chips">' + [2, 2.5, 3, 3.5, 4, 5].map(function (t) { return '<button class="chip teal' + (state.packTons === t ? " on" : "") + '" ' + act("packTons", String(t)) + ">" + t + "-ton</button>"; }).join("") + "</div>" : "") +
       items.map(function (p) {
         const tier = p.tier ? TIER[p.tier] : null;
         return '<div class="book-item"><button ' + act("addItem", p.id) + '><div class="row"><div style="font-weight:750">' + esc(p.name) + "</div><div style=\"font-weight:750\">" + money(p.price) + (p.unit ? "<span class=\"meta\">/" + p.unit + "</span>" : "") + "</div></div>" +
           (p.detail ? '<div class="muted" style="margin-top:2px">' + esc(p.detail) + "</div>" : "") +
-          (tier ? '<div style="margin-top:6px">' + pill(tier.label, "#fff", tier.color) + "</div>" : "") +
+          ((tier || p.tag) ? '<div style="margin-top:6px">' + pill(tier ? tier.label : p.tag, "#fff", tier ? tier.color : "#148A8A") + "</div>" : "") +
           "</button></div>";
       }).join("") +
       (state.packDraft.length ? '<button class="btn accent" style="margin-top:8px" ' + act("previewEst") + ">Preview estimate</button>" : ""));
@@ -834,8 +750,8 @@
       '<div class="muted" style="margin-bottom:10px">' + esc(job.address) + ", " + esc(job.city) + "</div>" +
       lines.map(function (l) { return '<div class="row" style="margin-top:6px"><div>' + esc(draftLabel(l)) + '<div class="meta">From price book</div></div><div>' + money(l.amount * l.qty) + "</div></div>"; }).join("") +
       '<div class="row" style="margin-top:12px;font-weight:750"><div>Total</div><div>' + money(total) + "</div></div></div>" +
-      '<div class="note">Sample prices only. Real prices come from Steve’s Price Books in Drive. This mockup doesn’t send the estimate.</div>' +
-      '<button class="btn" style="margin-top:12px" ' + act("saveEstimate") + ">Save estimate to job (sample)</button>");
+      '<div class="note">' + PRICE_BOOK_NOTE + ' This preview stays on the phone and is not sent.</div>' +
+      '<button class="btn" style="margin-top:12px" ' + act("saveEstimate") + ">Save estimate to job</button>");
   }
 
   function sheetHtml() {
@@ -1007,7 +923,7 @@
       job.total = draftTotal(lines);
       job.estimateId = job.estimateId || (job.id + "-E01");
       if (job.status === "new" || job.status === "diagnosis") job.status = "estimate";
-      job.timeline = [{ id: "e" + Date.now(), kind: "system", time: "Just now", title: "Estimate saved", body: "Estimate " + job.estimateId + " for " + money(job.total) + " saved from the price book (sample)." }].concat(job.timeline);
+      job.timeline = [{ id: "e" + Date.now(), kind: "system", time: "Just now", title: "Estimate saved", body: "Estimate " + job.estimateId + " for " + money(job.total) + " saved from the price book." }].concat(job.timeline);
       state.sheet = null;
       showToast("Estimate " + job.estimateId + " saved");
       return;
@@ -1016,7 +932,7 @@
       const job = getJob(state.openJobId); if (!job) return;
       job.invoiceId = job.invoiceId || (job.id + "-01");
       job.status = "invoiced";
-      job.timeline = [{ id: "i" + Date.now(), kind: "system", time: "Just now", title: "Invoice sent", body: "Invoice " + job.invoiceId + " for " + money(job.total) + " (sample)." }].concat(job.timeline);
+      job.timeline = [{ id: "i" + Date.now(), kind: "system", time: "Just now", title: "Invoice sent", body: "Invoice " + job.invoiceId + " for " + money(job.total) + "." }].concat(job.timeline);
       state.sheet = null; showToast("Invoice " + job.invoiceId + " created"); return;
     }
     if (name === "markPaid") {
