@@ -119,20 +119,19 @@ window.RT_PLANS = {
       "id": "p-doreen-offer",
       "customerId": "c12",
       "siteAddress": "19327 Wiersma Ave, Cerritos, CA 90703",
-      "type": "offer_prepaid_annual",
-      "name": "Offer: prepaid annual ($225)",
-      "status": "follow_up",
-      "price": 225,
-      "billingMode": "prepaid_at_signup",
+      "type": "pay_per_visit",
+      "name": "Pay-per-visit maintenance",
+      "status": "active",
+      "price": 125,
+      "billingMode": "invoice_on_completion",
       "visitsPerYear": 2,
       "dueMonths": [],
-      "startDate": "",
+      "startDate": "2026-08-24",
       "renewalDate": "",
       "coveredSystemsCount": 1,
       "hcpName": "FYF Biannual preventative maintenance",
       "hcpStatus": "Expired 2025-11-02",
-      "tag": "offer_prepaid_annual",
-      "notes": "Needs follow-up and scheduling. No installation job is in her history. After the FYF plan expired she was billed $125 on August 24, 2026 (job 55703). Offer the $225 prepaid annual; do not auto-enroll. No phone is on file. HCP job 55702 still shows $125 due and appears to be a duplicate of 55703."
+      "notes": "Steve confirmed 2026-11-24: she declined the $225 prepaid annual but wants the visits made. Two seasonal visits per year at $125 each, billed on completion, no prepay. No phone is on file. FYF biannual expired 2025-11-02. August 24, 2026 visit (job 55703, invoice #91) was paid $125. Steve said another visit is scheduled with no invoice sent yet; no scheduled date was found in the Housecall Pro export or her history. Job 55702 is unscheduled, $125 due, no invoice, created August 21, 2026 \u2014 two days before 55703. Flagged for Steve to confirm whether 55702 is the next visit or a leftover of the August job."
     },
     {
       "id": "p-ssmith-commitment",
@@ -322,22 +321,38 @@ window.RT_PLANS = {
       "bookingToken": "7e69047ef6f7a28a86dfcd62fa4d0811"
     },
     {
+      "id": "v-doreen-2026-aug",
+      "planId": "p-doreen-offer",
+      "customerId": "c12",
+      "label": "Seasonal maintenance",
+      "dueWindowStart": "2026-08-24",
+      "dueWindowEnd": "2026-08-24",
+      "scheduledStart": "2026-08-24T17:00:00-07:00",
+      "scheduledEnd": "2026-08-24T19:00:00-07:00",
+      "status": "done",
+      "jobId": "55703",
+      "billing": "pm_primary",
+      "completedOn": "2026-08-24",
+      "notes": "Pay-per-visit $125. Invoice #91 paid August 24, 2026.",
+      "bookingToken": null
+    },
+    {
       "id": "v-doreen-followup",
       "planId": "p-doreen-offer",
       "customerId": "c12",
-      "label": "Follow-up \u2014 offer prepaid annual",
-      "dueWindowStart": "2026-11-24",
-      "dueWindowEnd": "2026-12-31",
+      "label": "Next seasonal visit",
+      "dueWindowStart": null,
+      "dueWindowEnd": null,
       "scheduledStart": null,
       "scheduledEnd": null,
-      "status": "due",
-      "jobId": "25083",
-      "billing": "offer",
+      "status": "upcoming",
+      "jobId": "55702",
+      "billing": "pm_primary",
       "completedOn": null,
-      "tag": "offer_prepaid_annual",
       "needsFollowUp": true,
-      "notes": "Needs follow-up and scheduling. Offer the $225 prepaid annual. No phone is on file.",
-      "bookingToken": "60e414bc82f216e3e1625a97b348e245"
+      "notes": "Steve said another visit is scheduled and no invoice has been sent yet. No scheduled date appears in the Housecall Pro jobs or invoices export or in her history. Job 55702 is the only open Doreen job: status Needs scheduling, $125.00 due, no scheduled start, no invoice in the export, created August 21, 2026, two days before completed job 55703. Do not invent a date. Confirm with Steve whether 55702 is this next visit or a leftover of the August visit.",
+      "bookingToken": "60e414bc82f216e3e1625a97b348e245",
+      "dateUnknown": true
     },
     {
       "id": "v-ssmith-1",
@@ -585,36 +600,6 @@ window.RT_PLANS = {
           "time": "",
           "title": "Follow-up",
           "body": "Offer the $225 prepaid annual. FYF plan expired after included visits were completed."
-        }
-      ],
-      "planJob": true
-    },
-    {
-      "id": "25083",
-      "customerId": "c12",
-      "customer": "Doreen Sanchez",
-      "address": "19327 Wiersma Ave",
-      "city": "Cerritos",
-      "phone": "",
-      "problem": "Follow-up \u2014 offer prepaid annual plan",
-      "status": "new",
-      "lineItems": [
-        {
-          "label": "Follow-up visit (plan offer, not yet enrolled)",
-          "amount": 0,
-          "qty": 1
-        }
-      ],
-      "total": 0,
-      "dueAmount": 0,
-      "readingSets": [],
-      "timeline": [
-        {
-          "id": "t25083",
-          "kind": "system",
-          "time": "",
-          "title": "Follow-up",
-          "body": "Offer the $225 prepaid annual. FYF expired; last visit was billed $125. No phone on file."
         }
       ],
       "planJob": true

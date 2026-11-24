@@ -133,7 +133,7 @@
     return g;
   }
 
-  let state = { meta: null, slots: [], picked: null, name: "", phone: "", note: "", sent: false };
+  let state = { meta: null, slots: [], picked: null, name: "", phone: "", note: "", sent: false, step: 1 };
 
   function requestBody() {
     const s = state.picked;
@@ -182,54 +182,52 @@
       '<div class="h2" style="margin-top:4px">' + esc(state.meta.label) + "</div>" +
       '<div class="muted" style="margin-top:6px">Times are in Pacific Time and are already limited to Steve’s usual hours: weekday evenings and Saturdays. Closed times are not shown.</div></div>';
 
-    if (!groups.length) {
-      html += '<div class="panel"><div class="muted">No open times are published in this window. Call or text Steve at ' + esc(STEVE_PHONE) + " to find a time.</div></div>";
-    } else {
-      html += '<div class="section">Pick a time</div>';
-      groups.forEach(function (g) {
-        html += '<div class="slot-day"><h2>' + esc(g.label) + '</h2><div class="slot-row">';
-        g.slots.forEach(function (s, i) {
-          const on = state.picked && state.picked.start.getTime() === s.start.getTime();
-          html += '<button type="button" class="slot-btn' + (on ? " on" : "") + '" data-slot="' + esc(s.start.toISOString()) + '">' +
-            esc(prettyTime(s.start)) + "</button>";
+    if (state.step === 1) {
+      if (!groups.length) {
+        html += '<div class="panel"><div class="muted">No open times are published in this window. Call or text Steve at ' + esc(STEVE_PHONE) + " to find a time.</div></div>";
+      } else {
+        html += '<div class="section">Pick a time</div>';
+        groups.forEach(function (g) {
+          html += '<div class="slot-day"><h2>' + esc(g.label) + '</h2><div class="slot-row">';
+          g.slots.forEach(function (s) {
+            const on = state.picked && state.picked.start.getTime() === s.start.getTime();
+            html += '<button type="button" class="slot-btn' + (on ? " on" : "") + '" data-slot="' + esc(s.start.toISOString()) + '">' +
+              esc(prettyTime(s.start)) + "</button>";
+          });
+          html += "</div></div>";
         });
-        html += "</div></div>";
-      });
+      }
+      if (state.picked) {
+        html += '<div class="book-actions"><button type="button" class="btn accent" id="bk-continue">Continue</button></div>';
+      }
+    } else if (state.step === 2) {
+      const s = state.picked;
+      html += '<button type="button" class="link-btn book-back" id="bk-back">Change time</button>';
+      html += '<div class="picked-line">' + (s ? esc(prettyDate(s.start) + " at " + prettyTime(s.start) + "–" + prettyTime(s.end) + " PT") : "No time selected") + "</div>";
+      html += '<div class="book-confirm"><div class="section">Your contact</div>' +
+        '<label class="field"><div class="field-lab">Name</div><input id="bk-name" type="text" autocomplete="name" value="' + esc(state.name) + '"></label>' +
+        '<label class="field"><div class="field-lab">Phone</div><input id="bk-phone" type="tel" autocomplete="tel" value="' + esc(state.phone) + '"></label>' +
+        '<label class="field"><div class="field-lab">Note (optional)</div><textarea id="bk-note" rows="3">' + esc(state.note) + "</textarea></label></div>";
+      html += '<div class="book-actions"><button type="button" class="btn accent" id="bk-review">Review request</button></div>';
+    } else {
+      const s = state.picked;
+      html += '<button type="button" class="link-btn book-back" id="bk-back">Edit request</button>';
+      html += '<div class="picked-line">' + (s ? esc(prettyDate(s.start) + " at " + prettyTime(s.start) + "–" + prettyTime(s.end) + " PT") : "No time selected") + "</div>";
+      if (state.sent) {
+        html += '<div class="panel" style="margin-bottom:12px"><div class="h2">Request saved on this phone</div><div class="muted" style="margin-top:6px">It is not booked until Steve confirms. If the text or email app did not open, text or call him at ' + esc(STEVE_PHONE) + ".</div></div>";
+      } else {
+        html += '<div class="section">Request confirmation</div><div class="muted" style="margin-bottom:8px">This is the message that will go to Steve. It is a request only.</div>';
+      }
+      html += '<pre class="msg-preview">' + esc(requestBody()) + "</pre>";
+      html += '<div class="book-actions">';
+      html += '<a class="btn accent" id="bk-sms" href="' + esc(smsHref()) + '">Text this request to Steve</a>';
+      html += '<a class="btn" id="bk-mail" href="' + esc(mailHref()) + '">Email this request to Steve</a>';
+      html += "</div>";
     }
 
-    html += '<div class="book-confirm"><div class="section">Your contact</div>' +
-      '<label class="field"><div class="field-lab">Name</div><input id="bk-name" type="text" autocomplete="name" value="' + esc(state.name) + '"></label>' +
-      '<label class="field"><div class="field-lab">Phone</div><input id="bk-phone" type="tel" autocomplete="tel" value="' + esc(state.phone) + '"></label>' +
-      '<label class="field"><div class="field-lab">Note (optional)</div><textarea id="bk-note" rows="3">' + esc(state.note) + "</textarea></label></div>";
-
-    if (state.sent) {
-      html += '<div class="panel" style="margin-bottom:12px"><div class="h2">Request saved on this phone</div><div class="muted" style="margin-top:6px">It is not booked until Steve confirms. If the text or email app did not open, text or call him at ' + esc(STEVE_PHONE) + ".</div></div>";
-    }
-
-    html += '<div class="book-actions">';
-    html += '<a class="btn accent" id="bk-sms" href="' + esc(smsHref()) + '">Text this request to Steve</a>';
-    html += '<a class="btn" id="bk-mail" href="' + esc(mailHref()) + '">Email this request to Steve</a>';
-    html += "</div>";
     html += '<div class="muted" style="margin-top:16px;margin-bottom:24px">ReliaTech Services · Long Beach, CA<br>This page does not book the time by itself.</div></div>';
     main.innerHTML = html;
 
-    const nameEl = document.getElementById("bk-name");
-    const phoneEl = document.getElementById("bk-phone");
-    const noteEl = document.getElementById("bk-note");
-    function sync() {
-      state.name = nameEl.value;
-      state.phone = phoneEl.value;
-      state.note = noteEl.value;
-      const sms = document.getElementById("bk-sms");
-      const mail = document.getElementById("bk-mail");
-      if (sms) sms.href = smsHref();
-      if (mail) mail.href = mailHref();
-    }
-    ["input", "change"].forEach(function (ev) {
-      nameEl.addEventListener(ev, sync);
-      phoneEl.addEventListener(ev, sync);
-      noteEl.addEventListener(ev, sync);
-    });
     main.querySelectorAll("[data-slot]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         const iso = btn.getAttribute("data-slot");
@@ -237,8 +235,43 @@
         render();
       });
     });
-    function onSend(e) {
+    const cont = document.getElementById("bk-continue");
+    if (cont) cont.addEventListener("click", function () {
+      if (!state.picked) { alert("Pick a time first."); return; }
+      state.step = 2;
+      render();
+    });
+    const back = document.getElementById("bk-back");
+    if (back) back.addEventListener("click", function () {
+      state.sent = false;
+      state.step = state.step === 3 ? 2 : 1;
+      render();
+    });
+    const nameEl = document.getElementById("bk-name");
+    const phoneEl = document.getElementById("bk-phone");
+    const noteEl = document.getElementById("bk-note");
+    function sync() {
+      if (nameEl) state.name = nameEl.value;
+      if (phoneEl) state.phone = phoneEl.value;
+      if (noteEl) state.note = noteEl.value;
+    }
+    ["input", "change"].forEach(function (ev) {
+      if (nameEl) nameEl.addEventListener(ev, sync);
+      if (phoneEl) phoneEl.addEventListener(ev, sync);
+      if (noteEl) noteEl.addEventListener(ev, sync);
+    });
+    const review = document.getElementById("bk-review");
+    if (review) review.addEventListener("click", function () {
       sync();
+      if (!state.picked) { alert("Pick a time first."); return; }
+      if (!state.name.trim() || !state.phone.trim()) {
+        alert("Please enter your name and phone so Steve can confirm with you.");
+        return;
+      }
+      state.step = 3;
+      render();
+    });
+    function onSend(e) {
       if (!state.picked) {
         e.preventDefault();
         alert("Pick a time first.");
@@ -252,8 +285,10 @@
       persistRequest();
       state.sent = true;
     }
-    document.getElementById("bk-sms").addEventListener("click", onSend);
-    document.getElementById("bk-mail").addEventListener("click", onSend);
+    const sms = document.getElementById("bk-sms");
+    const mail = document.getElementById("bk-mail");
+    if (sms) sms.addEventListener("click", onSend);
+    if (mail) mail.addEventListener("click", onSend);
   }
 
   if (!token) {

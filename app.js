@@ -521,6 +521,130 @@
     entry.edits = (entry.edits || []).concat(edits);
     return { ok: true };
   }
+  function techNameOf(t) {
+    return typeof t === "string" ? t : (t && t.name) || "";
+  }
+  function defaultTechRec(name) {
+    const isSteve = name === DEFAULT_TECH;
+    return { name: name, role: isSteve ? "admin" : "independent", canEditOwnTimes: false };
+  }
+  function normalizeTechRecords(names, savedRecs) {
+    const byName = {};
+    (savedRecs || []).forEach(function (r) {
+      const n = techNameOf(r);
+      if (n) byName[n] = Object.assign(defaultTechRec(n), r, { name: n });
+    });
+    const list = [];
+    const seen = {};
+    (names || []).forEach(function (n) {
+      const name = techNameOf(n);
+      if (!name || seen[name]) return;
+      seen[name] = true;
+      list.push(byName[name] || defaultTechRec(name));
+    });
+    Object.keys(byName).forEach(function (name) {
+      if (!seen[name]) { seen[name] = true; list.push(byName[name]); }
+    });
+    if (!seen[DEFAULT_TECH]) list.unshift(defaultTechRec(DEFAULT_TECH));
+    const steve = list.find(function (r) { return r.name === DEFAULT_TECH; });
+    if (steve) { steve.role = "admin"; }
+    return list;
+  }
+  function techNamesFrom(recs) {
+    return (recs || []).map(function (r) { return r.name; }).filter(Boolean);
+  }
+  function getTechRec(name) {
+    name = name || DEFAULT_TECH;
+    const recs = (typeof state !== "undefined" && state.techRecords) || [];
+    return recs.find(function (r) { return r.name === name; }) || defaultTechRec(name);
+  }
+  function isAdminTech(name) {
+    const rec = getTechRec(name || DEFAULT_TECH);
+    return rec.role === "admin" || rec.name === DEFAULT_TECH;
+  }
+  function actingAs() { return (state.currentTech || DEFAULT_TECH); }
+  function canEditTimestamps(name, entry) {
+    if (isAdminTech(name)) return true;
+    const rec = getTechRec(name);
+    if (rec.canEditOwnTimes && entry && entry.tech === name) return true;
+    return false;
+  }
+  function pendingOnEntry(entry) {
+    return ((entry && entry.corrections) || []).find(function (c) { return c.status === "pending"; }) || null;
+  }
+  function allPendingCorrections() {
+    const out = [];
+    (state.jobs || []).forEach(function (job) {
+      jobTimeEntries(job).forEach(function (e) {
+        (e.corrections || []).forEach(function (c) {
+          if (c.status === "pending") out.push({ job: job, entry: e, correction: c });
+        });
+      });
+    });
+    return out;
+  }
+  function correctionSummary(c) {
+    if (!c || !c.proposed) return "";
+    const p = c.proposed;
+    return "Arrive " + (p.clockIn ? formatDateTime(p.clockIn) : "—") + " · Depart " + (p.clockOut ? formatDateTime(p.clockOut) : "—");
+  }
+  function submitCorrectionRequest(job, entry, draft, requester) {
+    const proposed = {
+      tech: (draft.tech || entry.tech || "").trim(),
+      clockIn: draft.clockIn || null,
+      clockOut: draft.clockOut || null
+    };
+    if (proposed.clockOut && proposed.clockIn && parseStamp(proposed.clockOut) < parseStamp(proposed.clockIn)) {
+      return { ok: false, msg: "Depart time can’t be before arrive time." };
+    }
+    const same = (proposed.tech === (entry.tech || "")) &&
+      (proposed.clockIn || "") === (entry.clockIn || "") &&
+      (proposed.clockOut || "") === (entry.clockOut || "");
+    if (same) return { ok: false, msg: "No changes to request." };
+    if (pendingOnEntry(entry)) return { ok: false, msg: "A correction request is already pending on this entry." };
+    const rec = {
+      id: "cr" + Date.now(),
+      requestedBy: requester,
+      requestedAt: isoNow(),
+      reason: (draft.reason || "").trim(),
+      proposed: proposed,
+      previous: { tech: entry.tech, clockIn: entry.clockIn || null, clockOut: entry.clockOut || null },
+      status: "pending",
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewNote: ""
+    };
+    entry.corrections = (entry.corrections || []).concat([rec]);
+    job.timeline = [{ id: "crq" + Date.now(), kind: "system", time: "Just now", title: "Time correction requested", body: requester + " asked to change times on this job. Pending Steve’s approval. Reason: " + rec.reason }].concat(job.timeline || []);
+    return { ok: true, correction: rec };
+  }
+  function reviewCorrection(job, entry, correctionId, decision, reviewer, note) {
+    const rec = (entry.corrections || []).find(function (c) { return c.id === correctionId; });
+    if (!rec || rec.status !== "pending") return { ok: false, msg: "That request is no longer pending." };
+    rec.status = decision;
+    rec.reviewedBy = reviewer;
+    rec.reviewedAt = isoNow();
+    rec.reviewNote = (note || "").trim();
+    if (decision === "approved") {
+      const res = applyTimeEdit(job, entry, {
+        tech: rec.proposed.tech,
+        clockIn: rec.proposed.clockIn,
+        clockOut: rec.proposed.clockOut,
+        reason: "Approved correction request from " + rec.requestedBy + ": " + rec.reason + (rec.reviewNote ? " Review note: " + rec.reviewNote : "")
+      }, reviewer);
+      if (!res.ok) {
+        rec.status = "pending";
+        rec.reviewedBy = null;
+        rec.reviewedAt = null;
+        rec.reviewNote = "";
+        return res;
+      }
+      job.timeline = [{ id: "cra" + Date.now(), kind: "system", time: "Just now", title: "Time correction approved", body: reviewer + " approved " + rec.requestedBy + "’s request." }].concat(job.timeline || []);
+    } else {
+      job.timeline = [{ id: "crr" + Date.now(), kind: "system", time: "Just now", title: "Time correction rejected", body: reviewer + " rejected " + rec.requestedBy + "’s request." + (rec.reviewNote ? " Note: " + rec.reviewNote : "") }].concat(job.timeline || []);
+    }
+    return { ok: true };
+  }
 
   function emptyNoteDraft(type) {
     type = type || "visit";
@@ -728,21 +852,35 @@
       }).join("") +
       '</tbody><tfoot><tr><td colspan="4">Total</td><td>' + esc(formatHours(total)) + "</td></tr></tfoot></table>";
   }
+  function correctionTrailHtml(entry) {
+    const items = entry.corrections || [];
+    if (!items.length && !(entry.edits || []).length) return "";
+    let html = '<div class="edit-hist"><div class="field-lab">Audit trail (app only — not on the invoice)</div>';
+    items.slice().reverse().forEach(function (c) {
+      const st = c.status === "pending" ? "Pending" : c.status === "approved" ? "Approved" : "Rejected";
+      html += '<div class="muted" style="margin-top:4px">' + esc(formatDateTime(c.requestedAt)) + " · " + esc(c.requestedBy) + " requested: " + esc(correctionSummary(c)) + ". Reason: " + esc(c.reason) + " · " + st;
+      if (c.reviewedBy) html += " by " + esc(c.reviewedBy) + (c.reviewedAt ? " " + formatDateTime(c.reviewedAt) : "") + (c.reviewNote ? ". Note: " + esc(c.reviewNote) : "");
+      html += "</div>";
+    });
+    (entry.edits || []).slice().reverse().forEach(function (ed) {
+      const fieldLab = ed.field === "clockIn" ? "Arrive" : ed.field === "clockOut" ? "Depart" : "Tech";
+      const oldV = ed.field === "tech" ? ed.oldValue : formatDateTime(ed.oldValue);
+      const newV = ed.field === "tech" ? ed.newValue : formatDateTime(ed.newValue);
+      html += '<div class="muted" style="margin-top:4px">' + esc(formatDateTime(ed.editedAt)) + " · " + esc(ed.editedBy) + " changed " + fieldLab + " from " + esc(oldV || "—") + " to " + esc(newV || "—") + ". Reason: " + esc(ed.reason) + "</div>";
+    });
+    return html + "</div>";
+  }
   function timeSection(job) {
     const entries = jobTimeEntries(job);
-    const tech = state.currentTech || DEFAULT_TECH;
+    const tech = actingAs();
     const mine = openEntryFor(job, tech);
     const open = mine || anyOpenEntry(job);
     const flags = entries.reduce(function (acc, e) { return acc.concat(entryFlags(e).map(function (f) { return { e: e, f: f }; })); }, []);
     const mismatch = hoursMismatch(job);
-    const techs = (state.techs && state.techs.length) ? state.techs : [DEFAULT_TECH];
+    const admin = isAdminTech(tech);
     return '<div class="section-row"><div class="section" style="margin:0">Time on site</div></div>' +
-      '<div class="muted" style="margin:0 0 10px">Clock in sets this job to In progress. Time is saved on this phone only.</div>' +
-      '<div class="field-lab">Tech</div><div class="chips">' + techs.map(function (name) {
-        return '<button class="chip' + (tech === name ? " on" : "") + '" ' + act("pickTech", name) + ">" + esc(name) + "</button>";
-      }).join("") + "</div>" +
-      '<label class="field"><div class="field-lab">Add an independent tech</div><input id="new-tech" type="text" placeholder="Tech name" value="" oninput="RT.setNewTech(this.value)"></label>' +
-      '<button class="dash" style="margin-top:-4px;margin-bottom:12px" ' + act("addTech") + ">Add tech</button>" +
+      '<div class="muted" style="margin:0 0 10px">Clock in sets this job to In progress. Independents can clock in and out. Timestamp edits are limited by the acting-as role. Time is saved on this phone only.</div>' +
+      '<div class="acting-inline muted" style="margin:0 0 10px">Acting as <strong>' + esc(tech) + "</strong> · " + (admin ? "Admin" : "Independent") + ' · <button class="link-btn" style="margin:0" ' + act("openActingAs") + ">Change</button></div>" +
       (open ? '<div class="timer-card">' +
         '<div class="k-up">Clocked in' + (open.tech ? " · " + esc(open.tech) : "") + "</div>" +
         '<div class="timer" data-timer-start="' + esc(open.clockIn) + '">' + esc(formatElapsed(Date.now() - parseStamp(open.clockIn).getTime())) + "</div>" +
@@ -756,24 +894,36 @@
       "</div>" +
       (entries.length ? '<div class="stack" style="margin-bottom:14px">' + entries.slice().reverse().map(function (e) {
         const fl = entryFlags(e);
+        const pending = pendingOnEntry(e);
+        const canEdit = canEditTimestamps(tech, e);
+        let actions = "";
+        if (pending && admin) {
+          actions = '<div class="pending-box"><div class="k-up">Pending correction request</div>' +
+            '<div class="muted" style="margin-top:4px">' + esc(pending.requestedBy) + " asked to change this to " + esc(correctionSummary(pending)) + ".</div>" +
+            '<div class="muted" style="margin-top:4px">Reason: ' + esc(pending.reason) + "</div>" +
+            '<div class="quick" style="margin-top:8px">' +
+            '<button class="btn teal" ' + act("approveCorrection", job.id + "|" + e.id + "|" + pending.id) + ">Approve</button>" +
+            '<button class="btn ghost" ' + act("rejectCorrection", job.id + "|" + e.id + "|" + pending.id) + ">Reject</button></div></div>";
+        } else if (pending) {
+          actions = '<div class="pending-box"><div class="k-up">Pending correction request</div>' +
+            '<div class="muted" style="margin-top:4px">Waiting for Steve to approve or reject. Proposed: ' + esc(correctionSummary(pending)) + ".</div>" +
+            '<div class="muted" style="margin-top:4px">Reason: ' + esc(pending.reason) + "</div></div>";
+        } else if (canEdit) {
+          actions = '<button class="link-btn" ' + act("editTime", e.id) + ">Edit timestamps</button>";
+        } else if (e.tech === tech || admin) {
+          actions = '<button class="link-btn" ' + act("requestCorrection", e.id) + ">Request a correction</button>";
+        }
         return '<div class="panel time-entry">' +
           '<div class="row"><div class="h2">' + esc(e.tech) + "</div><div class=\"meta\">" + esc(formatHours(entryHours(e))) + "</div></div>" +
           '<div class="muted" style="margin:4px 0">' + esc(formatDate(e.clockIn)) + " · Arrive " + esc(formatTime(e.clockIn)) + " · Depart " + (e.clockOut ? esc(formatTime(e.clockOut)) : "—") + "</div>" +
           (fl.length ? '<div class="warn-inline">' + esc(fl.join(" · ")) + "</div>" : "") +
-          ((e.edits || []).length ? '<div class="edit-hist"><div class="field-lab">Edit history (app only — not on the invoice)</div>' + e.edits.map(function (ed) {
-            const fieldLab = ed.field === "clockIn" ? "Arrive" : ed.field === "clockOut" ? "Depart" : "Tech";
-            const oldV = ed.field === "tech" ? ed.oldValue : formatDateTime(ed.oldValue);
-            const newV = ed.field === "tech" ? ed.newValue : formatDateTime(ed.newValue);
-            return '<div class="muted" style="margin-top:4px">' + esc(formatDateTime(ed.editedAt)) + " · " + esc(ed.editedBy) + " changed " + fieldLab + " from " + esc(oldV || "—") + " to " + esc(newV || "—") + ". Reason: " + esc(ed.reason) + "</div>";
-          }).join("") + "</div>" : "") +
-          '<button class="link-btn" ' + act("editTime", e.id) + ">Edit timestamps</button></div>";
+          actions + correctionTrailHtml(e) + "</div>";
       }).join("") + "</div>" : '<div class="muted" style="margin-bottom:14px">No time entries yet.</div>') +
       (mismatch ? '<div class="warn-banner">' + esc(mismatch) + " This warning stays in the app; it is not printed on the invoice.</div>" : "") +
       '<button class="dash' + (showTimeOnInvoice(job) ? " sel" : "") + '" style="margin-bottom:16px" ' + act("toggleTimeOnInvoice") + ">" +
         (showTimeOnInvoice(job) ? "Time on site will print on this invoice" : "Time on site hidden on this invoice") + ". Default is on for hourly jobs, off for flat-rate." +
       "</button>";
   }
-
 
   const INITIAL_CUSTOMERS = (window.RT_DATA && window.RT_DATA.customers) ? window.RT_DATA.customers : [];
   const INITIAL_JOBS = (window.RT_DATA && window.RT_DATA.jobs) ? window.RT_DATA.jobs : [];
@@ -871,6 +1021,8 @@
     assetEditingId: null,
     currentTech: (_saved && _saved.currentTech) || DEFAULT_TECH,
     techs: (_saved && Array.isArray(_saved.techs) && _saved.techs.length) ? _saved.techs : [DEFAULT_TECH],
+    techRecords: [],
+    boardMode: "board",
     noteDraft: emptyNoteDraft("visit"),
     timeEdit: null,
     voice: { listening: false, text: "", fallback: false, error: "" },
@@ -890,6 +1042,33 @@
     scheduleVisitId: null,
     scheduleDraft: { date: "", time: "" }
   };
+  state.techRecords = normalizeTechRecords(state.techs, _saved && _saved.techRecords);
+  state.techs = techNamesFrom(state.techRecords);
+  (function migratePlanData() {
+    const forcePlan = (PLAN_SEED.plans || []).find(function (p) { return p.id === "p-doreen-offer"; });
+    if (forcePlan) {
+      let found = false;
+      state.plans = state.plans.map(function (p) {
+        if (p.id !== forcePlan.id) return p;
+        found = true;
+        return Object.assign({}, p, JSON.parse(JSON.stringify(forcePlan)));
+      });
+      if (!found) state.plans.push(JSON.parse(JSON.stringify(forcePlan)));
+    }
+    (PLAN_SEED.visits || []).forEach(function (sv) {
+      if (sv.id !== "v-doreen-followup" && sv.id !== "v-doreen-2026-aug") return;
+      let found = false;
+      state.visits = state.visits.map(function (v) {
+        if (v.id !== sv.id) return v;
+        found = true;
+        return Object.assign({}, v, JSON.parse(JSON.stringify(sv)));
+      });
+      if (!found) state.visits.push(JSON.parse(JSON.stringify(sv)));
+    });
+    state.jobs = state.jobs.filter(function (j) {
+      return j.id !== "25083" || !!j.scheduledStart;
+    });
+  })();
   function persist() {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify({
@@ -898,10 +1077,11 @@
         jobs: state.jobs,
         currentTech: state.currentTech,
         techs: state.techs,
+        techRecords: state.techRecords,
         plans: state.plans,
         visits: state.visits,
         settings: state.settings,
-        showCompleted: state.showCompleted
+        showCompleted: false
       }));
     } catch (e) {}
   }
@@ -953,7 +1133,7 @@
       if (end && end.getTime() < Date.now() && !v.completedOn) return "overdue";
       return "scheduled";
     }
-    if (!v.dueWindowEnd) return v.needsFollowUp ? "due" : "upcoming";
+    if (v.dateUnknown || !v.dueWindowEnd) return "upcoming";
     const today = todayYmd();
     if (today > v.dueWindowEnd) return "overdue";
     const dueFrom = addDaysYmd(v.dueWindowStart || v.dueWindowEnd, -30);
@@ -973,7 +1153,8 @@
     const tag = (v && v.tag) || (plan && plan.tag) || "";
     if (tag === "install_commitment") tags.push("Install commitment");
     if (tag === "offer_prepaid_annual") tags.push("Offer $225 prepaid annual");
-    if (v && v.needsFollowUp) tags.push("Needs follow-up");
+    if (v && v.dateUnknown) tags.push("Date not found — confirm with Steve");
+    else if (v && v.needsFollowUp) tags.push("Needs follow-up");
     return tags;
   }
   function bookingUrl(v) {
@@ -988,6 +1169,7 @@
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   }
   function formatWindow(v) {
+    if (v.dateUnknown) return "No scheduled date found in Housecall Pro";
     if (v.scheduledStart) return formatPrettyDateTime(v.scheduledStart) + " PT";
     if (v.dueWindowStart && v.dueWindowEnd && v.dueWindowStart === v.dueWindowEnd) return "Due " + formatYmd(v.dueWindowStart);
     if (v.dueWindowStart && v.dueWindowEnd) return "Due " + formatYmd(v.dueWindowStart) + " – " + formatYmd(v.dueWindowEnd);
@@ -1056,6 +1238,81 @@
     if (isCompletedJob(job)) return false;
     if (isUpcomingPlanHold(job)) return false;
     return true;
+  }
+  const BOARD_DAYS = 14;
+  function startOfTodayLocal() {
+    const p = tzParts(new Date());
+    return new Date(Number(p.year), Number(p.month) - 1, Number(p.day));
+  }
+  function boardHorizon() {
+    return new Date(startOfTodayLocal().getTime() + BOARD_DAYS * 24 * 60 * 60 * 1000);
+  }
+  function isWithinBoardWindow(d) {
+    if (!d) return false;
+    return d.getTime() >= startOfTodayLocal().getTime() && d.getTime() < boardHorizon().getTime();
+  }
+  function ymdToLocalDate(s) {
+    if (!s) return null;
+    const p = String(s).split("-");
+    if (p.length < 3) return null;
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+  }
+  function visitWindowHitsBoard(v) {
+    const start = startOfTodayLocal();
+    const end = boardHorizon();
+    const ws = ymdToLocalDate(v.dueWindowStart);
+    const we = ymdToLocalDate(v.dueWindowEnd);
+    if (!ws && !we) return false;
+    const a = ws || we;
+    const b = we || ws;
+    const bEnd = new Date(b.getTime() + 24 * 60 * 60 * 1000);
+    return bEnd.getTime() > start.getTime() && a.getTime() < end.getTime();
+  }
+  function visitOnBoardPreview(v) {
+    if (!v || v.dateUnknown) return false;
+    const st = visitStatus(v);
+    if (st === "overdue") return true;
+    if (st === "scheduled") return isWithinBoardWindow(parseStamp(v.scheduledStart));
+    if (st === "due") return visitWindowHitsBoard(v);
+    return false;
+  }
+  function isInProgressWork(job) {
+    if (!job || isCompletedJob(job)) return false;
+    if (anyOpenEntry(job)) return true;
+    if (job.status !== "progress") return false;
+    const v = linkedOpenVisit(job);
+    if (v) {
+      const st = visitStatus(v);
+      if (st === "overdue" || st === "due") return false;
+    }
+    return true;
+  }
+  function isBoardJob(job) {
+    if (!job || isCompletedJob(job)) return false;
+    if (isInProgressWork(job)) return true;
+    const d = jobScheduleDate(job);
+    if (d && isWithinBoardWindow(d)) return true;
+    const v = linkedOpenVisit(job);
+    if (v && visitStatus(v) === "scheduled" && isWithinBoardWindow(parseStamp(v.scheduledStart))) return true;
+    return false;
+  }
+  function unpaidBalanceJobs() {
+    return (state.jobs || []).filter(function (j) {
+      if (Number(j.dueAmount || 0) <= 0) return false;
+      if (j.status === "paid" || j.status === "done" || j.status === "cancelled" || j.status === "canceled") return false;
+      if (isBoardJob(j)) return false;
+      return true;
+    }).sort(function (a, b) {
+      return String(a.customer).localeCompare(String(b.customer));
+    });
+  }
+  function boardPlanVisits() {
+    return (state.visits || []).filter(visitOnBoardPreview).sort(function (a, b) {
+      const ra = visitStatus(a) === "overdue" ? 0 : 1;
+      const rb = visitStatus(b) === "overdue" ? 0 : 1;
+      if (ra !== rb) return ra - rb;
+      return String(a.dueWindowStart || a.scheduledStart || "").localeCompare(String(b.dueWindowStart || b.scheduledStart || ""));
+    });
   }
   function jobSortGroup(job) {
     if (job.status === "progress" || anyOpenEntry(job)) return 0;
@@ -1174,42 +1431,63 @@
     }).join("") + "</div>";
   }
 
+  function actingAsBar() {
+    const tech = actingAs();
+    const pending = isAdminTech(tech) ? allPendingCorrections().length : 0;
+    return '<div class="acting-bar"><div class="acting-who">Acting as <strong>' + esc(tech) + "</strong> · " + (isAdminTech(tech) ? "Admin" : "Independent") + "</div>" +
+      '<div class="acting-links"><button class="link-btn" style="margin:0" ' + act("openActingAs") + ">Change</button>" +
+      (pending ? '<button class="link-btn" style="margin:0" ' + act("openTimeCorrections") + ">Time corrections · " + pending + "</button>" : "") +
+      "</div></div>";
+  }
   function jobsList() {
     const q = state.query.trim().toLowerCase();
     const searching = !!q;
+    const mode = state.boardMode || "board";
     let list = state.jobs.filter(function (j) {
       const hit = !q || [j.id, j.customer, j.address, j.city, j.problem].join(" ").toLowerCase().indexOf(q) !== -1;
       if (!hit) return false;
       if (searching) return true;
-      if (state.showCompleted) {
+      if (mode === "all") {
         if (state.filter === "all") return true;
         if (state.filter === "open") return j.status !== "paid";
         return j.status === state.filter;
       }
-      return isActiveJob(j);
+      if (mode === "unpaid") return unpaidBalanceJobs().some(function (u) { return u.id === j.id; });
+      return isBoardJob(j);
     });
-    list = sortJobsList(list);
-    const due = attentionVisits();
-    const duePreview = due.slice(0, 3);
+    list = mode === "unpaid" && !searching ? unpaidBalanceJobs() : sortJobsList(list);
+    const due = boardPlanVisits();
     let dueHtml = "";
-    if (!searching && due.length) {
+    if (!searching && mode === "board") {
       dueHtml = '<div class="section-row"><div class="section" style="margin:0">Plan visits due</div>' +
-        '<button class="link-btn" style="margin:0" ' + act("openPlans") + ">See all · " + due.length + "</button></div>" +
-        '<div class="due-list">' + duePreview.map(dueVisitCard).join("") + "</div>";
+        '<button class="link-btn" style="margin:0" ' + act("openPlans") + ">See all plan visits</button></div>";
+      if (due.length) dueHtml += '<div class="due-list">' + due.map(dueVisitCard).join("") + "</div>";
+      else dueHtml += '<div class="muted" style="margin:-4px 0 14px">Nothing overdue or due in the next 14 days. Older and later visits are on See all plan visits and on each customer page.</div>';
     }
-    const chips = state.showCompleted
+    const unpaid = unpaidBalanceJobs();
+    const chips = (mode === "all" && !searching)
       ? '<div class="chips">' + FILTERS.map(function (f) {
           return '<button class="chip' + (state.filter === f[0] ? " on" : "") + '" ' + act("filter", f[0]) + ">" + esc(f[1]) + "</button>";
         }).join("") + "</div>"
       : "";
+    const heading = searching ? "Search results" : mode === "all" ? "All jobs" : mode === "unpaid" ? "Unpaid balances" : "Active and next 14 days";
+    const empty = searching ? "No jobs match that search." :
+      mode === "unpaid" ? "No unpaid balances sitting outside the board." :
+      mode === "all" ? "No jobs in this filter." :
+      "No in-progress work or scheduled jobs in the next 14 days. Overdue and due-soon plan visits are listed above. Everything else stays in search, on customer pages, and behind Show all.";
+    const links = searching ? "" : '<div class="board-links">' +
+      (mode !== "board" ? '<button class="link-btn" style="margin:0" ' + act("setBoardMode", "board") + ">Back to board</button>" : "") +
+      (mode !== "all" ? '<button class="link-btn" style="margin:0" ' + act("setBoardMode", "all") + ">Show all</button>" : "") +
+      (mode !== "unpaid" ? '<button class="link-btn" style="margin:0" ' + act("setBoardMode", "unpaid") + ">Unpaid balances" + (unpaid.length ? " · " + unpaid.length : "") + "</button>" : "") +
+      "</div>";
     return topBar({ kicker: "ReliaTech Services", title: "Jobs", badge: SHOW_SAMPLE_BADGE, settings: true }) +
+      actingAsBar() +
       '<div class="content"><div class="pad pad-fab">' +
       '<div class="search">' + icon("search", 16) + '<input id="search-q" type="search" placeholder="Search jobs or addresses" value="' + esc(state.query) + '" oninput="RT.setQuery(this.value)"></div>' +
-      dueHtml +
-      '<div class="jobs-toolbar"><div class="section" style="margin:0">' + (state.showCompleted || searching ? (searching ? "Search results" : "All jobs") : "Active and upcoming") + "</div>" +
-      '<button class="link-btn" style="margin:0" ' + act("toggleCompleted") + ">" + (state.showCompleted ? "Hide completed" : "Show completed") + "</button></div>" +
+      '<div class="jobs-toolbar"><div class="section" style="margin:0">' + heading + "</div>" + links + "</div>" +
       chips +
-      '<div class="stack">' + (list.length ? list.map(jobCard).join("") : '<div class="muted">No jobs in this list. Completed and past Housecall Pro jobs are on each customer page, or tap Show completed.</div>') + "</div></div></div>" +
+      dueHtml +
+      '<div class="stack">' + (list.length ? list.map(jobCard).join("") : '<div class="muted">' + esc(empty) + "</div>") + "</div></div></div>" +
       '<button class="fab" ' + act("openNewCall") + ' aria-label="New call">' + icon("plus", 28) + "</button>" +
       tabBar();
   }
@@ -1278,7 +1556,7 @@
     const c = getCustomer(v.customerId);
     const tags = visitTagLabel(v, plan);
     return '<div class="visit-row" style="cursor:default"><div class="visit-top"><div><div class="job-name" style="margin:0">' + (showCustomer ? esc(c ? c.name : "") + " · " : "") + esc(v.label) + "</div></div>" + visitBadge(v) + "</div>" +
-      '<div class="muted" style="margin-top:4px">' + esc(formatWindow(v)) + (v.jobId ? " · Job #" + v.jobId : "") + (v.billing === "prepaid_covered" ? " · Already paid" : v.billing === "included" ? " · Included, no maintenance charge" : v.billing === "offer" ? " · Offer, not enrolled" : v.billing === "custom" ? " · Custom billing" : "") + "</div>" +
+      '<div class="muted" style="margin-top:4px">' + esc(formatWindow(v)) + (v.jobId ? " · Job #" + v.jobId : "") + (v.billing === "prepaid_covered" ? " · Already paid" : v.billing === "included" ? " · Included, no maintenance charge" : v.billing === "offer" ? " · Offer, not enrolled" : v.billing === "custom" ? " · Custom billing" : v.billing === "pm_primary" ? " · $125, billed on completion" : "") + "</div>" +
       (v.notes ? '<div class="muted" style="margin-top:6px">' + esc(v.notes) + "</div>" : "") +
       (tags.length ? '<div>' + tags.map(function (t) { return '<span class="tag-note">' + esc(t) + "</span>"; }).join(" ") + "</div>" : "") +
       visitActionButtons(v) + "</div>";
@@ -1309,10 +1587,59 @@
       (upcoming.length ? '<div class="section">Scheduled and upcoming</div>' + upcoming.map(function (v) { return visitBlock(v, true); }).join("") : "") +
       "</div></div>";
   }
+  function actingAsSheet() {
+    const recs = state.techRecords || [];
+    const tech = actingAs();
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Acting as</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="muted" style="margin-bottom:12px">This is not a login. Anyone with this phone can switch who they are acting as. Real sign-in needs a shared backend.</div>' +
+      '<div class="chips">' + recs.map(function (r) {
+        const lab = r.name + (r.role === "admin" ? " · Admin" : " · Independent");
+        return '<button class="chip' + (tech === r.name ? " on" : "") + '" ' + act("pickTech", r.name) + ">" + esc(lab) + "</button>";
+      }).join("") + "</div>" +
+      '<label class="field"><div class="field-lab">Add an independent tech</div><input id="new-tech" type="text" placeholder="Tech name" value="" oninput="RT.setNewTech(this.value)"></label>' +
+      '<button class="btn ghost" ' + act("addTech") + ">Add tech</button>"
+    );
+  }
+  function timeCorrectionsScreen() {
+    const pending = allPendingCorrections();
+    return topBar({ back: "closeTimeCorrections", title: "Time corrections", badge: SHOW_SAMPLE_BADGE }) +
+      '<div class="content screen"><div class="pad">' +
+      '<div class="muted" style="margin-bottom:12px">Requests from techs who cannot edit timestamps. Approving applies the proposed times and keeps an audit trail in the app, not on the invoice.</div>' +
+      (pending.length ? pending.map(function (row) {
+        const c = row.correction, e = row.entry, job = row.job;
+        return '<div class="panel pending-box" style="margin-bottom:12px">' +
+          '<div class="k-up">Pending</div>' +
+          '<div class="h2" style="margin-top:4px">' + esc(job.customer) + " · #" + esc(job.id) + "</div>" +
+          '<div class="muted" style="margin-top:6px">' + esc(c.requestedBy) + " · " + esc(formatDateTime(c.requestedAt)) + "</div>" +
+          '<div class="muted" style="margin-top:6px">Current: Arrive ' + esc(e.clockIn ? formatDateTime(e.clockIn) : "—") + " · Depart " + esc(e.clockOut ? formatDateTime(e.clockOut) : "—") + "</div>" +
+          '<div class="muted">Proposed: ' + esc(correctionSummary(c)) + "</div>" +
+          '<div class="muted" style="margin-top:6px">Reason: ' + esc(c.reason) + "</div>" +
+          '<div class="quick" style="margin-top:10px">' +
+          '<button class="btn teal" ' + act("approveCorrection", job.id + "|" + e.id + "|" + c.id) + ">Approve</button>" +
+          '<button class="btn ghost" ' + act("rejectCorrection", job.id + "|" + e.id + "|" + c.id) + ">Reject</button></div></div>";
+      }).join("") : '<div class="muted">No pending correction requests.</div>') +
+      "</div></div>";
+  }
   function settingsScreen() {
     const s = state.settings || SETTINGS_DEFAULTS;
+    const recs = state.techRecords || [];
+    const admin = isAdminTech(actingAs());
     return topBar({ back: "closeSettings", title: "Settings", badge: SHOW_SAMPLE_BADGE, voice: false }) +
       '<div class="content screen"><div class="pad">' +
+      actingAsBar() +
+      '<div class="section">Techs and time edits</div>' +
+      '<div class="muted" style="margin:-4px 0 12px">Independents can clock in and out. Only Steve (admin) can edit any timestamp, unless you turn on “Can edit own times” for that tech. This Acting as switch is not a login and is not secure until there is a shared backend with sign-in.</div>' +
+      recs.map(function (r) {
+        const on = !!r.canEditOwnTimes;
+        return '<div class="panel" style="margin-bottom:8px"><div class="row"><div><div class="h2" style="margin:0">' + esc(r.name) + "</div><div class=\"meta\">" + (r.role === "admin" ? "Admin" : "Independent") + "</div></div>" +
+          (r.role === "admin" ? '<div class="meta">Can edit any time</div>' :
+            (admin ? '<button class="dash' + (on ? " sel" : "") + '" ' + act("toggleCanEditOwnTimes", r.name) + ">" + (on ? "Can edit own times · on" : "Can edit own times · off") + "</button>" :
+              '<div class="meta">Can edit own times: ' + (on ? "on" : "off") + "</div>")) +
+          "</div></div>";
+      }).join("") +
+      '<label class="field"><div class="field-lab">Add an independent tech</div><input id="new-tech" type="text" placeholder="Tech name" value="" oninput="RT.setNewTech(this.value)"></label>' +
+      '<button class="dash" style="margin-top:-4px;margin-bottom:16px" ' + act("addTech") + ">Add tech</button>" +
       '<div class="section">Availability</div>' +
       '<div class="muted" style="margin:-4px 0 12px">Used when you pick a time and when a customer booking link shows open slots. The public booking page also reads published slots.json, so after you change these hours run the update_slots script and publish that file.</div>' +
       '<label class="field"><div class="field-lab">Weekday evening start (PT)</div><input id="st-weekdayStart" type="time" value="' + esc(s.weekdayStart) + '" oninput="RT.setSetting(\'weekdayStart\', this.value)"></label>' +
@@ -1911,22 +2238,19 @@
     const d = state.timeEdit || {};
     const entry = jobTimeEntries(job).find(function (e) { return e.id === d.entryId; });
     if (!entry) return backdrop('<div class="sheet-head"><div class="sheet-title">Edit time</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div><div class=\"muted\">That time entry is no longer here.</div>");
+    const request = !!d.request;
     return backdrop(
-      '<div class="sheet-head"><div class="sheet-title">Edit timestamps</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      '<div class="muted" style="margin-bottom:12px">Use this to fix a forgotten clock-out or a wrong time. A reason is required. The edit history stays in the app and is never printed on the invoice.</div>' +
+      '<div class="sheet-head"><div class="sheet-title">' + (request ? "Request a correction" : "Edit timestamps") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="muted" style="margin-bottom:12px">' + (request
+        ? "The times will not change until Steve approves this request. A reason is required. The request and his decision stay in the app and are never printed on the invoice."
+        : "Use this to fix a forgotten clock-out or a wrong time. A reason is required. The edit history stays in the app and is never printed on the invoice.") + "</div>" +
       '<label class="field"><div class="field-lab">Tech</div><input id="te-tech" type="text" value="' + esc(d.tech || "") + '" oninput="RT.setTimeEdit(\'tech\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Arrive</div><input id="te-clockIn" type="datetime-local" value="' + esc(d.clockIn || "") + '" oninput="RT.setTimeEdit(\'clockIn\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Depart</div><input id="te-clockOut" type="datetime-local" value="' + esc(d.clockOut || "") + '" oninput="RT.setTimeEdit(\'clockOut\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Reason (required)</div><textarea id="te-reason" rows="3" placeholder="e.g. Forgot to clock out at the end of the day" oninput="RT.setTimeEdit(\'reason\', this.value)">' + esc(d.reason || "") + "</textarea></label>" +
-      ((entry.edits || []).length ? '<div class="edit-hist" style="margin-bottom:12px"><div class="field-lab">Previous edits</div>' + entry.edits.map(function (ed) {
-        const fieldLab = ed.field === "clockIn" ? "Arrive" : ed.field === "clockOut" ? "Depart" : "Tech";
-        const oldV = ed.field === "tech" ? ed.oldValue : formatDateTime(ed.oldValue);
-        const newV = ed.field === "tech" ? ed.newValue : formatDateTime(ed.newValue);
-        return '<div class="muted" style="margin-top:4px">' + esc(formatDateTime(ed.editedAt)) + " · " + esc(ed.editedBy) + " changed " + fieldLab + " from " + esc(oldV || "—") + " to " + esc(newV || "—") + ". Reason: " + esc(ed.reason) + "</div>";
-      }).join("") + "</div>" : "") +
-      '<button class="btn" ' + act("saveTimeEdit") + ">Save changes</button>");
+      correctionTrailHtml(entry) +
+      '<button class="btn" style="margin-top:12px" ' + act(request ? "saveCorrectionRequest" : "saveTimeEdit") + ">" + (request ? "Submit request" : "Save changes") + "</button>");
   }
-
 
   function voiceSheet() {
     const v = state.voice || {};
@@ -1980,6 +2304,7 @@
     const job = getJob(state.openJobId);
     if (s === "note") return noteSheet();
     if (s === "timeEdit") return job ? timeEditSheet(job) : "";
+    if (s === "actingAs") return actingAsSheet();
     if (s === "voice") return voiceSheet();
     if (s === "voiceConfirm") return voiceConfirmSheet();
     if (s === "photo") return photoSheet();
@@ -2023,6 +2348,7 @@
   function mainHtml() {
     if (state.screen === "settings") return settingsScreen();
     if (state.screen === "plans") return plansScreen();
+    if (state.screen === "timeCorrections") return timeCorrectionsScreen();
     if (state.openCustomerId) {
       const c = state.customers.find(function (x) { return x.id === state.openCustomerId; });
       if (c) return customerDetail(c);
@@ -2058,10 +2384,23 @@
     if (name === "closePlans") { state.screen = null; state.tab = "jobs"; render(); return; }
     if (name === "openSettings") { state.screen = "settings"; render(); return; }
     if (name === "closeSettings") { state.screen = null; render(); return; }
-    if (name === "toggleCompleted") {
-      state.showCompleted = !state.showCompleted;
-      if (state.showCompleted) state.filter = "all";
+    if (name === "toggleCompleted" || name === "setBoardMode") {
+      const mode = name === "setBoardMode" ? (arg || "board") : (state.boardMode === "all" ? "board" : "all");
+      state.boardMode = mode;
+      if (mode === "all") state.filter = "all";
       else state.filter = "open";
+      if (mode !== "all") state.query = state.query; // keep search only when user is searching
+      render(); return;
+    }
+    if (name === "openActingAs") { state.sheet = "actingAs"; render(); return; }
+    if (name === "openTimeCorrections") { state.screen = "timeCorrections"; state.sheet = null; state.openJobId = null; state.openCustomerId = null; render(); return; }
+    if (name === "closeTimeCorrections") { state.screen = null; state.tab = "jobs"; render(); return; }
+    if (name === "toggleCanEditOwnTimes") {
+      if (!isAdminTech(actingAs())) { showToast("Only Steve can change that setting"); return; }
+      state.techRecords = (state.techRecords || []).map(function (r) {
+        if (r.name !== arg || r.role === "admin") return r;
+        return Object.assign({}, r, { canEditOwnTimes: !r.canEditOwnTimes });
+      });
       render(); return;
     }
     if (name === "openVisit") {
@@ -2371,13 +2710,19 @@
       job.timeline = [{ id: "pay" + Date.now(), kind: "system", time: "Just now", title: "Paid", body: "Invoice " + (job.invoiceId || (job.id + "-01")) + " marked paid, " + money(job.total) + "." }].concat(job.timeline);
       state.sheet = null; showToast("Marked paid · sample only"); return;
     }
-    if (name === "pickTech") { state.currentTech = arg; render(); return; }
+    if (name === "pickTech") {
+      state.currentTech = arg;
+      if (state.sheet === "actingAs") state.sheet = null;
+      render(); return;
+    }
     if (name === "addTech") {
       const n = (state._newTech || "").trim();
       if (!n) { showToast("Enter a tech name"); return; }
-      if (state.techs.indexOf(n) === -1) state.techs = state.techs.concat([n]);
+      state.techRecords = normalizeTechRecords((state.techs || []).concat([n]), state.techRecords);
+      state.techs = techNamesFrom(state.techRecords);
       state.currentTech = n;
       state._newTech = "";
+      if (state.sheet === "actingAs") state.sheet = null;
       render(); return;
     }
     if (name === "clockIn") {
@@ -2399,11 +2744,13 @@
       job.showTimeOnInvoice = !showTimeOnInvoice(job);
       render(); return;
     }
-    if (name === "editTime") {
+    if (name === "editTime" || name === "requestCorrection") {
       const job = getJob(state.openJobId); if (!job) return;
       const entry = jobTimeEntries(job).find(function (e) { return e.id === arg; });
       if (!entry) return;
-      state.timeEdit = { entryId: entry.id, tech: entry.tech, clockIn: toInputValue(entry.clockIn), clockOut: entry.clockOut ? toInputValue(entry.clockOut) : "", reason: "" };
+      const request = name === "requestCorrection" || !canEditTimestamps(actingAs(), entry);
+      if (request && pendingOnEntry(entry)) { showToast("A correction request is already pending on this entry."); return; }
+      state.timeEdit = { entryId: entry.id, tech: entry.tech, clockIn: toInputValue(entry.clockIn), clockOut: entry.clockOut ? toInputValue(entry.clockOut) : "", reason: "", request: request };
       state.sheet = "timeEdit";
       render(); return;
     }
@@ -2413,10 +2760,38 @@
       if (!(d.reason || "").trim()) { showToast("A reason is required"); return; }
       const entry = jobTimeEntries(job).find(function (e) { return e.id === d.entryId; });
       if (!entry) return;
-      const res = applyTimeEdit(job, entry, { tech: d.tech, clockIn: fromInputValue(d.clockIn), clockOut: fromInputValue(d.clockOut), reason: d.reason.trim() }, state.currentTech || DEFAULT_TECH);
+      if (!canEditTimestamps(actingAs(), entry)) { showToast("You can’t edit timestamps directly. Submit a correction request."); return; }
+      const res = applyTimeEdit(job, entry, { tech: d.tech, clockIn: fromInputValue(d.clockIn), clockOut: fromInputValue(d.clockOut), reason: d.reason.trim() }, actingAs());
       if (!res.ok) { showToast(res.msg); return; }
       state.sheet = null;
       showToast("Time entry updated · history stays in the app");
+      return;
+    }
+    if (name === "saveCorrectionRequest") {
+      const job = getJob(state.openJobId); if (!job) return;
+      const d = state.timeEdit || {};
+      if (!(d.reason || "").trim()) { showToast("A reason is required"); return; }
+      const entry = jobTimeEntries(job).find(function (e) { return e.id === d.entryId; });
+      if (!entry) return;
+      const res = submitCorrectionRequest(job, entry, { tech: d.tech, clockIn: fromInputValue(d.clockIn), clockOut: fromInputValue(d.clockOut), reason: d.reason.trim() }, actingAs());
+      if (!res.ok) { showToast(res.msg); return; }
+      state.sheet = null;
+      showToast("Correction request sent · waiting for Steve");
+      return;
+    }
+    if (name === "approveCorrection" || name === "rejectCorrection") {
+      if (!isAdminTech(actingAs())) { showToast("Only Steve can approve or reject time corrections"); return; }
+      const parts = String(arg || "").split("|");
+      const job = getJob(parts[0]);
+      const entry = job && jobTimeEntries(job).find(function (e) { return e.id === parts[1]; });
+      if (!job || !entry) return;
+      let note = "";
+      if (name === "rejectCorrection") {
+        note = (window.prompt("Optional note for the rejection:") || "").trim();
+      }
+      const res = reviewCorrection(job, entry, parts[2], name === "approveCorrection" ? "approved" : "rejected", actingAs(), note);
+      if (!res.ok) { showToast(res.msg); return; }
+      showToast(name === "approveCorrection" ? "Correction approved · times updated" : "Correction rejected · times unchanged");
       return;
     }
     if (name === "noteType") { state.noteDraft.type = arg; render(); return; }
@@ -2556,6 +2931,7 @@
     if (!h) return;
     if (h === "plans") { state.screen = "plans"; state.openJobId = null; state.openCustomerId = null; return; }
     if (h === "settings") { state.screen = "settings"; return; }
+    if (h === "time-corrections") { state.screen = "timeCorrections"; state.openJobId = null; state.openCustomerId = null; return; }
     if (h.indexOf("job/") === 0) {
       const id = h.slice(4);
       if (getJob(id) || (state.moneyJobs || []).some(function (j) { return j.id === id; })) {
@@ -2572,6 +2948,7 @@
     let want = "";
     if (state.screen === "settings") want = "settings";
     else if (state.screen === "plans") want = "plans";
+    else if (state.screen === "timeCorrections") want = "time-corrections";
     else if (state.openCustomerId) want = "customer/" + state.openCustomerId;
     else if (state.openJobId) want = "job/" + state.openJobId;
     const next = want ? ("#" + want) : (location.pathname + (location.search || "") + (location.hash && !want ? "" : ""));
