@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "note": "Opaque booking tokens only. No customer names, phones, emails, or addresses.",
+  "tokens": {
+    "8ee55b1f0ae2c47e75ca49357cf9ba5a": {
+      "label": "Cooling maintenance visit",
+      "durationMinutes": 120,
+      "windowStart": "2027-03-15",
+      "windowEnd": "2027-04-10",
+      "visitId": "v-dan-cooling"
+    },
+    "7e7dea4c80aa4244c20c66e34745fbb5": {
+      "label": "HVAC maintenance visit (both buildings)",
+      "durationMinutes": 240,
+      "windowStart": "2026-11-01",
+      "windowEnd": "2026-12-15",
+      "visitId": "v-ccsh-1"
+    },
+    "de6eb67126446b7a03444441acfd564d": {
+      "label": "HVAC maintenance visit (both buildings)",
+      "durationMinutes": 240,
+      "windowStart": "2027-03-01",
+      "windowEnd": "2027-03-31",
+      "visitId": "v-ccsh-2"
+    },
+    "ebf89468da7780aa6303648ac939be04": {
+      "label": "HVAC maintenance visit (both buildings)",
+      "durationMinutes": 240,
+      "windowStart": "2027-07-01",
+      "windowEnd": "2027-07-31",
+      "visitId": "v-ccsh-3"
+    },
+    "b87796ce759e3b4985db756a6df83fff": {
+      "label": "Seasonal maintenance visit",
+      "durationMinutes": 120,
+      "windowStart": "2026-11-24",
+      "windowEnd": "2026-12-31",
+      "visitId": "v-kids-fall"
+    },
+    "9abac168313e91b3f9da90697c4c6f19": {
+      "label": "Seasonal maintenance visit",
+      "durationMinutes": 120,
+      "windowStart": "2027-04-15",
+      "windowEnd": "2027-05-15",
+      "visitId": "v-kids-spring"
+    },
+    "c2fe0ee2a24c4f35829e8bdd37d38119": {
+      "label": "First-year heating maintenance visit",
+      "durationMinutes": 120,
+      "windowStart": "2026-11-24",
+      "windowEnd": "2026-12-31",
+      "visitId": "v-christie-heat"
+    },
+    "e549524a9e8d03613f1b05c9f636f0fa": {
+      "label": "First-year cooling maintenance visit",
+      "durationMinutes": 120,
+      "windowStart": "2027-03-15",
+      "windowEnd": "2027-04-30",
+      "visitId": "v-christie-cool"
+    },
+    "7e69047ef6f7a28a86dfcd62fa4d0811": {
+      "label": "Maintenance visit / plan follow-up",
+      "durationMinutes": 120,
+      "windowStart": "2026-11-24",
+      "windowEnd": "2026-12-31",
+      "visitId": "v-lisa-followup"
+    },
+    "60e414bc82f216e3e1625a97b348e245": {
+      "label": "Maintenance visit / plan follow-up",
+      "durationMinutes": 120,
+      "windowStart": "2026-11-24",
+      "windowEnd": "2026-12-31",
+      "visitId": "v-doreen-followup"
+    },
+    "814850d24ce371f2c5346470d76668f1": {
+      "label": "Maintenance visit",
+      "durationMinutes": 120,
+      "windowStart": "2026-11-24",
+      "windowEnd": "2026-12-31",
+      "visitId": "v-ssmith-1"
+    },
+    "d7cc148bffe88755b2416d88e4c2b43c": {
+      "label": "Maintenance visit",
+      "durationMinutes": 120,
+      "windowStart": "2027-04-15",
+      "windowEnd": "2027-05-31",
+      "visitId": "v-ssmith-2"
+    }
+  }
+}

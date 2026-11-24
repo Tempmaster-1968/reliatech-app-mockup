@@ -1,0 +1,37 @@
+.book-page .phone { overflow: auto; }
+.book-page .content { overflow: auto; flex: 1; }
+.request-banner {
+  background: #FBF3D8;
+  color: #7A5800;
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 19px;
+  margin-bottom: 16px;
+  font-weight: 600;
+}
+@media (prefers-color-scheme: dark) {
+  .request-banner { background: #3A2F12; color: #F0D48A; }
+}
+.slot-day { margin: 0 0 14px; }
+.slot-day h2 { font-size: 13px; font-weight: 750; margin: 0 0 8px; }
+.slot-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.slot-btn {
+  border: 1.5px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 44px;
+}
+.slot-btn.on {
+  border-color: var(--teal);
+  background: var(--tint);
+  color: var(--brand);
+}
+.book-confirm { margin-top: 8px; }
+.book-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.book-actions a.btn { text-decoration: none; display: flex; align-items: center; justify-content: center; }
