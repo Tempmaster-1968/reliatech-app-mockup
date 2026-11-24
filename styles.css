@@ -603,3 +603,80 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
 }
 .confirm-row { margin-bottom: 10px; }
 .confirm-row:last-child { margin-bottom: 0; }
+
+/* Service plans, jobs-tab filters, booking-adjacent UI */
+.v-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+.v-due { color: #0C5C5C; background: #E6F4F4; }
+.v-overdue { color: var(--alert-text); background: var(--alert-bg); }
+.v-scheduled { color: var(--ok-text); background: var(--ok-bg); }
+.v-done { color: var(--ok-text); background: var(--ok-bg); opacity: 0.85; }
+.v-upcoming { color: var(--muted); background: var(--field); }
+.v-cancelled { color: var(--faint); background: var(--field); }
+@media (prefers-color-scheme: dark) {
+  .v-due { color: #8ED4D4; background: #143333; }
+}
+.plan-card { background: var(--card); border-radius: 18px; box-shadow: var(--shadow); padding: 14px; margin-bottom: 14px; }
+.plan-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.visit-row {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: var(--field);
+  border-radius: 14px;
+  padding: 10px 12px;
+  color: var(--text);
+  cursor: pointer;
+  margin-top: 8px;
+}
+.visit-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.visit-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.visit-actions .btn, .visit-actions button {
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 12px;
+  width: auto;
+  flex: 1 1 auto;
+}
+.tag-note {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--alert-text);
+  background: var(--alert-bg);
+  border-radius: 8px;
+  padding: 2px 7px;
+  margin-top: 6px;
+}
+.due-card {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: var(--card);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 12px;
+  color: var(--text);
+  cursor: pointer;
+  display: block;
+}
+.due-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.jobs-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0 12px; }
+.cal-note {
+  background: var(--tint);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted);
+  margin: 10px 0 12px;
+}
+.job-when { font-size: 12px; color: var(--teal); font-weight: 650; margin-top: 4px; }

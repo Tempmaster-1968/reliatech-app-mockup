@@ -312,7 +312,9 @@
     phone: '<path d="M7 3h4l1 4-2 1.5a12 12 0 0 0 5.5 5.5L17 12l4 1v4a2 2 0 0 1-2 2A16 16 0 0 1 5 7a2 2 0 0 1 2-2z"/>',
     pin: '<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.2"/>',
     mic: '<path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
-    clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>'
+    clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3 1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+    cal: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/>'
   };
   function icon(name, size) {
     size = size || 22;
@@ -394,6 +396,10 @@
   function formatDateTime(s) {
     const d = parseStamp(s); if (!d) return "—";
     return formatDate(s) + " " + formatTime(s);
+  }
+  function formatPrettyDateTime(s) {
+    const d = parseStamp(s); if (!d) return String(s || "");
+    return new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).format(d);
   }
   function todayInput() {
     const p = tzParts(new Date());
@@ -820,9 +826,32 @@
     return extra.concat(initial.map(function (j) { return normalizeJob(byId[j.id]); }));
   }
 
+  const PLAN_SEED = window.RT_PLANS || {};
+  const SETTINGS_DEFAULTS = Object.assign({
+    weekdayStart: "16:30", weekdayEnd: "20:00",
+    saturdayStart: "08:00", saturdayEnd: "18:00",
+    sundayOpen: false, timezone: TZ,
+    stevePhone: "(562) 487-8750", steveEmail: "steveseguine51@gmail.com"
+  }, PLAN_SEED.settingsDefaults || {});
+  function mergeById(initial, saved) {
+    const byId = {};
+    (initial || []).forEach(function (x) { byId[x.id] = JSON.parse(JSON.stringify(x)); });
+    const extra = [];
+    (saved || []).forEach(function (x) {
+      if (!x || !x.id) return;
+      if (byId[x.id]) byId[x.id] = Object.assign({}, byId[x.id], x);
+      else { byId[x.id] = x; extra.push(x.id); }
+    });
+    return (initial || []).map(function (x) { return byId[x.id]; }).concat(extra.map(function (id) { return byId[id]; }));
+  }
+
   const _saved = loadPersisted();
   const _initialCustomers = INITIAL_CUSTOMERS.map(normalizeCustomer);
+  const _seedPlanJobs = PLAN_SEED.planJobs || [];
   const _initialJobs = INITIAL_JOBS.map(function (j) { return JSON.parse(JSON.stringify(j)); });
+  _seedPlanJobs.forEach(function (pj) {
+    if (!_initialJobs.some(function (j) { return j.id === pj.id; })) _initialJobs.push(JSON.parse(JSON.stringify(pj)));
+  });
 
   let state = {
     tab: "jobs",
@@ -852,11 +881,28 @@
     packTab: "repair",
     packQuery: "",
     packTons: 3,
-    packDraft: []
+    packDraft: [],
+    plans: mergeById(PLAN_SEED.plans || [], _saved && _saved.plans),
+    visits: mergeById(PLAN_SEED.visits || [], _saved && _saved.visits),
+    settings: Object.assign({}, SETTINGS_DEFAULTS, (_saved && _saved.settings) || {}),
+    showCompleted: !!(!_saved ? false : _saved.showCompleted),
+    screen: null,
+    scheduleVisitId: null,
+    scheduleDraft: { date: "", time: "" }
   };
   function persist() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ v: 1, customers: state.customers, jobs: state.jobs, currentTech: state.currentTech, techs: state.techs }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({
+        v: 1,
+        customers: state.customers,
+        jobs: state.jobs,
+        currentTech: state.currentTech,
+        techs: state.techs,
+        plans: state.plans,
+        visits: state.visits,
+        settings: state.settings,
+        showCompleted: state.showCompleted
+      }));
     } catch (e) {}
   }
   let toastTimer = null;
@@ -880,6 +926,186 @@
   function nextCustomerId() {
     const n = state.customers.reduce(function (m, c) { return Math.max(m, Number(c.id.slice(1))); }, 0);
     return "c" + (n + 1);
+  }
+
+  function pad2(n) { return String(n).padStart(2, "0"); }
+  function todayYmd() {
+    const p = tzParts(new Date());
+    return p.year + "-" + pad2(p.month) + "-" + pad2(p.day);
+  }
+  function addDaysYmd(ymd, days) {
+    const p = String(ymd || todayYmd()).split("-");
+    const d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]) + days);
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+  function visitForJob(jobId) {
+    return (state.visits || []).find(function (v) { return v.jobId === jobId; }) || null;
+  }
+  function planById(id) { return (state.plans || []).find(function (p) { return p.id === id; }) || null; }
+  function visitsForCustomer(cid) { return (state.visits || []).filter(function (v) { return v.customerId === cid; }); }
+  function plansForCustomer(cid) { return (state.plans || []).filter(function (p) { return p.customerId === cid; }); }
+  function visitStatus(v) {
+    if (!v) return "upcoming";
+    if (v.status === "cancelled" || v.status === "canceled") return "cancelled";
+    if (v.status === "done" || v.completedOn) return "done";
+    if (v.scheduledStart) {
+      const end = parseStamp(v.scheduledEnd || v.scheduledStart);
+      if (end && end.getTime() < Date.now() && !v.completedOn) return "overdue";
+      return "scheduled";
+    }
+    if (!v.dueWindowEnd) return v.needsFollowUp ? "due" : "upcoming";
+    const today = todayYmd();
+    if (today > v.dueWindowEnd) return "overdue";
+    const dueFrom = addDaysYmd(v.dueWindowStart || v.dueWindowEnd, -30);
+    if (today >= dueFrom) return "due";
+    return "upcoming";
+  }
+  function visitStatusLabel(st) {
+    return ({ due: "Due", overdue: "Overdue", scheduled: "Scheduled", done: "Done", upcoming: "Upcoming", cancelled: "Cancelled" })[st] || st;
+  }
+  function visitBadge(v) {
+    const st = visitStatus(v);
+    return '<span class="v-badge v-' + st + '">' + esc(visitStatusLabel(st)) + "</span>";
+  }
+  function visitTagLabel(v, plan) {
+    const tags = [];
+    if ((v && v.confirmWithSteve) || (plan && plan.confirmWithSteve)) tags.push("Confirm with Steve");
+    const tag = (v && v.tag) || (plan && plan.tag) || "";
+    if (tag === "install_commitment") tags.push("Install commitment");
+    if (tag === "offer_prepaid_annual") tags.push("Offer $225 prepaid annual");
+    if (v && v.needsFollowUp) tags.push("Needs follow-up");
+    return tags;
+  }
+  function bookingUrl(v) {
+    if (!v || !v.bookingToken) return "";
+    return (PLAN_SEED.bookingBase || "book.html?v=") + v.bookingToken;
+  }
+  function formatYmd(s) {
+    if (!s) return "";
+    const p = String(s).split("-");
+    if (p.length !== 3) return s;
+    const d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  }
+  function formatWindow(v) {
+    if (v.scheduledStart) return formatPrettyDateTime(v.scheduledStart) + " PT";
+    if (v.dueWindowStart && v.dueWindowEnd && v.dueWindowStart === v.dueWindowEnd) return "Due " + formatYmd(v.dueWindowStart);
+    if (v.dueWindowStart && v.dueWindowEnd) return "Due " + formatYmd(v.dueWindowStart) + " – " + formatYmd(v.dueWindowEnd);
+    return "";
+  }
+  function parseLooseDate(s) {
+    if (!s) return null;
+    const iso = parseStamp(s);
+    if (iso) return iso;
+    const t = Date.parse(s);
+    return isNaN(t) ? null : new Date(t);
+  }
+  function jobScheduleIso(job) {
+    if (!job) return null;
+    if (job.scheduledStart) return job.scheduledStart;
+    const v = visitForJob(job.id);
+    if (v && v.scheduledStart) return v.scheduledStart;
+    const ev = (job.timeline || []).find(function (t) { return t && t.title === "Scheduled" && t.time; });
+    return ev ? ev.time : null;
+  }
+  function jobScheduleDate(job) {
+    return parseLooseDate(jobScheduleIso(job));
+  }
+  function isHcpId(id) {
+    const n = Number(id);
+    return Number.isFinite(n) && n >= 50000 && n < 60000;
+  }
+  function linkedOpenVisit(job) {
+    const v = visitForJob(job && job.id);
+    if (!v) return null;
+    const st = visitStatus(v);
+    return (st !== "done" && st !== "cancelled") ? v : null;
+  }
+  function isPastHcpHistory(job) {
+    if (!job || !isHcpId(job.id)) return false;
+    if (linkedOpenVisit(job)) return false;
+    const due = Number(job.dueAmount || 0);
+    if (due > 0 && job.status !== "paid" && job.status !== "done") return false;
+    if (job.status === "paid" || job.status === "done" || job.status === "cancelled" || job.status === "canceled") return true;
+    if (job.status === "estimate" || job.status === "invoiced") return false;
+    const d = jobScheduleDate(job);
+    const now = new Date();
+    if (d && d.getTime() < now.getTime() && due <= 0) return true;
+    if (due <= 0 && !job.scheduledStart) {
+      const ev = (job.timeline || []).find(function (t) { return t && t.title === "Scheduled" && t.time; });
+      const sd = ev ? parseLooseDate(ev.time) : null;
+      if (sd && sd.getTime() > now.getTime()) return false;
+      return true;
+    }
+    return false;
+  }
+  function isCompletedJob(job) {
+    if (!job) return true;
+    if (job.status === "paid" || job.status === "done" || job.status === "cancelled" || job.status === "canceled") return true;
+    return isPastHcpHistory(job);
+  }
+  function isUpcomingPlanHold(job) {
+    if (!job || !job.planJob) return false;
+    if (job.scheduledStart) return false;
+    const v = visitForJob(job.id);
+    if (!v) return false;
+    return visitStatus(v) === "upcoming";
+  }
+  function isActiveJob(job) {
+    if (!job) return false;
+    if (isCompletedJob(job)) return false;
+    if (isUpcomingPlanHold(job)) return false;
+    return true;
+  }
+  function jobSortGroup(job) {
+    if (job.status === "progress" || anyOpenEntry(job)) return 0;
+    const d = jobScheduleDate(job);
+    if (d && d.getTime() >= Date.now() - 60 * 60 * 1000) return 1;
+    const v = linkedOpenVisit(job);
+    if (v && visitStatus(v) === "scheduled") return 1;
+    return 2;
+  }
+  function sortJobsList(list) {
+    return list.slice().sort(function (a, b) {
+      const ga = jobSortGroup(a), gb = jobSortGroup(b);
+      if (ga !== gb) return ga - gb;
+      if (ga === 1) {
+        const da = jobScheduleDate(a), db = jobScheduleDate(b);
+        return (da ? da.getTime() : 0) - (db ? db.getTime() : 0);
+      }
+      const va = visitForJob(a.id), vb = visitForJob(b.id);
+      const sa = va ? visitStatus(va) : "", sb = vb ? visitStatus(vb) : "";
+      const rank = { overdue: 0, due: 1 };
+      const ra = rank[sa] != null ? rank[sa] : 2, rb = rank[sb] != null ? rank[sb] : 2;
+      if (ra !== rb) return ra - rb;
+      return String(a.customer).localeCompare(String(b.customer));
+    });
+  }
+  function attentionVisits() {
+    return (state.visits || []).filter(function (v) {
+      const st = visitStatus(v);
+      return st === "due" || st === "overdue";
+    }).sort(function (a, b) {
+      const ra = visitStatus(a) === "overdue" ? 0 : 1;
+      const rb = visitStatus(b) === "overdue" ? 0 : 1;
+      if (ra !== rb) return ra - rb;
+      return String(a.dueWindowStart || "").localeCompare(String(b.dueWindowStart || ""));
+    });
+  }
+  function availabilitySummary() {
+    const s = state.settings || SETTINGS_DEFAULTS;
+    function t(v) {
+      const p = (v || "").split(":");
+      const h = Number(p[0]), m = Number(p[1] || 0);
+      const am = h >= 12 ? "PM" : "AM";
+      const h12 = ((h + 11) % 12) + 1;
+      return h12 + ":" + pad2(m) + " " + am;
+    }
+    return "Weekday evenings " + t(s.weekdayStart) + "–" + t(s.weekdayEnd) + " PT, Saturday " + t(s.saturdayStart) + "–" + t(s.saturdayEnd) + " PT" + (s.sundayOpen ? ", Sunday open" : "") + ".";
+  }
+  function getVisit(id) { return (state.visits || []).find(function (v) { return v.id === id; }) || null; }
+  function updateVisit(id, patch) {
+    state.visits = (state.visits || []).map(function (v) { return v.id === id ? Object.assign({}, v, patch) : v; });
   }
 
   window.RT = {
@@ -912,7 +1138,9 @@
       reader.readAsDataURL(f);
     },
     setTimeEdit: function (k, v) { state.timeEdit[k] = v; },
-    setVoiceText: function (v) { state.voice.text = v; }
+    setVoiceText: function (v) { state.voice.text = v; },
+    setSetting: function (k, v) { state.settings[k] = v; renderKeepFocus("st-" + k); },
+    setSched: function (k, v) { state.scheduleDraft[k] = v; }
   };
 
   function renderKeepFocus(id) {
@@ -936,6 +1164,7 @@
         (opts.badge ? '<span class="badge">Sample data</span>' : "") + "</div>" +
       "</div>" +
       (opts.voice === false ? "" : '<button class="icon-btn" ' + act("openVoice") + ' aria-label="Voice command">' + icon("mic") + "</button>") +
+      (opts.settings ? '<button class="icon-btn" ' + act("openSettings") + ' aria-label="Settings">' + icon("gear") + "</button>" : "") +
       "</div>";
   }
   function tabBar() {
@@ -947,30 +1176,153 @@
 
   function jobsList() {
     const q = state.query.trim().toLowerCase();
-    const list = state.jobs.filter(function (j) {
+    const searching = !!q;
+    let list = state.jobs.filter(function (j) {
       const hit = !q || [j.id, j.customer, j.address, j.city, j.problem].join(" ").toLowerCase().indexOf(q) !== -1;
-      const statusHit = state.filter === "all" || (state.filter === "open" ? j.status !== "paid" : j.status === state.filter);
-      return hit && statusHit;
+      if (!hit) return false;
+      if (searching) return true;
+      if (state.showCompleted) {
+        if (state.filter === "all") return true;
+        if (state.filter === "open") return j.status !== "paid";
+        return j.status === state.filter;
+      }
+      return isActiveJob(j);
     });
-    return topBar({ kicker: "ReliaTech Services", title: "Jobs", badge: SHOW_SAMPLE_BADGE }) +
+    list = sortJobsList(list);
+    const due = attentionVisits();
+    const duePreview = due.slice(0, 3);
+    let dueHtml = "";
+    if (!searching && due.length) {
+      dueHtml = '<div class="section-row"><div class="section" style="margin:0">Plan visits due</div>' +
+        '<button class="link-btn" style="margin:0" ' + act("openPlans") + ">See all · " + due.length + "</button></div>" +
+        '<div class="due-list">' + duePreview.map(dueVisitCard).join("") + "</div>";
+    }
+    const chips = state.showCompleted
+      ? '<div class="chips">' + FILTERS.map(function (f) {
+          return '<button class="chip' + (state.filter === f[0] ? " on" : "") + '" ' + act("filter", f[0]) + ">" + esc(f[1]) + "</button>";
+        }).join("") + "</div>"
+      : "";
+    return topBar({ kicker: "ReliaTech Services", title: "Jobs", badge: SHOW_SAMPLE_BADGE, settings: true }) +
       '<div class="content"><div class="pad pad-fab">' +
       '<div class="search">' + icon("search", 16) + '<input id="search-q" type="search" placeholder="Search jobs or addresses" value="' + esc(state.query) + '" oninput="RT.setQuery(this.value)"></div>' +
-      '<div class="chips">' + FILTERS.map(function (f) {
-        return '<button class="chip' + (state.filter === f[0] ? " on" : "") + '" ' + act("filter", f[0]) + ">" + esc(f[1]) + "</button>";
-      }).join("") + "</div>" +
-      '<div class="stack">' + list.map(jobCard).join("") + "</div></div></div>" +
+      dueHtml +
+      '<div class="jobs-toolbar"><div class="section" style="margin:0">' + (state.showCompleted || searching ? (searching ? "Search results" : "All jobs") : "Active and upcoming") + "</div>" +
+      '<button class="link-btn" style="margin:0" ' + act("toggleCompleted") + ">" + (state.showCompleted ? "Hide completed" : "Show completed") + "</button></div>" +
+      chips +
+      '<div class="stack">' + (list.length ? list.map(jobCard).join("") : '<div class="muted">No jobs in this list. Completed and past Housecall Pro jobs are on each customer page, or tap Show completed.</div>') + "</div></div></div>" +
       '<button class="fab" ' + act("openNewCall") + ' aria-label="New call">' + icon("plus", 28) + "</button>" +
       tabBar();
   }
   function jobCard(job) {
-    const st = STATUS[job.status], col = sc(job.status);
+    const st = STATUS[job.status] || STATUS.new, col = sc(job.status || "new");
     return '<button class="job-card" ' + act("openJob", job.id) + ">" +
       '<div class="stripe" style="background:' + col.bar + '"></div>' +
-      '<div class="job-body"><div class="row"><div class="meta">#' + job.id + " · " + job.city + "</div>" + pill(st.label, col.text, col.bg) + "</div>" +
+      '<div class="job-body"><div class="row"><div class="meta">#' + job.id + " · " + job.city + "</div>" + jobStatusPill(job, st, col) + "</div>" +
       '<div class="job-name">' + esc(job.customer) + "</div>" +
       '<div class="job-prob">' + esc(job.problem) + "</div>" +
       '<div class="row"><div class="addr">' + esc(job.address) + "</div>" + (job.total ? '<div class="amt">' + money(job.total) + "</div>" : "") + "</div>" +
+      (jobWhenLine(job) ? '<div class="job-when">' + jobWhenLine(job) + "</div>" : "") +
       "</div><div class=\"chev\">" + icon("chevron", 18) + "</div></button>";
+  }
+  function jobStatusPill(job, st, col) {
+    const v = linkedOpenVisit(job);
+    if (v) {
+      const vs = visitStatus(v);
+      if (vs === "overdue") return pill("Overdue visit", "var(--alert-text)", "var(--alert-bg)");
+      if (vs === "due") return pill("Plan visit due", "#0C5C5C", "#E6F4F4");
+      if (vs === "scheduled") return pill("Scheduled", col.text, col.bg);
+    }
+    return pill(st.label, col.text, col.bg);
+  }
+  function jobWhenLine(job) {
+    const v = visitForJob(job.id);
+    const st = v ? visitStatus(v) : "";
+    if (st === "scheduled" && v.scheduledStart) return formatPrettyDateTime(v.scheduledStart) + " PT";
+    if (st === "overdue") {
+      if (v.priorScheduledStart) return "Missed " + formatPrettyDateTime(v.priorScheduledStart) + " PT · needs reschedule";
+      return formatWindow(v);
+    }
+    if (st === "due") return formatWindow(v);
+    if (job.scheduledStart) {
+      const d = parseStamp(job.scheduledStart);
+      if (d && d.getTime() >= Date.now() - 60 * 60 * 1000) return formatPrettyDateTime(job.scheduledStart) + " PT";
+    }
+    const ev = (job.timeline || []).find(function (t) { return t && t.title === "Scheduled" && t.time; });
+    const sd = ev ? parseLooseDate(ev.time) : null;
+    if (sd && sd.getTime() >= Date.now()) return ev.time;
+    return "";
+  }
+  function dueVisitCard(v) {
+    const c = getCustomer(v.customerId);
+    const plan = planById(v.planId);
+    const tags = visitTagLabel(v, plan);
+    return '<button class="due-card" ' + act("openVisit", v.id) + '><div class="visit-top"><div class="job-name" style="margin:0">' + esc(c ? c.name : v.customerId) + "</div>" + visitBadge(v) + "</div>" +
+      '<div class="job-prob" style="margin-top:4px">' + esc(v.label) + (plan ? " · " + esc(plan.name) : "") + "</div>" +
+      '<div class="muted" style="margin-top:4px">' + esc(formatWindow(v)) + (v.jobId ? " · #" + v.jobId : "") + "</div>" +
+      (tags.length ? tags.map(function (t) { return '<span class="tag-note">' + esc(t) + "</span>"; }).join(" ") : "") +
+      "</button>";
+  }
+  function visitActionButtons(v) {
+    const st = visitStatus(v);
+    let b = "";
+    if (st !== "done" && st !== "cancelled") {
+      b += '<button class="btn" ' + act("scheduleVisit", v.id) + ">" + (st === "scheduled" ? "Reschedule" : "Schedule") + "</button>";
+      if (v.bookingToken) b += '<button class="btn" ' + act("copyBooking", v.id) + ">Copy booking link</button>";
+      if (v.jobId) b += '<button class="btn" ' + act("openJob", v.jobId) + ">Open job · #" + esc(v.jobId) + "</button>";
+      if (st !== "upcoming") b += '<button class="btn" ' + act("markVisitDone", v.id) + ">Mark done</button>";
+    }
+    return b ? '<div class="visit-actions">' + b + "</div>" : "";
+  }
+  function visitBlock(v, showCustomer) {
+    const plan = planById(v.planId);
+    const c = getCustomer(v.customerId);
+    const tags = visitTagLabel(v, plan);
+    return '<div class="visit-row" style="cursor:default"><div class="visit-top"><div><div class="job-name" style="margin:0">' + (showCustomer ? esc(c ? c.name : "") + " · " : "") + esc(v.label) + "</div></div>" + visitBadge(v) + "</div>" +
+      '<div class="muted" style="margin-top:4px">' + esc(formatWindow(v)) + (v.jobId ? " · Job #" + v.jobId : "") + (v.billing === "prepaid_covered" ? " · Already paid" : v.billing === "included" ? " · Included, no maintenance charge" : v.billing === "offer" ? " · Offer, not enrolled" : v.billing === "custom" ? " · Custom billing" : "") + "</div>" +
+      (v.notes ? '<div class="muted" style="margin-top:6px">' + esc(v.notes) + "</div>" : "") +
+      (tags.length ? '<div>' + tags.map(function (t) { return '<span class="tag-note">' + esc(t) + "</span>"; }).join(" ") + "</div>" : "") +
+      visitActionButtons(v) + "</div>";
+  }
+  function planCard(plan, customer) {
+    const visits = (state.visits || []).filter(function (v) { return v.planId === plan.id; });
+    const term = (plan.startDate && plan.renewalDate) ? (formatYmd(plan.startDate) + " – " + formatYmd(plan.renewalDate)) : "";
+    const price = plan.billingMode === "included" ? "Included" : plan.billingMode === "custom" ? "Custom billing" : (plan.price ? money(plan.price) : "");
+    return '<div class="plan-card"><div class="plan-head"><div><div class="k-up">Service plan</div><div class="h2" style="margin-top:2px">' + esc(plan.name) + "</div></div>" +
+      pill(plan.status === "active" ? "Active" : plan.status === "follow_up" ? "Follow-up" : String(plan.status || ""), "#0C5C5C", "#E6F4F4") + "</div>" +
+      '<div class="muted">' + esc([term, price, plan.visitsPerYear ? (plan.visitsPerYear + " visits / year") : "", plan.siteAddress].filter(Boolean).join(" · ")) + "</div>" +
+      (plan.notes ? '<div class="muted" style="margin-top:8px">' + esc(plan.notes) + "</div>" : "") +
+      visits.map(function (v) { return visitBlock(v, false); }).join("") +
+      "</div>";
+  }
+  function plansScreen() {
+    const due = attentionVisits();
+    const upcoming = (state.visits || []).filter(function (v) {
+      const st = visitStatus(v);
+      return st === "scheduled" || st === "upcoming";
+    }).sort(function (a, b) {
+      return String(a.scheduledStart || a.dueWindowStart || "").localeCompare(String(b.scheduledStart || b.dueWindowStart || ""));
+    });
+    return topBar({ back: "closePlans", title: "Plan visits due", badge: SHOW_SAMPLE_BADGE }) +
+      '<div class="content screen"><div class="pad">' +
+      '<div class="muted" style="margin-bottom:12px">Due and overdue plan visits, plus visits that need follow-up. Scheduling here updates the customer’s visit list on this phone. Ask the assistant to put a confirmed time on your Google Calendar.</div>' +
+      (due.length ? '<div class="due-list">' + due.map(dueVisitCard).join("") + "</div>" : '<div class="muted" style="margin-bottom:16px">Nothing is due right now.</div>') +
+      (upcoming.length ? '<div class="section">Scheduled and upcoming</div>' + upcoming.map(function (v) { return visitBlock(v, true); }).join("") : "") +
+      "</div></div>";
+  }
+  function settingsScreen() {
+    const s = state.settings || SETTINGS_DEFAULTS;
+    return topBar({ back: "closeSettings", title: "Settings", badge: SHOW_SAMPLE_BADGE, voice: false }) +
+      '<div class="content screen"><div class="pad">' +
+      '<div class="section">Availability</div>' +
+      '<div class="muted" style="margin:-4px 0 12px">Used when you pick a time and when a customer booking link shows open slots. The public booking page also reads published slots.json, so after you change these hours run the update_slots script and publish that file.</div>' +
+      '<label class="field"><div class="field-lab">Weekday evening start (PT)</div><input id="st-weekdayStart" type="time" value="' + esc(s.weekdayStart) + '" oninput="RT.setSetting(\'weekdayStart\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Weekday evening end (PT)</div><input id="st-weekdayEnd" type="time" value="' + esc(s.weekdayEnd) + '" oninput="RT.setSetting(\'weekdayEnd\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Saturday start (PT)</div><input id="st-saturdayStart" type="time" value="' + esc(s.saturdayStart) + '" oninput="RT.setSetting(\'saturdayStart\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Saturday end (PT)</div><input id="st-saturdayEnd" type="time" value="' + esc(s.saturdayEnd) + '" oninput="RT.setSetting(\'saturdayEnd\', this.value)"></label>' +
+      '<div class="cal-note">' + esc(availabilitySummary()) + " Sunday is closed unless you turn it on in the published slots file.</div>" +
+      '<div class="section">Calendar</div>' +
+      '<div class="muted">Job appointments go on steveseguine51@gmail.com, titled like “#25076 Dan Correa — Cooling maintenance.” The customer is never invited. This app cannot write to Google Calendar by itself. After you confirm a time, ask the assistant to add or update the event.</div>' +
+      "</div></div>";
   }
 
   function stepper(status) {
@@ -1083,7 +1435,7 @@
     const list = state.customers.filter(function (c) {
       return !q || [c.name, c.address, c.city, c.phone].join(" ").toLowerCase().indexOf(q) !== -1;
     });
-    return topBar({ kicker: "ReliaTech Services", title: "Customers", badge: SHOW_SAMPLE_BADGE }) +
+    return topBar({ kicker: "ReliaTech Services", title: "Customers", badge: SHOW_SAMPLE_BADGE, settings: true }) +
       '<div class="content"><div class="pad">' +
       '<div class="search">' + icon("search", 16) + '<input id="search-q" type="search" placeholder="Search customers" value="' + esc(state.query) + '" oninput="RT.setQuery(this.value)"></div>' +
       '<div class="stack">' + list.map(function (c) {
@@ -1106,6 +1458,7 @@
       (c.phone ? '<div class="teal" style="margin:6px 0 0">' + esc(c.phone) + "</div>" : "") +
       (c.email ? '<div class="muted" style="margin-top:4px">' + esc(c.email) + "</div>" : "") + "</div>" +
       '<button class="btn" style="margin-bottom:16px" ' + act("newJobFromCustomer", c.id) + ">New job · #" + nextId + "</button>" +
+      plansForCustomer(c.id).map(function (p) { return planCard(p, c); }).join("") +
       '<div class="section-row"><div class="section" style="margin:0">Equipment</div></div>' +
       '<button class="dash" style="margin:10px 0 12px" ' + act("addEquipment", c.id) + ">Add equipment</button>" +
       (assets.length ? '<div class="stack" style="margin-bottom:16px">' + assets.map(function (a) { return assetCard(a, c.id, false); }).join("") + "</div>" :
@@ -1126,7 +1479,7 @@
     const outstanding = (window.RT_DATA && typeof window.RT_DATA.outstanding === "number") ? window.RT_DATA.outstanding : all.filter(function (j) { return j.status === "invoiced"; }).reduce(function (s, j) { return s + (j.dueAmount || j.total); }, 0);
     const openEst = (window.RT_DATA && typeof window.RT_DATA.openEstimates === "number") ? window.RT_DATA.openEstimates : all.filter(function (j) { return j.status === "estimate" || j.status === "approved"; }).reduce(function (s, j) { return s + j.total; }, 0);
     const unpaid = all.filter(function (j) { return (j.dueAmount || 0) > 0 || j.status === "invoiced"; });
-    return topBar({ kicker: "ReliaTech Services", title: "Money", badge: SHOW_SAMPLE_BADGE }) +
+    return topBar({ kicker: "ReliaTech Services", title: "Money", badge: SHOW_SAMPLE_BADGE, settings: true }) +
       '<div class="content"><div class="pad">' +
       '<div class="money-tile brand" style="margin-bottom:10px"><div class="k-up" style="color:rgba(255,255,255,.7)">Collected</div><div class="money-val">' + money(collected) + '</div><div style="font-size:12px;opacity:.8">' + (MONEY_NOTE || "From Housecall Pro job amounts minus remaining balances.") + '</div></div>' +
       '<div style="display:flex;gap:10px;margin-bottom:16px">' +
@@ -1142,7 +1495,7 @@
       (j.readingSets || []).forEach(function (s) { recent.push({ job: j, set: s }); });
     });
     recent.sort(function (a, b) { return 0; });
-    return topBar({ kicker: "ReliaTech Services", title: "Capture", badge: SHOW_SAMPLE_BADGE }) +
+    return topBar({ kicker: "ReliaTech Services", title: "Capture", badge: SHOW_SAMPLE_BADGE, settings: true }) +
       '<div class="content"><div class="pad">' +
       '<div class="muted" style="margin-bottom:14px">Start a note, photo, or reading, then attach it to a job. Or open a job and use Quick capture there.</div>' +
       '<div class="quick" style="margin-bottom:20px">' +
@@ -1651,10 +2004,25 @@
           return '<button class="list-card" ' + act("pickJobCapture", j.id) + '><div class="job-body"><div class="meta">#' + j.id + '</div><div class="job-name">' + esc(j.customer) + '</div><div class="job-prob">' + esc(j.problem) + "</div></div></button>";
         }).join("") + "</div>");
     }
+    if (state.sheet === "scheduleVisit") {
+      const v = getVisit(state.scheduleVisitId);
+      const d = state.scheduleDraft || { date: "", time: "" };
+      const c = v ? getCustomer(v.customerId) : null;
+      return backdrop(
+        '<div class="sheet-head"><div class="sheet-title">Schedule visit</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+        (v ? '<div class="h2" style="margin-bottom:6px">' + esc(c ? c.name : "") + " · " + esc(v.label) + "</div>" : "") +
+        '<div class="cal-note">This saves the time on this phone’s visit list only. It does not write to Google Calendar. After the customer confirms, ask the assistant to put it on steveseguine51@gmail.com. ' + esc(availabilitySummary()) + "</div>" +
+        '<label class="field"><div class="field-lab">Date</div><input id="sv-date" type="date" value="' + esc(d.date) + '" oninput="RT.setSched(\'date\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Arrive (PT)</div><input id="sv-time" type="time" value="' + esc(d.time) + '" oninput="RT.setSched(\'time\', this.value)"></label>' +
+        '<button class="btn accent" ' + act("saveSchedule") + ">Save time on this visit</button>"
+      );
+    }
     return "";
   }
 
   function mainHtml() {
+    if (state.screen === "settings") return settingsScreen();
+    if (state.screen === "plans") return plansScreen();
     if (state.openCustomerId) {
       const c = state.customers.find(function (x) { return x.id === state.openCustomerId; });
       if (c) return customerDetail(c);
@@ -1679,13 +2047,98 @@
   }
 
   function handle(name, arg) {
-    if (name === "tab") { state.tab = arg; state.openJobId = null; state.openCustomerId = null; state.query = ""; render(); return; }
+    if (name === "tab") { state.tab = arg; state.openJobId = null; state.openCustomerId = null; state.screen = null; state.query = ""; render(); return; }
     if (name === "filter") { state.filter = arg; render(); return; }
     if (name === "openJob") { state.openJobId = arg; state.openCustomerId = null; render(); return; }
     if (name === "closeJob") { state.openJobId = null; render(); return; }
     if (name === "openCustomer") { state.openCustomerId = arg; render(); return; }
     if (name === "closeCustomer") { state.openCustomerId = null; render(); return; }
     if (name === "closeSheet") { closeSheet(); return; }
+    if (name === "openPlans") { state.screen = "plans"; state.openJobId = null; state.openCustomerId = null; render(); return; }
+    if (name === "closePlans") { state.screen = null; state.tab = "jobs"; render(); return; }
+    if (name === "openSettings") { state.screen = "settings"; render(); return; }
+    if (name === "closeSettings") { state.screen = null; render(); return; }
+    if (name === "toggleCompleted") {
+      state.showCompleted = !state.showCompleted;
+      if (state.showCompleted) state.filter = "all";
+      else state.filter = "open";
+      render(); return;
+    }
+    if (name === "openVisit") {
+      const v = getVisit(arg);
+      if (!v) return;
+      state.screen = null;
+      state.openCustomerId = v.customerId;
+      state.openJobId = null;
+      render(); return;
+    }
+    if (name === "scheduleVisit") {
+      const v = getVisit(arg);
+      if (!v) return;
+      state.scheduleVisitId = v.id;
+      const existing = v.scheduledStart ? toInputValue(v.scheduledStart) : "";
+      // toInputValue is datetime-local; split
+      let date = "", time = "";
+      if (v.scheduledStart) {
+        const d = parseStamp(v.scheduledStart);
+        if (d) {
+          const p = tzParts(d);
+          date = p.year + "-" + pad2(p.month) + "-" + pad2(p.day);
+          time = pad2(p.hour) + ":" + pad2(p.minute);
+        }
+      }
+      state.scheduleDraft = { date: date, time: time };
+      state.sheet = "scheduleVisit";
+      render(); return;
+    }
+    if (name === "saveSchedule") {
+      const v = getVisit(state.scheduleVisitId);
+      const d = state.scheduleDraft || {};
+      if (!v || !d.date || !d.time) { showToast("Pick a date and time"); return; }
+      const start = fromInputValue(d.date + "T" + d.time);
+      if (!start) { showToast("Could not read that time"); return; }
+      const plan = planById(v.planId);
+      const dur = (plan && plan.type === "calvary_3x") ? 4 : 2;
+      const end = new Date(parseStamp(start).getTime() + dur * 60 * 60 * 1000).toISOString();
+      updateVisit(v.id, { scheduledStart: start, scheduledEnd: end, status: "scheduled" });
+      const job = getJob(v.jobId);
+      if (job) {
+        job.scheduledStart = start;
+        job.scheduledEnd = end;
+        if (job.status === "new") job.status = "approved";
+        job.timeline = [t("tsched" + Date.now(), "system", formatDateTime(start) + " PT", "Scheduled", "Saved on this phone. Ask the assistant to put it on Google Calendar.")].concat(job.timeline || []);
+      }
+      closeSheet();
+      showToast("Time saved on this phone. Calendar is not updated yet.");
+      return;
+    }
+    if (name === "copyBooking") {
+      const v = getVisit(arg);
+      const url = bookingUrl(v);
+      if (!url) { showToast("No booking link for this visit"); return; }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(function () { showToast("Booking link copied"); }).catch(function () { window.prompt("Copy booking link", url); });
+      } else {
+        window.prompt("Copy booking link", url);
+      }
+      return;
+    }
+    if (name === "markVisitDone") {
+      const v = getVisit(arg);
+      if (!v) return;
+      updateVisit(v.id, { status: "done", completedOn: todayYmd() });
+      const job = getJob(v.jobId);
+      if (job && job.status !== "paid") {
+        job.status = "done";
+        job.timeline = [t("tdone" + Date.now(), "system", "Just now", "Visit done", "Marked done on this phone.")].concat(job.timeline || []);
+      }
+      state.openJobId = v.jobId || state.openJobId;
+      state.openCustomerId = v.jobId ? null : v.customerId;
+      state.sheet = "note";
+      state.noteDraft = emptyNoteDraft("maintenance");
+      showToast("Visit marked done. Add the maintenance note.");
+      return;
+    }
     if (name === "sheet") {
       state.sheet = arg;
       if (arg === "reading") { const j = getJob(state.openJobId); state.readingDraft = { mode: defaultMode(j), label: "Arrival", values: {}, fromScreenshot: false }; }
@@ -2098,8 +2551,47 @@
     handle(t.getAttribute("data-act"), t.getAttribute("data-arg") || "");
   });
 
+  function applyHash() {
+    const h = (location.hash || "").replace(/^#/, "");
+    if (!h) return;
+    if (h === "plans") { state.screen = "plans"; state.openJobId = null; state.openCustomerId = null; return; }
+    if (h === "settings") { state.screen = "settings"; return; }
+    if (h.indexOf("job/") === 0) {
+      const id = h.slice(4);
+      if (getJob(id) || (state.moneyJobs || []).some(function (j) { return j.id === id; })) {
+        state.openJobId = id; state.openCustomerId = null; state.screen = null;
+      }
+      return;
+    }
+    if (h.indexOf("customer/") === 0) {
+      const id = h.slice(9);
+      if (getCustomer(id)) { state.openCustomerId = id; state.openJobId = null; state.screen = null; }
+    }
+  }
+  function syncHash() {
+    let want = "";
+    if (state.screen === "settings") want = "settings";
+    else if (state.screen === "plans") want = "plans";
+    else if (state.openCustomerId) want = "customer/" + state.openCustomerId;
+    else if (state.openJobId) want = "job/" + state.openJobId;
+    const next = want ? ("#" + want) : (location.pathname + (location.search || "") + (location.hash && !want ? "" : ""));
+    const cur = want ? ("#" + (location.hash || "").replace(/^#/, "")) : (location.pathname + (location.search || ""));
+    if (want) {
+      if (location.hash !== "#" + want) try { history.replaceState(null, "", "#" + want); } catch (e) {}
+    } else if (location.hash) {
+      try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
+    }
+  }
+  const _render0 = render;
+  render = function () {
+    _render0();
+    syncHash();
+  };
+
   if (window.matchMedia) {
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
   }
+  window.addEventListener("hashchange", function () { applyHash(); _render0(); });
+  applyHash();
   render();
 })();
