@@ -310,7 +310,9 @@
     chat: '<path d="M5 6h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9l-4 3v-3H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/>',
     chevron: '<path d="M9 6l6 6-6 6"/>',
     phone: '<path d="M7 3h4l1 4-2 1.5a12 12 0 0 0 5.5 5.5L17 12l4 1v4a2 2 0 0 1-2 2A16 16 0 0 1 5 7a2 2 0 0 1 2-2z"/>',
-    pin: '<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.2"/>'
+    pin: '<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.2"/>',
+    mic: '<path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+    clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>'
   };
   function icon(name, size) {
     size = size || 22;
@@ -324,6 +326,448 @@
   }
 
   function t(id, kind, time, title, body) { return { id: id, kind: kind, time: time, title: title, body: body }; }
+
+  const DEFAULT_TECH = "Steve Seguine";
+  const LABOR_RATE = 85;
+  const TZ = "America/Los_Angeles";
+
+  function jobTimeEntries(job) { return (job && job.timeEntries) ? job.timeEntries : []; }
+  function normalizeJob(j) {
+    const copy = JSON.parse(JSON.stringify(j));
+    if (!Array.isArray(copy.timeEntries)) copy.timeEntries = [];
+    if (!Array.isArray(copy.timeline)) copy.timeline = [];
+    return copy;
+  }
+  function isLaborLine(l) {
+    const s = ((l && (l.label || l.name)) || "").toLowerCase();
+    return /(tech labor|\blabor\b|\/hr|\bper hour\b|\bhours?\b)/.test(s);
+  }
+  function isHourlyJob(job) {
+    if (!job) return false;
+    if (job.billingType === "hourly") return true;
+    if (job.billingType === "flat") return false;
+    return (job.lineItems || []).some(isLaborLine);
+  }
+  function showTimeOnInvoice(job) {
+    if (!job) return false;
+    if (job.showTimeOnInvoice === true) return true;
+    if (job.showTimeOnInvoice === false) return false;
+    return isHourlyJob(job);
+  }
+  function billedLaborHours(job) {
+    return (job.lineItems || []).reduce(function (s, l) {
+      if (!isLaborLine(l)) return s;
+      if (l.hours != null && l.hours !== "") return s + Number(l.hours);
+      if ((l.unit === "hr" || l.unit === "hour") && l.qty) return s + Number(l.qty);
+      if (l.amount) return s + (Number(l.amount) / LABOR_RATE);
+      return s;
+    }, 0);
+  }
+  function tzParts(d) {
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+    });
+    const map = {};
+    fmt.formatToParts(d).forEach(function (p) { map[p.type] = p.value; });
+    if (map.hour === "24") map.hour = "00";
+    return map;
+  }
+  function isoNow() { return new Date().toISOString(); }
+  function parseStamp(s) {
+    if (!s) return null;
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  function formatDate(s) {
+    const d = parseStamp(s); if (!d) return "—";
+    const p = tzParts(d);
+    return p.month + "/" + p.day + "/" + p.year;
+  }
+  function formatTime(s) {
+    const d = parseStamp(s); if (!d) return "—";
+    const p = tzParts(d);
+    let h = Number(p.hour); const am = h >= 12 ? "PM" : "AM";
+    if (h === 0) h = 12; else if (h > 12) h -= 12;
+    return h + ":" + p.minute + " " + am;
+  }
+  function formatDateTime(s) {
+    const d = parseStamp(s); if (!d) return "—";
+    return formatDate(s) + " " + formatTime(s);
+  }
+  function todayInput() {
+    const p = tzParts(new Date());
+    return p.year + "-" + p.month + "-" + p.day;
+  }
+  function toInputValue(s) {
+    const d = parseStamp(s); if (!d) return "";
+    const p = tzParts(d);
+    return p.year + "-" + p.month + "-" + p.day + "T" + p.hour + ":" + p.minute;
+  }
+  function fromInputValue(v) {
+    if (!v) return "";
+    const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+    if (!m) {
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? "" : d.toISOString();
+    }
+    const y = +m[1], mo = +m[2], day = +m[3], h = +m[4], mi = +m[5], s = +(m[6] || 0);
+    let ms = Date.UTC(y, mo - 1, day, h, mi, s);
+    for (let i = 0; i < 3; i++) {
+      const p = tzParts(new Date(ms));
+      const got = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +(p.second || 0));
+      const want = Date.UTC(y, mo - 1, day, h, mi, s);
+      if (got === want) break;
+      ms -= (got - want);
+    }
+    return new Date(ms).toISOString();
+  }
+  function hoursBetween(a, b) {
+    const d1 = parseStamp(a), d2 = parseStamp(b);
+    if (!d1 || !d2) return 0;
+    return Math.max(0, (d2.getTime() - d1.getTime()) / 3600000);
+  }
+  function formatHours(n) {
+    if (n == null || isNaN(n)) return "—";
+    const rounded = Math.round(n * 100) / 100;
+    return rounded.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1") + " hr";
+  }
+  function entryHours(e, now) {
+    if (!e || !e.clockIn) return 0;
+    return hoursBetween(e.clockIn, e.clockOut || (now || new Date()).toISOString());
+  }
+  function entryFlags(e, now) {
+    const flags = [];
+    if (!e || !e.clockIn) return flags;
+    const nowD = now || new Date();
+    const open = !e.clockOut;
+    const hrs = entryHours(e, nowD);
+    if (hrs >= 10) flags.push(open ? "Open over 10 hours" : "Over 10 hours");
+    if (open) {
+      const pIn = tzParts(parseStamp(e.clockIn));
+      const pNow = tzParts(nowD);
+      const inDay = pIn.year + pIn.month + pIn.day;
+      const nowDay = pNow.year + pNow.month + pNow.day;
+      if (inDay !== nowDay) flags.push("Still open from a previous day");
+      else if (Number(pNow.hour) >= 20) flags.push("Still open at the end of the day");
+    }
+    return flags;
+  }
+  function openEntryFor(job, tech) {
+    return jobTimeEntries(job).find(function (e) { return !e.clockOut && (!tech || e.tech === tech); }) || null;
+  }
+  function anyOpenEntry(job) { return jobTimeEntries(job).find(function (e) { return e.clockIn && !e.clockOut; }) || null; }
+  function completedTimeEntries(job) {
+    return jobTimeEntries(job).filter(function (e) { return e.clockIn && e.clockOut; });
+  }
+  function loggedHours(job) {
+    return completedTimeEntries(job).reduce(function (s, e) { return s + entryHours(e); }, 0);
+  }
+  function hoursMismatch(job) {
+    if (!isHourlyJob(job)) return null;
+    const billed = billedLaborHours(job);
+    const logged = loggedHours(job);
+    if (!billed && !logged) return null;
+    if (!logged && billed) return "No completed time on site is logged, but " + formatHours(billed) + " of labor is billed.";
+    if (Math.abs(logged - billed) > 0.15) return "Logged time on site is " + formatHours(logged) + ", but billed labor is " + formatHours(billed) + ".";
+    return null;
+  }
+  function formatElapsed(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    const pad = function (n) { return (n < 10 ? "0" : "") + n; };
+    return (h ? h + ":" : "") + pad(m) + ":" + pad(sec);
+  }
+  function clockInJob(job, tech, when) {
+    if (!job.timeEntries) job.timeEntries = [];
+    if (openEntryFor(job, tech)) return { ok: false, msg: tech + " is already clocked in on this job." };
+    const entry = { id: "te" + Date.now(), tech: tech, clockIn: when || isoNow(), clockOut: null, edits: [] };
+    job.timeEntries.push(entry);
+    if (job.status !== "invoiced" && job.status !== "paid") job.status = "progress";
+    job.timeline = [{ id: "cin" + Date.now(), kind: "system", time: "Just now", title: "Clocked in", body: tech + " clocked in." }].concat(job.timeline || []);
+    return { ok: true, entry: entry };
+  }
+  function clockOutJob(job, tech, when) {
+    const entry = openEntryFor(job, tech) || anyOpenEntry(job);
+    if (!entry) return { ok: false, msg: "No open time entry to clock out." };
+    entry.clockOut = when || isoNow();
+    job.timeline = [{ id: "cout" + Date.now(), kind: "system", time: "Just now", title: "Clocked out", body: entry.tech + " clocked out · " + formatHours(entryHours(entry)) + "." }].concat(job.timeline || []);
+    return { ok: true, entry: entry };
+  }
+  function applyTimeEdit(job, entry, draft, editor) {
+    const edits = [];
+    function change(field, next) {
+      const prev = entry[field] || "";
+      const val = next || "";
+      if (prev === val) return;
+      edits.push({ id: "ed" + Date.now() + field, field: field, oldValue: prev, newValue: val, reason: draft.reason, editedBy: editor, editedAt: isoNow() });
+      entry[field] = val || null;
+    }
+    change("tech", (draft.tech || "").trim());
+    change("clockIn", draft.clockIn);
+    change("clockOut", draft.clockOut || null);
+    if (entry.clockOut && entry.clockIn && parseStamp(entry.clockOut) < parseStamp(entry.clockIn)) {
+      return { ok: false, msg: "Depart time can’t be before arrive time." };
+    }
+    if (!edits.length) return { ok: false, msg: "No changes to save." };
+    entry.edits = (entry.edits || []).concat(edits);
+    return { ok: true };
+  }
+
+  function emptyNoteDraft(type) {
+    type = type || "visit";
+    return {
+      type: type,
+      visitDate: todayInput(),
+      checkIn: "",
+      findings: "",
+      work: "",
+      readings: { pressures: "", temps: "", shsc: "", static: "", amps: "", gas: "", caveats: "" },
+      recs: [{ text: "", reason: "" }],
+      leftover: "",
+      departure: "All systems operating on departure.",
+      filterSize: "",
+      filterDate: todayInput(),
+      prevFilterDate: "",
+      tasks: "",
+      maintReadings: "",
+      scopeDesc: "",
+      included: "",
+      exclusions: "",
+      assumptions: "",
+      nameplate: { make: "", model: "", serial: "", refrigerant: "", filterSize: "", photo: "", type: "furnace" }
+    };
+  }
+  function formatVisitNote(d) {
+    const recs = (d.recs || []).filter(function (r) { return (r.text || "").trim(); });
+    const r = d.readings || {};
+    const readingLines = [];
+    function addR(lab, val) { if (String(val || "").trim()) readingLines.push(lab + ": " + String(val).trim()); }
+    addR("Pressures", r.pressures);
+    addR("Temps", r.temps);
+    addR("SH/SC", r.shsc);
+    addR("Static", r.static);
+    addR("Amps", r.amps);
+    addR("Gas pressure", r.gas);
+    if (String(r.caveats || "").trim()) readingLines.push("Not measured / caveats: " + r.caveats.trim());
+    const parts = [];
+    parts.push((d.visitDate ? formatDate(d.visitDate + "T12:00") : formatDate(isoNow())) + " visit");
+    if (d.checkIn) parts.push("Check-in: " + d.checkIn.trim());
+    if (d.findings) parts.push("Findings: " + d.findings.trim());
+    if (d.work) parts.push("Work performed: " + d.work.trim());
+    if (readingLines.length) parts.push("Readings: " + readingLines.join("; "));
+    if (recs.length) parts.push("Recommendations: " + recs.map(function (x) { return x.text.trim() + (x.reason ? " (reason: " + x.reason.trim() + ")" : ""); }).join("; "));
+    if (d.leftover) parts.push("What’s left / return visit: " + d.leftover.trim());
+    parts.push(d.departure || "All systems operating on departure.");
+    return parts.join("\n\n");
+  }
+  function formatMaintNote(d) {
+    const parts = ["Maintenance visit" + (d.visitDate ? " · " + formatDate(d.visitDate + "T12:00") : "")];
+    if (d.filterSize) parts.push("Filter size: " + d.filterSize.trim());
+    if (d.filterDate) parts.push("Filter replaced: " + formatDate(d.filterDate + "T12:00"));
+    if (d.prevFilterDate) parts.push("Previous filter date: " + formatDate(d.prevFilterDate + "T12:00"));
+    if (d.tasks) parts.push("Tasks done: " + d.tasks.trim());
+    if (d.maintReadings) parts.push("Readings: " + d.maintReadings.trim());
+    if (d.departure) parts.push(d.departure);
+    return parts.join("\n\n");
+  }
+  function formatScopeNote(d) {
+    const parts = [];
+    if (d.scopeDesc) parts.push("Description: " + d.scopeDesc.trim());
+    if (d.included) parts.push("Included in scope: " + d.included.trim());
+    if (d.exclusions) parts.push("Exclusions / notes: " + d.exclusions.trim());
+    if (d.assumptions) parts.push("Assumptions: " + d.assumptions.trim());
+    return parts.join("\n\n") || "Scope";
+  }
+  function nameplateFilled(np) {
+    if (!np) return false;
+    return !!(np.make || np.model || np.serial || np.refrigerant || np.filterSize || np.photo);
+  }
+  function saveNameplateToCustomer(customer, np) {
+    if (!customer || !nameplateFilled(np)) return false;
+    if (!customer.assets) customer.assets = [];
+    const asset = emptyAsset();
+    asset.type = np.type || "furnace";
+    asset.make = (np.make || "").trim();
+    asset.model = (np.model || "").trim();
+    asset.serial = (np.serial || "").trim();
+    asset.refrigerant = (np.refrigerant || "").trim();
+    asset.filterSize = (np.filterSize || "").trim();
+    asset.photo = np.photo || "";
+    customer.assets.push(asset);
+    return true;
+  }
+
+  function normalizeName(s) {
+    return String(s || "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  }
+  function scoreName(query, name) {
+    const q = normalizeName(query), n = normalizeName(name);
+    if (!q || !n) return 0;
+    if (n === q) return 100;
+    if (n.indexOf(q) !== -1 || q.indexOf(n) !== -1) return 90;
+    const qt = q.split(" ").filter(function (t) { return t.length > 1; });
+    const nt = n.split(" ");
+    if (!qt.length) return 0;
+    let hits = 0;
+    qt.forEach(function (t) {
+      if (nt.some(function (x) { return x === t || x.indexOf(t) === 0 || (t.length > 3 && x.indexOf(t) !== -1); })) hits++;
+    });
+    if (!hits) return 0;
+    return 40 + (hits / qt.length) * 50;
+  }
+  function rankedCustomers(query) {
+    return state.customers.map(function (c) { return { c: c, score: scoreName(query, c.name) }; })
+      .filter(function (x) { return x.score >= 50; })
+      .sort(function (a, b) { return b.score - a.score; });
+  }
+  function openJobsForCustomer(customerId) {
+    return state.jobs.filter(function (j) { return j.customerId === customerId && j.status !== "paid"; });
+  }
+  function scoreJobWork(work, job) {
+    if (!work) return 0;
+    return scoreName(work, (job.problem || "") + " " + ((job.lineItems || []).map(function (l) { return l.label; }).join(" ")));
+  }
+  function pickJobForVoice(customerId, work, contextJob) {
+    const opens = openJobsForCustomer(customerId);
+    if (contextJob && contextJob.customerId === customerId && contextJob.status !== "paid") {
+      if (!work || scoreJobWork(work, contextJob) >= 50 || opens.length === 1) return contextJob;
+    }
+    if (work) {
+      const ranked = opens.map(function (j) { return { j: j, score: scoreJobWork(work, j) }; })
+        .filter(function (x) { return x.score >= 50; })
+        .sort(function (a, b) { return b.score - a.score; });
+      if (ranked.length) return ranked[0].j;
+    }
+    if (opens.length === 1) return opens[0];
+    if (opens.length > 1) return opens[0];
+    return null;
+  }
+  function parseVoiceCommand(text, context) {
+    const raw = String(text || "").trim();
+    const s = raw.toLowerCase().replace(/[.,!?]/g, " ").replace(/\s+/g, " ").trim();
+    if (!s) return { error: "Say or type a command, like “clock me in” or “clock me out.”", raw: raw };
+    const contextJob = context && context.job ? context.job : (state.openJobId ? getJob(state.openJobId) : null);
+    const contextCust = context && context.customer ? context.customer : (state.openCustomerId ? getCustomer(state.openCustomerId) : null);
+    let action = null, customerQuery = "", work = "";
+    const startFor = s.match(/^(?:start|start work(?:ing)? on|start a|begin)\s+(.+?)\s+for\s+(.+)$/);
+    const clockInFor = s.match(/^(?:clock(?: me| us| him| her| them)? in|set me in progress)(?:\s+(?:for|on|at|with)\s+|\s+)(.+)$/);
+    const clockOutFor = s.match(/^(?:clock(?: me| us| him| her| them)? out)(?:\s+(?:of|on|for|at)\s+(.+))?$/);
+    if (/^(clock(?: me| us)? out|clock out)$/.test(s) || (clockOutFor && !/clock(?: me| us)? in/.test(s) && /\bclock(?: me| us| him| her| them)? out\b/.test(s))) {
+      action = "clockOut";
+      if (clockOutFor && clockOutFor[1] && !/^(this|this job)$/.test(clockOutFor[1])) customerQuery = clockOutFor[1];
+    } else if (startFor) {
+      action = "clockIn";
+      work = startFor[1].trim();
+      customerQuery = startFor[2].trim();
+    } else if (clockInFor && clockInFor[1] && !/^(this|this job|on this|on this job)$/.test(clockInFor[1])) {
+      action = "clockIn";
+      customerQuery = clockInFor[1].replace(/^(for|on|at|with)\s+/, "").replace(/\s+job$/, "").trim();
+    } else if (/clock(?: me| us)? in|set me in progress|clock in/.test(s)) {
+      action = "clockIn";
+    } else {
+      return { error: "I didn’t catch a clock-in or clock-out command. Try “clock me in”, “clock me in for Lewis”, “start AC repair for Lewis”, or “clock me out.”", raw: raw };
+    }
+
+    let customer = null, job = null;
+    if (customerQuery) {
+      const matches = rankedCustomers(customerQuery);
+      if (!matches.length) return { error: "I couldn’t find a customer matching “" + customerQuery + ".”", raw: raw, action: action };
+      customer = matches[0].c;
+    } else if (contextJob) {
+      customer = getCustomer(contextJob.customerId) || { id: contextJob.customerId, name: contextJob.customer };
+    } else if (contextCust) {
+      customer = contextCust;
+    }
+
+    if (customer) {
+      job = pickJobForVoice(customer.id, work, contextJob);
+    } else if (contextJob) {
+      job = contextJob;
+      customer = getCustomer(contextJob.customerId) || { id: contextJob.customerId, name: contextJob.customer };
+    }
+
+    const needsNewJob = !!(customer && !job && action === "clockIn");
+    if (!customer && !job) {
+      return { error: "I need a job or a customer for that. Open a job, or say “clock me in for [customer].”", raw: raw, action: action };
+    }
+    if (action === "clockOut" && job && !anyOpenEntry(job) && !openEntryFor(job, state.currentTech)) {
+      /* still confirm; the confirm handler will explain if nothing is open */
+    }
+    return {
+      action: action,
+      raw: raw,
+      tech: state.currentTech || DEFAULT_TECH,
+      customer: customer,
+      customerId: customer ? customer.id : "",
+      customerName: customer ? customer.name : (job ? job.customer : ""),
+      job: job,
+      jobId: job ? job.id : "",
+      problem: job ? job.problem : (work || ""),
+      work: work,
+      needsNewJob: needsNewJob
+    };
+  }
+
+  function timeOnSiteTable(job, opts) {
+    opts = opts || {};
+    const rows = completedTimeEntries(job);
+    if (!rows.length) return '<div class="muted">No completed visits to show yet.</div>';
+    const total = loggedHours(job);
+    return '<table class="tos-table"><thead><tr><th>Date</th><th>Tech</th><th>Arrive</th><th>Depart</th><th>Hours</th></tr></thead><tbody>' +
+      rows.map(function (e) {
+        return "<tr><td>" + esc(formatDate(e.clockIn)) + "</td><td>" + esc(e.tech) + "</td><td>" + esc(formatTime(e.clockIn)) + "</td><td>" + esc(formatTime(e.clockOut)) + "</td><td>" + esc(formatHours(entryHours(e))) + "</td></tr>";
+      }).join("") +
+      '</tbody><tfoot><tr><td colspan="4">Total</td><td>' + esc(formatHours(total)) + "</td></tr></tfoot></table>";
+  }
+  function timeSection(job) {
+    const entries = jobTimeEntries(job);
+    const tech = state.currentTech || DEFAULT_TECH;
+    const mine = openEntryFor(job, tech);
+    const open = mine || anyOpenEntry(job);
+    const flags = entries.reduce(function (acc, e) { return acc.concat(entryFlags(e).map(function (f) { return { e: e, f: f }; })); }, []);
+    const mismatch = hoursMismatch(job);
+    const techs = (state.techs && state.techs.length) ? state.techs : [DEFAULT_TECH];
+    return '<div class="section-row"><div class="section" style="margin:0">Time on site</div></div>' +
+      '<div class="muted" style="margin:0 0 10px">Clock in sets this job to In progress. Time is saved on this phone only.</div>' +
+      '<div class="field-lab">Tech</div><div class="chips">' + techs.map(function (name) {
+        return '<button class="chip' + (tech === name ? " on" : "") + '" ' + act("pickTech", name) + ">" + esc(name) + "</button>";
+      }).join("") + "</div>" +
+      '<label class="field"><div class="field-lab">Add an independent tech</div><input id="new-tech" type="text" placeholder="Tech name" value="" oninput="RT.setNewTech(this.value)"></label>' +
+      '<button class="dash" style="margin-top:-4px;margin-bottom:12px" ' + act("addTech") + ">Add tech</button>" +
+      (open ? '<div class="timer-card">' +
+        '<div class="k-up">Clocked in' + (open.tech ? " · " + esc(open.tech) : "") + "</div>" +
+        '<div class="timer" data-timer-start="' + esc(open.clockIn) + '">' + esc(formatElapsed(Date.now() - parseStamp(open.clockIn).getTime())) + "</div>" +
+        '<div class="muted">Arrived ' + esc(formatDateTime(open.clockIn)) + "</div></div>" : "") +
+      (flags.length ? flags.map(function (x) {
+        return '<div class="warn-banner">' + esc(x.f) + " · " + esc(x.e.tech) + (x.e.clockIn ? " · arrived " + formatDateTime(x.e.clockIn) : "") + "</div>";
+      }).join("") : "") +
+      '<div class="quick" style="margin-top:8px">' +
+        (mine ? '<button class="btn accent" ' + act("clockOut") + ">Clock out</button>" :
+          '<button class="btn teal" ' + act("clockIn") + ">Clock in</button>") +
+      "</div>" +
+      (entries.length ? '<div class="stack" style="margin-bottom:14px">' + entries.slice().reverse().map(function (e) {
+        const fl = entryFlags(e);
+        return '<div class="panel time-entry">' +
+          '<div class="row"><div class="h2">' + esc(e.tech) + "</div><div class=\"meta\">" + esc(formatHours(entryHours(e))) + "</div></div>" +
+          '<div class="muted" style="margin:4px 0">' + esc(formatDate(e.clockIn)) + " · Arrive " + esc(formatTime(e.clockIn)) + " · Depart " + (e.clockOut ? esc(formatTime(e.clockOut)) : "—") + "</div>" +
+          (fl.length ? '<div class="warn-inline">' + esc(fl.join(" · ")) + "</div>" : "") +
+          ((e.edits || []).length ? '<div class="edit-hist"><div class="field-lab">Edit history (app only — not on the invoice)</div>' + e.edits.map(function (ed) {
+            const fieldLab = ed.field === "clockIn" ? "Arrive" : ed.field === "clockOut" ? "Depart" : "Tech";
+            const oldV = ed.field === "tech" ? ed.oldValue : formatDateTime(ed.oldValue);
+            const newV = ed.field === "tech" ? ed.newValue : formatDateTime(ed.newValue);
+            return '<div class="muted" style="margin-top:4px">' + esc(formatDateTime(ed.editedAt)) + " · " + esc(ed.editedBy) + " changed " + fieldLab + " from " + esc(oldV || "—") + " to " + esc(newV || "—") + ". Reason: " + esc(ed.reason) + "</div>";
+          }).join("") + "</div>" : "") +
+          '<button class="link-btn" ' + act("editTime", e.id) + ">Edit timestamps</button></div>";
+      }).join("") + "</div>" : '<div class="muted" style="margin-bottom:14px">No time entries yet.</div>') +
+      (mismatch ? '<div class="warn-banner">' + esc(mismatch) + " This warning stays in the app; it is not printed on the invoice.</div>" : "") +
+      '<button class="dash' + (showTimeOnInvoice(job) ? " sel" : "") + '" style="margin-bottom:16px" ' + act("toggleTimeOnInvoice") + ">" +
+        (showTimeOnInvoice(job) ? "Time on site will print on this invoice" : "Time on site hidden on this invoice") + ". Default is on for hourly jobs, off for flat-rate." +
+      "</button>";
+  }
+
 
   const INITIAL_CUSTOMERS = (window.RT_DATA && window.RT_DATA.customers) ? window.RT_DATA.customers : [];
   const INITIAL_JOBS = (window.RT_DATA && window.RT_DATA.jobs) ? window.RT_DATA.jobs : [];
@@ -370,10 +814,10 @@
     initial.forEach(function (j) { byId[j.id] = j; });
     const extra = [];
     (saved || []).forEach(function (sj) {
-      if (byId[sj.id]) byId[sj.id] = sj;
-      else extra.push(sj);
+      if (byId[sj.id]) byId[sj.id] = normalizeJob(sj);
+      else extra.push(normalizeJob(sj));
     });
-    return extra.concat(initial.map(function (j) { return byId[j.id]; }));
+    return extra.concat(initial.map(function (j) { return normalizeJob(byId[j.id]); }));
   }
 
   const _saved = loadPersisted();
@@ -396,6 +840,14 @@
     readingDraft: { mode: "cooling", label: "Arrival", values: {}, fromScreenshot: false },
     assetDraft: emptyAsset(),
     assetEditingId: null,
+    currentTech: (_saved && _saved.currentTech) || DEFAULT_TECH,
+    techs: (_saved && Array.isArray(_saved.techs) && _saved.techs.length) ? _saved.techs : [DEFAULT_TECH],
+    noteDraft: emptyNoteDraft("visit"),
+    timeEdit: null,
+    voice: { listening: false, text: "", fallback: false, error: "" },
+    voiceConfirm: null,
+    _newTech: "",
+    clockInAfterCreate: false,
     compareIds: [],
     packTab: "repair",
     packQuery: "",
@@ -404,7 +856,7 @@
   };
   function persist() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ v: 1, customers: state.customers, jobs: state.jobs }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ v: 1, customers: state.customers, jobs: state.jobs, currentTech: state.currentTech, techs: state.techs }));
     } catch (e) {}
   }
   let toastTimer = null;
@@ -420,6 +872,9 @@
   function closeSheet() {
     state.sheet = null;
     state.compareIds = [];
+    state.voiceConfirm = null;
+    if (state.voice) state.voice.listening = false;
+    if (recognition) { try { recognition.abort(); } catch (e) {} }
     render();
   }
   function nextCustomerId() {
@@ -443,7 +898,21 @@
       const reader = new FileReader();
       reader.onload = function () { state.assetDraft.photo = String(reader.result || ""); render(); };
       reader.readAsDataURL(f);
-    }
+    },
+    setNewTech: function (v) { state._newTech = v; },
+    setNoteField: function (k, v) { state.noteDraft[k] = v; },
+    setNoteReading: function (k, v) { if (!state.noteDraft.readings) state.noteDraft.readings = {}; state.noteDraft.readings[k] = v; },
+    setRec: function (i, k, v) { if (!state.noteDraft.recs[i]) state.noteDraft.recs[i] = { text: "", reason: "" }; state.noteDraft.recs[i][k] = v; },
+    setNameplate: function (k, v) { if (!state.noteDraft.nameplate) state.noteDraft.nameplate = emptyNoteDraft().nameplate; state.noteDraft.nameplate[k] = v; renderKeepFocus("np-" + k); },
+    setNameplatePhoto: function (el) {
+      const f = el.files && el.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = function () { state.noteDraft.nameplate.photo = String(reader.result || ""); render(); };
+      reader.readAsDataURL(f);
+    },
+    setTimeEdit: function (k, v) { state.timeEdit[k] = v; },
+    setVoiceText: function (v) { state.voice.text = v; }
   };
 
   function renderKeepFocus(id) {
@@ -465,7 +934,9 @@
         (opts.kicker ? '<div class="kicker">' + esc(opts.kicker) + "</div>" : "") +
         '<div class="title-row"><div class="' + (opts.kicker ? "title" : "nav-title") + '">' + esc(opts.title) + "</div>" +
         (opts.badge ? '<span class="badge">Sample data</span>' : "") + "</div>" +
-      "</div></div>";
+      "</div>" +
+      (opts.voice === false ? "" : '<button class="icon-btn" ' + act("openVoice") + ' aria-label="Voice command">' + icon("mic") + "</button>") +
+      "</div>";
   }
   function tabBar() {
     const tabs = [["jobs", "Jobs", "jobs"], ["capture", "Capture", "capture"], ["customers", "Customers", "customers"], ["money", "Money", "money"]];
@@ -525,6 +996,7 @@
       '<div class="teal">' + esc(job.phone) + "</div>" +
       '<div style="margin-bottom:16px">' + pill(st.label, col.text, col.bg) + (job.schedule ? '<span class="muted" style="margin-left:8px;font-size:12px">' + esc(job.schedule) + "</span>" : "") + "</div>" +
       jobEquipmentSection(job) +
+      timeSection(job) +
       '<div class="panel" style="margin-bottom:16px">' + stepper(job.status) + "</div>" +
       '<div class="section">Quick capture</div><div class="quick">' +
       '<button class="quick-btn" ' + act("sheet", "note") + ">" + icon("note") + "<span>Note</span></button>" +
@@ -539,6 +1011,7 @@
       '<button class="btn" ' + act("openPriceBook") + ">Build estimate</button>" +
       (job.estimateId ? '<button class="btn ghost" ' + act("sheet", "approval") + ">Send for approval · " + job.estimateId + "</button>" : "") +
       (job.status === "done" || job.status === "approved" || job.status === "progress" ? '<button class="btn teal" ' + act("sheet", "invoice") + ">Make invoice</button>" : "") +
+      (job.status === "invoiced" || job.status === "paid" ? '<button class="btn ghost" ' + act("sheet", "invoice") + ">View invoice</button>" : "") +
       (job.status === "invoiced" ? '<button class="btn accent" ' + act("sheet", "paid") + ">Mark paid</button>" : "") +
       '<button class="btn ask" ' + act("sheet", "ask") + ">" + icon("chat", 18) + "<span>Ask ReliaTech</span></button>" +
       "</div></div></div>";
@@ -788,11 +1261,74 @@
   }
 
   function noteSheet() {
+    const d = state.noteDraft || emptyNoteDraft("visit");
+    const typ = d.type || "visit";
+    const recs = d.recs && d.recs.length ? d.recs : [{ text: "", reason: "" }];
+    const r = d.readings || {};
+    const np = d.nameplate || {};
+    const types = [["visit", "Visit note"], ["maintenance", "Maintenance"], ["scope", "Repair / estimate scope"]];
+    let body = "";
+    if (typ === "visit") {
+      body =
+        '<label class="field"><div class="field-lab">Date / visit</div><input id="nt-visitDate" type="date" value="' + esc(d.visitDate) + '" oninput="RT.setNoteField(\'visitDate\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Check-in</div><input id="nt-checkIn" type="text" placeholder="Arrival notes, who was on site" value="' + esc(d.checkIn) + '" oninput="RT.setNoteField(\'checkIn\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Findings</div><textarea id="nt-findings" rows="3" placeholder="What you found" oninput="RT.setNoteField(\'findings\', this.value)">' + esc(d.findings) + "</textarea></label>" +
+        '<label class="field"><div class="field-lab">Work performed</div><textarea id="nt-work" rows="3" placeholder="What you did" oninput="RT.setNoteField(\'work\', this.value)">' + esc(d.work) + "</textarea></label>" +
+        '<div class="section">Readings</div><div class="muted" style="margin:-4px 0 8px">Leave a field blank and note it under caveats if you did not measure it.</div>' +
+        '<label class="field"><div class="field-lab">Pressures</div><input id="nt-pressures" type="text" placeholder="Suction / liquid, psig" value="' + esc(r.pressures || "") + '" oninput="RT.setNoteReading(\'pressures\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Temps</div><input id="nt-temps" type="text" placeholder="Return / supply / outdoor, °F" value="' + esc(r.temps || "") + '" oninput="RT.setNoteReading(\'temps\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">SH / SC</div><input id="nt-shsc" type="text" placeholder="Superheat / subcool, °F" value="' + esc(r.shsc || "") + '" oninput="RT.setNoteReading(\'shsc\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Static</div><input id="nt-static" type="text" placeholder="Return / supply / TESP, in. WC" value="' + esc(r.static || "") + '" oninput="RT.setNoteReading(\'static\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Amps</div><input id="nt-amps" type="text" placeholder="Compressor / blower / condenser fan" value="' + esc(r.amps || "") + '" oninput="RT.setNoteReading(\'amps\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Gas pressure</div><input id="nt-gas" type="text" placeholder="Inlet / manifold, in. WC" value="' + esc(r.gas || "") + '" oninput="RT.setNoteReading(\'gas\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Caveats for anything not measured</div><textarea id="nt-caveats" rows="2" placeholder="e.g. Could not confirm static — no access to return" oninput="RT.setNoteReading(\'caveats\', this.value)">' + esc(r.caveats || "") + "</textarea></label>" +
+        '<div class="section">Recommendations</div>' + recs.map(function (rec, i) {
+          return '<div class="panel" style="margin-bottom:8px;padding:12px">' +
+            '<label class="field"><div class="field-lab">Recommendation</div><input id="nt-rec-' + i + '" type="text" value="' + esc(rec.text) + '" oninput="RT.setRec(' + i + ',\'text\', this.value)"></label>' +
+            '<label class="field" style="margin-bottom:0"><div class="field-lab">Reason</div><input id="nt-rec-r-' + i + '" type="text" value="' + esc(rec.reason) + '" oninput="RT.setRec(' + i + ',\'reason\', this.value)"></label></div>';
+        }).join("") +
+        '<button class="dash" style="margin-bottom:12px" ' + act("addRec") + ">Add recommendation</button>" +
+        '<label class="field"><div class="field-lab">What’s left / return visit</div><textarea id="nt-leftover" rows="2" placeholder="Open items, parts on order, scheduled return" oninput="RT.setNoteField(\'leftover\', this.value)">' + esc(d.leftover) + "</textarea></label>" +
+        '<label class="field"><div class="field-lab">Final line</div><input id="nt-departure" type="text" value="' + esc(d.departure) + '" oninput="RT.setNoteField(\'departure\', this.value)"></label>';
+    } else if (typ === "maintenance") {
+      body =
+        '<label class="field"><div class="field-lab">Visit date</div><input id="nt-visitDate" type="date" value="' + esc(d.visitDate) + '" oninput="RT.setNoteField(\'visitDate\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Filter size</div><input id="nt-filterSize" type="text" placeholder="e.g. 16x25x1" value="' + esc(d.filterSize) + '" oninput="RT.setNoteField(\'filterSize\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Date replaced</div><input id="nt-filterDate" type="date" value="' + esc(d.filterDate) + '" oninput="RT.setNoteField(\'filterDate\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Previous filter date</div><input id="nt-prevFilterDate" type="date" value="' + esc(d.prevFilterDate) + '" oninput="RT.setNoteField(\'prevFilterDate\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Tasks done</div><textarea id="nt-tasks" rows="3" placeholder="Filters, coils, drain, belts, safeties…" oninput="RT.setNoteField(\'tasks\', this.value)">' + esc(d.tasks) + "</textarea></label>" +
+        '<label class="field"><div class="field-lab">Readings</div><textarea id="nt-maintReadings" rows="3" placeholder="Temps, static, amps, or other readings taken" oninput="RT.setNoteField(\'maintReadings\', this.value)">' + esc(d.maintReadings) + "</textarea></label>" +
+        '<label class="field"><div class="field-lab">Final line</div><input id="nt-departure" type="text" value="' + esc(d.departure) + '" oninput="RT.setNoteField(\'departure\', this.value)"></label>';
+    } else {
+      body =
+        '<label class="field"><div class="field-lab">Description</div><textarea id="nt-scopeDesc" rows="3" placeholder="Repair or estimate scope" oninput="RT.setNoteField(\'scopeDesc\', this.value)">' + esc(d.scopeDesc) + "</textarea></label>" +
+        '<label class="field"><div class="field-lab">Included in scope</div><textarea id="nt-included" rows="3" placeholder="What is included" oninput="RT.setNoteField(\'included\', this.value)">' + esc(d.included) + "</textarea></label>" +
+        '<label class="field"><div class="field-lab">Exclusions / notes</div><textarea id="nt-exclusions" rows="3" placeholder="What is not included" oninput="RT.setNoteField(\'exclusions\', this.value)">' + esc(d.exclusions) + "</textarea></label>" +
+        '<label class="field"><div class="field-lab">Assumptions</div><textarea id="nt-assumptions" rows="3" placeholder="Access, existing conditions, allowances" oninput="RT.setNoteField(\'assumptions\', this.value)">' + esc(d.assumptions) + "</textarea></label>";
+    }
+    const nameplate =
+      '<div class="section">Nameplate while you’re on site</div>' +
+      '<div class="muted" style="margin:-4px 0 8px">Grab make, model, serial, refrigerant, and filter size off the nameplate. This saves to the customer’s Equipment profile on this phone.</div>' +
+      '<div class="chips">' + EQUIPMENT_TYPES.map(function (t) {
+        return '<button class="chip teal' + (np.type === t.id ? " on" : "") + '" ' + act("npType", t.id) + ">" + esc(t.label) + "</button>";
+      }).join("") + "</div>" +
+      '<label class="field"><div class="field-lab">Make</div><input id="np-make" type="text" value="' + esc(np.make || "") + '" oninput="RT.setNameplate(\'make\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Model</div><input id="np-model" type="text" value="' + esc(np.model || "") + '" oninput="RT.setNameplate(\'model\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Serial</div><input id="np-serial" type="text" value="' + esc(np.serial || "") + '" oninput="RT.setNameplate(\'serial\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Refrigerant</div><input id="np-refrigerant" type="text" value="' + esc(np.refrigerant || "") + '" oninput="RT.setNameplate(\'refrigerant\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Filter size</div><input id="np-filterSize" type="text" value="' + esc(np.filterSize || "") + '" oninput="RT.setNameplate(\'filterSize\', this.value)"></label>' +
+      '<div class="nameplate">' + (np.photo ? '<img src="' + esc(np.photo) + '" alt="Nameplate photo">' : '<div class="nameplate-empty">' + icon("photo", 22) + "<span>Nameplate photo</span></div>") +
+      '<input type="file" accept="image/*" capture="environment" aria-label="Nameplate photo" onchange="RT.setNameplatePhoto(this)"></div>' +
+      (np.photo ? '<button class="link-btn" style="margin-bottom:12px" ' + act("clearNpPhoto") + ">Remove photo</button>" : "");
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Add a note</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      '<label class="field"><div class="field-lab">Note</div><textarea id="note-body" rows="4" placeholder="What did you see or do?" oninput="RT.setNote(this.value)"></textarea></label>' +
+      '<div class="chips">' + types.map(function (t) {
+        return '<button class="chip' + (typ === t[0] ? " on" : "") + '" ' + act("noteType", t[0]) + ">" + esc(t[1]) + "</button>";
+      }).join("") + "</div>" +
+      body + nameplate +
       '<button class="btn" ' + act("saveNote") + ">Save note</button>");
   }
+
   function photoSheet() {
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Add a photo</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
@@ -815,13 +1351,27 @@
       '<button class="btn" ' + act("closeSheet") + ">Got it</button>");
   }
   function invoiceSheet(job) {
+    const existing = job.status === "invoiced" || job.status === "paid";
+    const mismatch = hoursMismatch(job);
+    const showTos = showTimeOnInvoice(job);
+    const completed = completedTimeEntries(job);
+    const openLeft = anyOpenEntry(job);
     return backdrop(
-      '<div class="sheet-head"><div class="sheet-title">Make invoice</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      '<div class="doc"><div class="k-up">Invoice ' + job.id + "-01</div><div class=\"h2\" style=\"margin:6px 0\">" + esc(job.customer) + "</div>" +
+      '<div class="sheet-head"><div class="sheet-title">' + (existing ? "Invoice" : "Make invoice") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="doc"><div class="k-up">Invoice ' + esc(job.invoiceId || (job.id + "-01")) + "</div><div class=\"h2\" style=\"margin:6px 0\">" + esc(job.customer) + "</div>" +
       (job.lineItems || []).map(function (l) { return '<div class="row" style="margin-top:6px"><div>' + esc(l.label) + "</div><div>" + money(l.amount) + "</div></div>"; }).join("") +
-      '<div class="row" style="margin-top:10px;font-weight:750"><div>Total</div><div>' + money(job.total) + "</div></div></div>" +
-      '<button class="btn teal" ' + act("makeInvoice") + ">Create invoice</button>");
+      '<div class="row" style="margin-top:10px;font-weight:750"><div>Total</div><div>' + money(job.total) + "</div></div>" +
+      '<div class="section-row" style="margin-top:16px"><div class="k-up" style="margin:0">Time on site</div></div>' +
+      '<button class="dash' + (showTos ? " sel" : "") + '" style="margin:8px 0" ' + act("toggleTimeOnInvoice") + ">" +
+        (showTos ? "Time on site will print on this invoice" : "Time on site hidden on this invoice") + ". Default is on for hourly jobs, off for flat-rate." +
+      "</button>" +
+      (mismatch ? '<div class="warn-banner">' + esc(mismatch) + " This warning stays in the app; it is not printed on the invoice.</div>" : "") +
+      (openLeft && showTos ? '<div class="muted" style="margin-bottom:8px">Open entries are kept in the app until you clock out. They are not printed.</div>' : "") +
+      (showTos ? timeOnSiteTable(job) : '<div class="muted">Time on site will not print on this invoice. Travel, breaks, and edit history are never printed.</div>') +
+      "</div>" +
+      (existing ? '<button class="btn" ' + act("closeSheet") + ">Done</button>" : '<button class="btn teal" ' + act("makeInvoice") + ">Create invoice</button>"));
   }
+
   function paidSheet(job) {
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Mark paid</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
@@ -1004,6 +1554,71 @@
     );
   }
 
+  function timeEditSheet(job) {
+    const d = state.timeEdit || {};
+    const entry = jobTimeEntries(job).find(function (e) { return e.id === d.entryId; });
+    if (!entry) return backdrop('<div class="sheet-head"><div class="sheet-title">Edit time</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div><div class=\"muted\">That time entry is no longer here.</div>");
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Edit timestamps</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="muted" style="margin-bottom:12px">Use this to fix a forgotten clock-out or a wrong time. A reason is required. The edit history stays in the app and is never printed on the invoice.</div>' +
+      '<label class="field"><div class="field-lab">Tech</div><input id="te-tech" type="text" value="' + esc(d.tech || "") + '" oninput="RT.setTimeEdit(\'tech\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Arrive</div><input id="te-clockIn" type="datetime-local" value="' + esc(d.clockIn || "") + '" oninput="RT.setTimeEdit(\'clockIn\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Depart</div><input id="te-clockOut" type="datetime-local" value="' + esc(d.clockOut || "") + '" oninput="RT.setTimeEdit(\'clockOut\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Reason (required)</div><textarea id="te-reason" rows="3" placeholder="e.g. Forgot to clock out at the end of the day" oninput="RT.setTimeEdit(\'reason\', this.value)">' + esc(d.reason || "") + "</textarea></label>" +
+      ((entry.edits || []).length ? '<div class="edit-hist" style="margin-bottom:12px"><div class="field-lab">Previous edits</div>' + entry.edits.map(function (ed) {
+        const fieldLab = ed.field === "clockIn" ? "Arrive" : ed.field === "clockOut" ? "Depart" : "Tech";
+        const oldV = ed.field === "tech" ? ed.oldValue : formatDateTime(ed.oldValue);
+        const newV = ed.field === "tech" ? ed.newValue : formatDateTime(ed.newValue);
+        return '<div class="muted" style="margin-top:4px">' + esc(formatDateTime(ed.editedAt)) + " · " + esc(ed.editedBy) + " changed " + fieldLab + " from " + esc(oldV || "—") + " to " + esc(newV || "—") + ". Reason: " + esc(ed.reason) + "</div>";
+      }).join("") + "</div>" : "") +
+      '<button class="btn" ' + act("saveTimeEdit") + ">Save changes</button>");
+  }
+
+
+  function voiceSheet() {
+    const v = state.voice || {};
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Voice command</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      (v.listening ? '<div class="voice-orb" aria-hidden="true"></div><div class="h2" style="text-align:center;margin-bottom:8px">Listening…</div>' : "") +
+      '<div id="voice-status" class="muted" style="text-align:center;margin-bottom:10px">' +
+        esc(v.listening ? "Try “clock me in”, “clock me in for Lewis”, “start AC repair for Lewis”, or “clock me out.”" : (v.error || "Voice is ready when you are.")) +
+      "</div>" +
+      '<div id="voice-text" class="voice-text">' + esc(v.text || "") + "</div>" +
+      (v.fallback || !v.listening ? '<label class="field"><div class="field-lab">' + (v.fallback ? "Type the command" : "Or type it") + "</div>" +
+        '<input id="voice-input" type="text" placeholder="clock me in for Lewis" value="' + esc(v.text || "") + '" oninput="RT.setVoiceText(this.value)"></label>' +
+        '<button class="btn" ' + act("submitVoice") + ">Continue</button>" +
+        (speechAvailable() && !v.listening ? '<button class="btn ghost" style="margin-top:8px" ' + act("openVoice") + ">Listen again</button>" : "") : "")
+    );
+  }
+
+
+  function voiceConfirmSheet() {
+    const c = state.voiceConfirm;
+    if (!c) return "";
+    const actionLab = c.action === "clockOut" ? "Clock out" : "Clock in";
+    const jobLine = c.needsNewJob
+      ? ("No open job for " + (c.customerName || "this customer") + ". You can create a new job, same as New job on the customer page" + (c.work ? ' ("' + c.work + '")' : '') + ".")
+      : (c.jobId ? ("Job #" + c.jobId + (c.problem ? " · " + c.problem : "")) : "No job selected");
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Confirm</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="confirm-card">' +
+        '<div class="k-up">Voice command</div>' +
+        (c.raw ? '<div class="muted" style="margin:6px 0 12px">“' + esc(c.raw) + '”</div>' : "") +
+        '<div class="confirm-row"><div class="field-lab">Tech</div><div class="h2">' + esc(c.tech || state.currentTech) + "</div></div>" +
+        '<div class="confirm-row"><div class="field-lab">Customer</div><div class="h2">' + esc(c.customerName || "—") + "</div></div>" +
+        '<div class="confirm-row"><div class="field-lab">Job</div><div class="h2">' + esc(c.needsNewJob ? "New job needed" : (c.jobId ? ("#" + c.jobId) : "—")) + "</div>" +
+          '<div class="muted">' + esc(jobLine) + "</div></div>" +
+        '<div class="confirm-row"><div class="field-lab">Action</div><div class="h2">' + esc(actionLab) + "</div></div>" +
+      "</div>" +
+      (c.needsNewJob
+        ? '<button class="btn accent" ' + act("voiceNewJob") + ">New job for " + esc(c.customerName || "customer") + "</button>" +
+          '<div class="note">This opens the same New job flow as the customer page. After the job is created you’ll be asked to confirm clock-in.</div>'
+        : '<button class="btn teal" ' + act("confirmVoice") + ">Confirm " + esc(actionLab.toLowerCase()) + "</button>") +
+      '<button class="btn ghost" style="margin-top:8px" ' + act("closeSheet") + ">Cancel</button>"
+    );
+  }
+
+
   function sheetHtml() {
     const s = state.sheet;
     if (!s) return "";
@@ -1011,6 +1626,9 @@
     if (s === "equipment") return equipmentSheet();
     const job = getJob(state.openJobId);
     if (s === "note") return noteSheet();
+    if (s === "timeEdit") return job ? timeEditSheet(job) : "";
+    if (s === "voice") return voiceSheet();
+    if (s === "voiceConfirm") return voiceConfirmSheet();
     if (s === "photo") return photoSheet();
     if (s === "reading") return job ? readingSheet(job) : "";
     if (s === "ask") return job ? askSheet(job) : "";
@@ -1057,6 +1675,7 @@
     const toast = state.toast ? '<div class="toast">' + esc(state.toast) + "</div>" : "";
     root.innerHTML = mainHtml() + sheetHtml() + toast;
     persist();
+    ensureTimer();
   }
 
   function handle(name, arg) {
@@ -1067,7 +1686,12 @@
     if (name === "openCustomer") { state.openCustomerId = arg; render(); return; }
     if (name === "closeCustomer") { state.openCustomerId = null; render(); return; }
     if (name === "closeSheet") { closeSheet(); return; }
-    if (name === "sheet") { state.sheet = arg; if (arg === "reading") { const j = getJob(state.openJobId); state.readingDraft = { mode: defaultMode(j), label: "Arrival", values: {}, fromScreenshot: false }; } render(); return; }
+    if (name === "sheet") {
+      state.sheet = arg;
+      if (arg === "reading") { const j = getJob(state.openJobId); state.readingDraft = { mode: defaultMode(j), label: "Arrival", values: {}, fromScreenshot: false }; }
+      if (arg === "note") state.noteDraft = emptyNoteDraft("visit");
+      render(); return;
+    }
     if (name === "openNewCall") {
       state.sheet = "newCall"; state.newCallStep = 1;
       state.newCall = { chips: [], detail: "", urgency: "today", customerId: "", isNew: false, fromCustomer: false, newName: "", newPhone: "", newAddress: "", newCity: "Long Beach", newEmail: "", custQuery: "" };
@@ -1175,14 +1799,45 @@
       state.openJobId = id;
       state.tab = "jobs";
       state.filter = "open";
+      if (state.clockInAfterCreate) {
+        state.clockInAfterCreate = false;
+        state.voiceConfirm = {
+          action: "clockIn",
+          raw: state._pendingVoiceRaw || "",
+          tech: state.currentTech || DEFAULT_TECH,
+          customer: getCustomer(customerId),
+          customerId: customerId,
+          customerName: customer,
+          job: job,
+          jobId: id,
+          problem: problem,
+          work: "",
+          needsNewJob: false
+        };
+        state.sheet = "voiceConfirm";
+        showToast("Job " + id + " created · confirm clock-in");
+        return;
+      }
       showToast("Job " + id + " created");
       return;
     }
     if (name === "saveNote") {
       const job = getJob(state.openJobId); if (!job) return;
-      const body = (state._note || "").trim() || "Note captured on site.";
-      job.timeline = [{ id: "n" + Date.now(), kind: "note", time: "Just now", title: "Note", body: body }].concat(job.timeline);
-      state._note = ""; state.sheet = "saved"; render(); return;
+      const d = state.noteDraft || emptyNoteDraft("visit");
+      let body = "";
+      let title = "Note";
+      if (d.type === "maintenance") { body = formatMaintNote(d); title = "Maintenance note"; }
+      else if (d.type === "scope") { body = formatScopeNote(d); title = "Scope"; }
+      else { body = formatVisitNote(d); title = "Visit note"; }
+      if (!body.trim()) body = "Note captured on site.";
+      job.timeline = [{ id: "n" + Date.now(), kind: "note", time: "Just now", title: title, body: body }].concat(job.timeline);
+      let extra = "";
+      const c = getCustomer(job.customerId);
+      if (saveNameplateToCustomer(c, d.nameplate)) extra = " Nameplate saved to the customer’s equipment profile.";
+      state.noteDraft = emptyNoteDraft("visit");
+      state.sheet = "saved";
+      showToast(title + " saved on this phone only." + extra);
+      return;
     }
     if (name === "savePhoto") {
       const job = getJob(state.openJobId); if (!job) return;
@@ -1263,6 +1918,86 @@
       job.timeline = [{ id: "pay" + Date.now(), kind: "system", time: "Just now", title: "Paid", body: "Invoice " + (job.invoiceId || (job.id + "-01")) + " marked paid, " + money(job.total) + "." }].concat(job.timeline);
       state.sheet = null; showToast("Marked paid · sample only"); return;
     }
+    if (name === "pickTech") { state.currentTech = arg; render(); return; }
+    if (name === "addTech") {
+      const n = (state._newTech || "").trim();
+      if (!n) { showToast("Enter a tech name"); return; }
+      if (state.techs.indexOf(n) === -1) state.techs = state.techs.concat([n]);
+      state.currentTech = n;
+      state._newTech = "";
+      render(); return;
+    }
+    if (name === "clockIn") {
+      const job = getJob(state.openJobId); if (!job) return;
+      const res = clockInJob(job, state.currentTech || DEFAULT_TECH);
+      if (!res.ok) { showToast(res.msg); return; }
+      showToast("Clocked in · " + (state.currentTech || DEFAULT_TECH));
+      return;
+    }
+    if (name === "clockOut") {
+      const job = getJob(state.openJobId); if (!job) return;
+      const res = clockOutJob(job, state.currentTech || DEFAULT_TECH);
+      if (!res.ok) { showToast(res.msg); return; }
+      showToast("Clocked out · " + formatHours(entryHours(res.entry)));
+      return;
+    }
+    if (name === "toggleTimeOnInvoice") {
+      const job = getJob(state.openJobId); if (!job) return;
+      job.showTimeOnInvoice = !showTimeOnInvoice(job);
+      render(); return;
+    }
+    if (name === "editTime") {
+      const job = getJob(state.openJobId); if (!job) return;
+      const entry = jobTimeEntries(job).find(function (e) { return e.id === arg; });
+      if (!entry) return;
+      state.timeEdit = { entryId: entry.id, tech: entry.tech, clockIn: toInputValue(entry.clockIn), clockOut: entry.clockOut ? toInputValue(entry.clockOut) : "", reason: "" };
+      state.sheet = "timeEdit";
+      render(); return;
+    }
+    if (name === "saveTimeEdit") {
+      const job = getJob(state.openJobId); if (!job) return;
+      const d = state.timeEdit || {};
+      if (!(d.reason || "").trim()) { showToast("A reason is required"); return; }
+      const entry = jobTimeEntries(job).find(function (e) { return e.id === d.entryId; });
+      if (!entry) return;
+      const res = applyTimeEdit(job, entry, { tech: d.tech, clockIn: fromInputValue(d.clockIn), clockOut: fromInputValue(d.clockOut), reason: d.reason.trim() }, state.currentTech || DEFAULT_TECH);
+      if (!res.ok) { showToast(res.msg); return; }
+      state.sheet = null;
+      showToast("Time entry updated · history stays in the app");
+      return;
+    }
+    if (name === "noteType") { state.noteDraft.type = arg; render(); return; }
+    if (name === "addRec") { state.noteDraft.recs = (state.noteDraft.recs || []).concat([{ text: "", reason: "" }]); render(); return; }
+    if (name === "npType") { state.noteDraft.nameplate.type = arg; render(); return; }
+    if (name === "clearNpPhoto") { state.noteDraft.nameplate.photo = ""; render(); return; }
+    if (name === "openVoice") { startListening(); return; }
+    if (name === "submitVoice") { applyVoiceText((state.voice && state.voice.text) || ""); return; }
+    if (name === "confirmVoice") {
+      const c = state.voiceConfirm; if (!c) return;
+      let job = c.jobId ? getJob(c.jobId) : null;
+      if (!job) { showToast("That job isn’t available."); return; }
+      state.openJobId = job.id;
+      state.openCustomerId = null;
+      const tech = c.tech || state.currentTech || DEFAULT_TECH;
+      const res = c.action === "clockOut" ? clockOutJob(job, tech) : clockInJob(job, tech);
+      state.voiceConfirm = null;
+      state.sheet = null;
+      if (!res.ok) { showToast(res.msg); return; }
+      showToast(c.action === "clockOut" ? ("Clocked out · " + formatHours(entryHours(res.entry))) : ("Clocked in · " + tech));
+      return;
+    }
+    if (name === "voiceNewJob") {
+      const c = state.voiceConfirm; if (!c || !c.customerId) return;
+      state.clockInAfterCreate = true;
+      state._pendingVoiceRaw = c.raw || "";
+      const cust = getCustomer(c.customerId);
+      if (!cust) return;
+      state.openCustomerId = cust.id;
+      state.sheet = "newCall";
+      state.newCallStep = 1;
+      state.newCall = { chips: [], detail: c.work || "", urgency: "today", customerId: cust.id, isNew: false, fromCustomer: true, newName: "", newPhone: "", newAddress: "", newCity: "Long Beach", newEmail: "", custQuery: cust.name };
+      render(); return;
+    }
     if (name === "captureNeedJob") { state._pendingCapture = arg; state.sheet = "pickJob"; render(); return; }
     if (name === "pickJobCapture") {
       state.openJobId = arg; state.openCustomerId = null;
@@ -1270,6 +2005,87 @@
       if (kind === "reading") { const j = getJob(arg); state.readingDraft = { mode: defaultMode(j), label: "Arrival", values: {}, fromScreenshot: false }; }
       state.sheet = kind; render(); return;
     }
+  }
+
+  function speechAvailable() {
+    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  }
+  let recognition = null;
+  function voiceContext() {
+    return {
+      job: state.openJobId ? getJob(state.openJobId) : null,
+      customer: state.openCustomerId ? getCustomer(state.openCustomerId) : null
+    };
+  }
+  function applyVoiceText(text) {
+    if (recognition) { try { recognition.stop(); } catch (e) {} }
+    const parsed = parseVoiceCommand(text, voiceContext());
+    state.voice.listening = false;
+    state.voice.text = text || "";
+    if (parsed.error) {
+      state.voice.fallback = true;
+      state.voice.error = parsed.error;
+      state.sheet = "voice";
+      render();
+      return;
+    }
+    state.voiceConfirm = parsed;
+    state.sheet = "voiceConfirm";
+    render();
+  }
+  function startListening() {
+    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Ctor) {
+      state.voice = { listening: false, text: state.voice && state.voice.text || "", fallback: true, error: "This browser doesn’t support voice. Type the command instead. On iPhone, use Safari." };
+      state.sheet = "voice";
+      render();
+      return;
+    }
+    try {
+      if (recognition) { try { recognition.abort(); } catch (e) {} }
+      recognition = new Ctor();
+      recognition.lang = "en-US";
+      recognition.interimResults = true;
+      recognition.continuous = false;
+      recognition.onresult = function (ev) {
+        let said = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i++) said += ev.results[i][0].transcript;
+        state.voice.text = said.trim();
+        const el = document.getElementById("voice-text");
+        if (el) el.textContent = state.voice.text;
+        if (ev.results[ev.results.length - 1].isFinal) applyVoiceText(state.voice.text);
+      };
+      recognition.onerror = function (ev) {
+        state.voice.listening = false;
+        state.voice.fallback = true;
+        state.voice.error = ev.error === "not-allowed"
+          ? "Microphone permission was denied. Type the command instead."
+          : "Voice isn’t available right now. Type the command instead.";
+        state.sheet = "voice";
+        render();
+      };
+      recognition.onend = function () { state.voice.listening = false; };
+      state.voice = { listening: true, text: "", fallback: false, error: "" };
+      state.sheet = "voice";
+      render();
+      recognition.start();
+    } catch (err) {
+      state.voice = { listening: false, text: "", fallback: true, error: "Voice isn’t available. Type the command instead." };
+      state.sheet = "voice";
+      render();
+    }
+  }
+  let timerInterval = null;
+  function tickTimers() {
+    const nodes = document.querySelectorAll("[data-timer-start]");
+    nodes.forEach(function (el) {
+      const start = Date.parse(el.getAttribute("data-timer-start"));
+      if (!isNaN(start)) el.textContent = formatElapsed(Date.now() - start);
+    });
+  }
+  function ensureTimer() {
+    if (!timerInterval) timerInterval = setInterval(tickTimers, 1000);
+    tickTimers();
   }
 
   document.addEventListener("click", function (e) {
