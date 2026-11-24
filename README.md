@@ -4,7 +4,15 @@ A phone-app mockup for ReliaTech Services (Long Beach HVAC). Sample data only �
 
 Open this on an iPhone in Safari (no account or sign-in):
 
+**https://tangy-lace-tjnl3.ship.place/**
+
+This public host may stop serving the page after **December 1, 2026**. The source stays in this repository.
+
+The intended long-term address is GitHub Pages:
+
 **https://tempmaster-1968.github.io/reliatech-app-mockup/**
+
+That URL is not live yet. To turn it on (repo Settings → Pages → Deploy from a branch → `main` → `/ (root)` → Save). Once live, use that address instead.
 
 ## Add to Home Screen (iPhone)
 
