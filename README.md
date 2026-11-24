@@ -4,15 +4,9 @@ A phone-app mockup for ReliaTech Services (Long Beach HVAC). Job, customer, invo
 
 Open this on an iPhone in Safari (no account or sign-in):
 
-**https://low-message-ee6mo.ship.place/**
-
-If that host is updated to a new address, the current URL will be noted in the latest commit message. This public host may stop serving the page after **November 30, 2026, 11:48 PM Pacific Time**. The source stays in this repository.
-
-The intended long-term address is GitHub Pages:
-
 **https://tempmaster-1968.github.io/reliatech-app-mockup/**
 
-That URL is not live yet. To turn it on: repo Settings → Pages → Deploy from a branch → `main` → `/ (root)` → Save.
+This is the permanent address. Future updates are published to the same URL.
 
 ## Add to Home Screen (iPhone)
 
