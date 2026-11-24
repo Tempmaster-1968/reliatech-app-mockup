@@ -35,3 +35,17 @@
 .book-confirm { margin-top: 8px; }
 .book-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 .book-actions a.btn { text-decoration: none; display: flex; align-items: center; justify-content: center; }
+
+.picked-line { font-weight: 700; font-size: 15px; margin: 0 0 12px; }
+.msg-preview {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  background: var(--tint);
+  border-radius: 14px;
+  padding: 14px;
+  margin: 8px 0 0;
+  color: var(--text);
+}
+.book-back { margin: 0 0 12px; }
