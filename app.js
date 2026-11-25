@@ -198,12 +198,12 @@
   }
   function reliaTechJobNum(id) {
     const n = Number(id);
-    /* ReliaTech jobs start at 25076. Historical Housecall Pro jobs are 55xxx (and a few 25062–25075 estimates). */
-    return (Number.isFinite(n) && n >= 25076 && n < 50000) ? n : 0;
+    /* Continue the Housecall Pro 55xxx sequence. Ignore old 25xxx estimate-style numbers. */
+    return (Number.isFinite(n) && n >= 50000) ? n : 0;
   }
   function nextJobId(jobs) {
     const lists = (jobs || []).concat((state && state.moneyJobs) ? state.moneyJobs : []);
-    const maxRt = lists.reduce(function (m, j) { return Math.max(m, reliaTechJobNum(j.id)); }, 25075);
+    const maxRt = lists.reduce(function (m, j) { return Math.max(m, reliaTechJobNum(j.id)); }, 55719);
     const held = [].concat((PLAN_SEED && PLAN_SEED.voidedJobIds) || [], (PLAN_SEED && PLAN_SEED.reservedJobIds) || []);
     const maxHeld = held.reduce(function (m, id) { return Math.max(m, reliaTechJobNum(id)); }, 0);
     return String(Math.max(maxRt, maxHeld) + 1);
@@ -3124,7 +3124,7 @@
       '<label class="field"><div class="field-lab">Refrigerant minimum markup %</div><input id="st-refrigerantMinMarkup" inputmode="decimal" value="' + esc(String(s.refrigerantMinMarkup != null ? s.refrigerantMinMarkup : 125)) + '" oninput="RT.setSetting(\'refrigerantMinMarkup\', this.value)"></label>' +
       '<div class="note" style="margin-bottom:16px">A ' + esc(String(s.refrigerantMinMarkup != null ? s.refrigerantMinMarkup : 125)) + "% markup is " + esc(String(markupToGp(s.refrigerantMinMarkup != null ? s.refrigerantMinMarkup : 125))) + "% GP. Sell = cost × " + (1 + Number(s.refrigerantMinMarkup != null ? s.refrigerantMinMarkup : 125) / 100).toFixed(2).replace(/\.00$/, "") + ". Confirmed service rates are not marked up again.</div>" +
       '<div class="section">Calendar</div>' +
-      '<div class="muted">Job appointments go on steveseguine51@gmail.com, titled like “#25076 Dan Correa — Cooling maintenance.” The customer is never invited. This app cannot write to Google Calendar by itself. After you confirm a time, ask the assistant to add or update the event.</div>' +
+      '<div class="muted">Job appointments go on steveseguine51@gmail.com, titled like “#55720 Dan Correa — Cooling maintenance.” The customer is never invited. This app cannot write to Google Calendar by itself. After you confirm a time, ask the assistant to add or update the event.</div>' +
       "</div></div>";
   }
 
