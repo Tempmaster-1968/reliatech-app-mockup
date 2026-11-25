@@ -12,7 +12,8 @@
     progress: { label: "In progress", short: "Work", step: 4, bar: ACCENT, bg: "#FDE8DC", text: "#A43A0A", bgDark: "#3A2218", textDark: "#F5B089" },
     done: { label: "Work done", short: "Work", step: 4, bar: "#6B5CE0", bg: "#EEEDFB", text: "#3D3399", bgDark: "#26224A", textDark: "#C0B8F5" },
     invoiced: { label: "Invoiced", short: "Inv.", step: 5, bar: "#C45C1A", bg: "#FAE8DB", text: "#8A3A0C", bgDark: "#3A2418", textDark: "#F0B090" },
-    paid: { label: "Paid", short: "Paid", step: 6, bar: "#1F7A4D", bg: "#E3F5EC", text: "#145C38", bgDark: "#143326", textDark: "#8FDBB0" }
+    paid: { label: "Paid", short: "Paid", step: 6, bar: "#1F7A4D", bg: "#E3F5EC", text: "#145C38", bgDark: "#143326", textDark: "#8FDBB0" },
+    superseded: { label: "Replaced", short: "Repl.", step: 2, bar: "#6B7280", bg: "#EEF0F2", text: "#4B5563", bgDark: "#2A2E32", textDark: "#C5CBD1" }
   };
   const PIPELINE = [
     { step: 0, label: "New" }, { step: 1, label: "Diag." }, { step: 2, label: "Est." },
@@ -2235,6 +2236,33 @@
       if (!dropJobIds[j.id]) return true;
       return !!(j.scheduledStart || (j.timeEntries && j.timeEntries.length));
     });
+    function markLewis25069Superseded(list) {
+      return (list || []).map(function (j) {
+        if (!j || j.id !== "25069") return j;
+        if (j.supersededBy === "55720-E01" && j.status === "superseded") return j;
+        const note = {
+          id: "t25069-superseded",
+          kind: "system",
+          time: "Nov 25, 2026",
+          title: "Replaced by 55720-E01",
+          body: "Housecall Pro estimate 25069 ($865 furnace control board) was replaced by ReliaTech estimate 55720-E01."
+        };
+        const timeline = Array.isArray(j.timeline) ? j.timeline.slice() : [];
+        if (!timeline.some(function (t) { return t && t.id === "t25069-superseded"; })) timeline.unshift(note);
+        const estimates = Array.isArray(j.estimates) ? j.estimates.map(function (e) {
+          return Object.assign({}, e, { superseded: true });
+        }) : [];
+        return Object.assign({}, j, {
+          status: "superseded",
+          supersededBy: "55720-E01",
+          dueAmount: 0,
+          timeline: timeline,
+          estimates: estimates
+        });
+      });
+    }
+    state.jobs = markLewis25069Superseded(state.jobs);
+    state.moneyJobs = markLewis25069Superseded(state.moneyJobs);
   })();
   (function migrateServiceAccounts() {
     state.customers = state.customers.map(function (c) { return ensureCustomerAddresses(c, state.customers); });
@@ -2571,7 +2599,7 @@
   }
   function isCompletedJob(job) {
     if (!job) return true;
-    if (job.status === "paid" || job.status === "done" || job.status === "cancelled" || job.status === "canceled") return true;
+    if (job.status === "paid" || job.status === "done" || job.status === "cancelled" || job.status === "canceled" || job.status === "superseded" || job.supersededBy) return true;
     return isPastHcpHistory(job);
   }
   function isUpcomingPlanHold(job) {
@@ -2647,7 +2675,7 @@
   function unpaidBalanceJobs() {
     return (state.jobs || []).filter(function (j) {
       if (Number(j.dueAmount || 0) <= 0) return false;
-      if (j.status === "paid" || j.status === "done" || j.status === "cancelled" || j.status === "canceled") return false;
+      if (j.status === "paid" || j.status === "done" || j.status === "cancelled" || j.status === "canceled" || j.status === "superseded" || j.supersededBy) return false;
       if (isBoardJob(j)) return false;
       return true;
     }).sort(function (a, b) {
@@ -2908,7 +2936,7 @@
       if (searching) return true;
       if (mode === "all") {
         if (state.filter === "all") return true;
-        if (state.filter === "open") return j.status !== "paid";
+        if (state.filter === "open") return j.status !== "paid" && j.status !== "superseded" && j.status !== "cancelled" && j.status !== "canceled" && !j.supersededBy;
         return j.status === state.filter;
       }
       if (mode === "unpaid") return unpaidBalanceJobs().some(function (u) { return u.id === j.id; });
@@ -2968,6 +2996,7 @@
       "</div><div class=\"chev\">" + icon("chevron", 18) + "</div></button>";
   }
   function jobStatusPill(job, st, col) {
+    if (job && job.supersededBy) return pill("Replaced by " + job.supersededBy, col.text, col.bg);
     const v = linkedOpenVisit(job);
     if (v) {
       const vs = visitStatus(v);

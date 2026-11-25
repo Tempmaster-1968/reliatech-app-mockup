@@ -5,7 +5,7 @@ window.RT_DATA = {
   "moneyNote": "Collected is the sum of Housecall Pro job amounts minus remaining job balances. The invoice export has no invoice totals and lists $0 amount due.",
   "collected": 113283.63,
   "outstanding": 980.5,
-  "openEstimates": 2077.5,
+  "openEstimates": 1212.5,
   "counts": {
     "customers": 46,
     "jobs": 103,
@@ -13,7 +13,6 @@ window.RT_DATA = {
     "estimates": 57,
     "priceBook": 55,
     "openEstimatesIncluded": [
-      "25069",
       "55720"
     ]
   },
@@ -676,7 +675,8 @@ window.RT_DATA = {
       "city": "Fullerton",
       "phone": "(562) 708-7724",
       "problem": "Furnace control board",
-      "status": "estimate",
+      "status": "superseded",
+      "supersededBy": "55720-E01",
       "estimateId": "25069",
       "lineItems": [
         {
@@ -687,6 +687,13 @@ window.RT_DATA = {
       "total": 865.0,
       "readingSets": [],
       "timeline": [
+        {
+          "id": "t25069-superseded",
+          "kind": "system",
+          "time": "Nov 25, 2026",
+          "title": "Replaced by 55720-E01",
+          "body": "Housecall Pro estimate 25069 ($865 furnace control board) was replaced by ReliaTech estimate 55720-E01."
+        },
         {
           "id": "t25069-est",
           "kind": "system",
