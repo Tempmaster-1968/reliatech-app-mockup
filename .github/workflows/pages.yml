@@ -10,26 +10,38 @@ permissions:
   pages: write
   id-token: write
 
+# One deployment at a time. Do not cancel a run that is already uploading or
+# deploying, and do not start a second deploy while another run is still in flight.
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  # Upload and deploy are split on purpose. When both ran as consecutive steps in
+  # one job, deploy-pages listed artifacts a fraction of a second after the upload
+  # finalized and often got "No artifacts named github-pages" even though the
+  # upload had just succeeded. A separate deploy job looks up the artifact after
+  # the build job has finished, which gives the artifact API time to catch up.
+  # Do not re-run a failed deploy job in the same run; that uploads a second
+  # artifact and then fails with "Multiple artifacts named github-pages".
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Setup Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - name: Upload site
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: .
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
