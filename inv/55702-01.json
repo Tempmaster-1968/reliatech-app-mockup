@@ -1,0 +1,15 @@
+{
+  "invoiceId": "55702-01",
+  "customerName": "Doreen Sanchez",
+  "lineItems": [
+    {
+      "label": "Service Department - Preventative maintenance",
+      "amount": 125.0
+    }
+  ],
+  "amount": 125.0,
+  "stripeUrl": "https://buy.stripe.com/bJeeVcdmG4UR6dxffW6Na01",
+  "venmoHandle": "Steve-Seguine",
+  "zellePhone": "562-487-8750",
+  "memo": "ReliaTech Invoice 55702-01"
+}

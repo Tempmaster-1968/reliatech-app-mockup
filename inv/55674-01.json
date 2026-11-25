@@ -1,0 +1,15 @@
+{
+  "invoiceId": "55674-01",
+  "customerName": "Ginnean Perez",
+  "lineItems": [
+    {
+      "label": "Heater / Furnace - Flame sensor",
+      "amount": 263.0
+    }
+  ],
+  "amount": 263.0,
+  "stripeUrl": "https://buy.stripe.com/7sY4gy96qcnjcBV2ta6Na00",
+  "venmoHandle": "Steve-Seguine",
+  "zellePhone": "562-487-8750",
+  "memo": "ReliaTech Invoice 55674-01"
+}

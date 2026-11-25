@@ -1,0 +1,15 @@
+{
+  "invoiceId": "TEST-01",
+  "customerName": "Nika Seguine",
+  "lineItems": [
+    {
+      "label": "Test payment",
+      "amount": 1.0
+    }
+  ],
+  "amount": 1.0,
+  "stripeUrl": "https://buy.stripe.com/bJe5kCeqKdrn0Td8Ry6Na04",
+  "venmoHandle": "Steve-Seguine",
+  "zellePhone": "562-487-8750",
+  "memo": "ReliaTech Invoice TEST-01"
+}
