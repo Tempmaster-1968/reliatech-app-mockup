@@ -5,15 +5,16 @@ window.RT_DATA = {
   "moneyNote": "Collected is the sum of Housecall Pro job amounts minus remaining job balances. The invoice export has no invoice totals and lists $0 amount due.",
   "collected": 113283.63,
   "outstanding": 980.5,
-  "openEstimates": 865.0,
+  "openEstimates": 2077.5,
   "counts": {
     "customers": 46,
-    "jobs": 102,
+    "jobs": 103,
     "invoices": 121,
-    "estimates": 56,
+    "estimates": 57,
     "priceBook": 55,
     "openEstimatesIncluded": [
-      "25069"
+      "25069",
+      "55720"
     ]
   },
   "customers": [
@@ -537,6 +538,67 @@ window.RT_DATA = {
     }
   ],
   "jobs": [
+    {
+      "id": "55720",
+      "customerId": "c3",
+      "customer": "Andy and Margaret Lewis",
+      "address": "537 Rosarita Dr",
+      "city": "Fullerton",
+      "phone": "(562) 708-7724",
+      "problem": "Wi-Fi thermostat upgrade and furnace control board",
+      "status": "estimate",
+      "estimateId": "55720-E01",
+      "billToCustomerId": "c3",
+      "lineItems": [
+        {
+          "label": "Wi-Fi thermostat upgrade",
+          "amount": 485.5
+        },
+        {
+          "label": "Furnace control board replacement",
+          "amount": 792.0
+        },
+        {
+          "label": "Bundle discount if both are approved",
+          "amount": -65.0
+        }
+      ],
+      "total": 1212.5,
+      "readingSets": [],
+      "timeline": [
+        {
+          "id": "t55720-est",
+          "kind": "system",
+          "time": "Nov 25, 2026",
+          "title": "Estimate 55720-E01 \u00b7 Awaiting approval",
+          "body": "Wi-Fi thermostat upgrade $485.50 and furnace control board $792.00. Bundle discount if both are approved, -$65. Total $1,212.50."
+        }
+      ],
+      "dueAmount": 0,
+      "estimates": [
+        {
+          "id": "55720-E01",
+          "lineItems": [
+            {
+              "label": "Wi-Fi thermostat upgrade",
+              "amount": 485.5
+            },
+            {
+              "label": "Furnace control board replacement",
+              "amount": 792.0
+            },
+            {
+              "label": "Bundle discount if both are approved",
+              "amount": -65.0
+            }
+          ],
+          "total": 1212.5,
+          "billToCustomerId": "c3",
+          "createdAt": "2026-11-25T22:00:00.000Z",
+          "superseded": false
+        }
+      ]
+    },
     {
       "id": "TEST",
       "customerId": "c46",

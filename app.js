@@ -203,7 +203,7 @@
   }
   function nextJobId(jobs) {
     const lists = (jobs || []).concat((state && state.moneyJobs) ? state.moneyJobs : []);
-    const maxRt = lists.reduce(function (m, j) { return Math.max(m, reliaTechJobNum(j.id)); }, 55719);
+    const maxRt = lists.reduce(function (m, j) { return Math.max(m, reliaTechJobNum(j.id)); }, 55720);
     const held = [].concat((PLAN_SEED && PLAN_SEED.voidedJobIds) || [], (PLAN_SEED && PLAN_SEED.reservedJobIds) || []);
     const maxHeld = held.reduce(function (m, id) { return Math.max(m, reliaTechJobNum(id)); }, 0);
     return String(Math.max(maxRt, maxHeld) + 1);
