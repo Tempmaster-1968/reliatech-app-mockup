@@ -1,0 +1,16 @@
+{
+  "invoiceId": "55707 remaining balance",
+  "customerName": "Andy and Margaret Lewis",
+  "lineItems": [
+    {
+      "label": "Custom-Residential-Installation",
+      "amount": 3950.0
+    }
+  ],
+  "amount": 592.5,
+  "stripeUrl": "https://buy.stripe.com/7sY3cu5Ue3QNeK3ebS6Na02",
+  "venmoHandle": "Steve-Seguine",
+  "zellePhone": "562-487-8750",
+  "memo": "ReliaTech Invoice 55707 remaining balance",
+  "note": "Remaining balance on this job."
+}
