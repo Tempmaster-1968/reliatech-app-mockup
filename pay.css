@@ -1,0 +1,29 @@
+/* Customer-facing invoice payment page */
+.pay-page { background: var(--paper); }
+.pay-page .phone { min-height: 100dvh; }
+.pay-brand {
+  background: var(--brand);
+  color: var(--on-brand);
+  padding: 22px 20px 20px;
+  padding-top: calc(22px + env(safe-area-inset-top, 0px));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pay-brand img {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: #fff;
+}
+.pay-brand .kicker { color: rgba(255,255,255,.75); margin: 0; }
+.pay-brand .title { color: #fff; font-size: 20px; font-weight: 750; letter-spacing: -0.3px; }
+.pay-page .content { position: relative; height: auto; }
+.pay-foot {
+  margin-top: 22px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 18px;
+  text-align: center;
+}
+.pay-err { padding: 28px 20px; }
