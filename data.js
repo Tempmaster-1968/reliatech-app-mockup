@@ -1,7 +1,7 @@
 window.RT_DATA = {
   "showSampleBadge": false,
   "source": "Housecall Pro exports imported Nov 23, 2026, plus ReliaTech Price Books in Drive.",
-  "priceBookNote": "Diagnostic $150, maintenance $125, and labor $85/hr are confirmed selling rates. Other repair prices are from ReliaTech Repair Pricebook v1.1 and are still marked draft/planning — not final. Replacement packages and add-ons are planning prices from the replacement price book. Vendor costs are not shown.",
+  "priceBookNote": "Diagnostic $150, maintenance $125, and labor $85/hr are confirmed selling rates. Other repair prices are from ReliaTech Repair Pricebook v1.1 and are still marked draft/planning \u2014 not final. Replacement packages and add-ons are planning prices from the replacement price book. Vendor costs are not shown.",
   "moneyNote": "Collected is the sum of Housecall Pro job amounts minus remaining job balances. The invoice export has no invoice totals and lists $0 amount due.",
   "collected": 113283.63,
   "outstanding": 980.5,
@@ -262,7 +262,7 @@ window.RT_DATA = {
       "email": "",
       "equipment": [
         {
-          "name": "Replacement and Retrofit - Payne 3 Ton Upflow System A/C Add to existing heat…",
+          "name": "Replacement and Retrofit - Payne 3 Ton Upflow System A/C Add to existing heat\u2026",
           "detail": "From Housecall Pro job or estimate description"
         }
       ]
@@ -421,11 +421,11 @@ window.RT_DATA = {
       "email": "Rocky@gentner.com",
       "equipment": [
         {
-          "name": "Option 1 – Blower Motor Replacement",
+          "name": "Option 1 \u2013 Blower Motor Replacement",
           "detail": "From Housecall Pro job or estimate description"
         },
         {
-          "name": "Option 2 – Blower Motor and Control Board Replacement",
+          "name": "Option 2 \u2013 Blower Motor and Control Board Replacement",
           "detail": "From Housecall Pro job or estimate description"
         }
       ]
@@ -448,7 +448,7 @@ window.RT_DATA = {
       "email": "Ronkimbing@verizon.net",
       "equipment": [
         {
-          "name": "Replacement and Retrofit - Payne 5 Ton Horizontal Split Heat Pump System Repl…",
+          "name": "Replacement and Retrofit - Payne 5 Ton Horizontal Split Heat Pump System Repl\u2026",
           "detail": "From Housecall Pro job or estimate description"
         }
       ]
@@ -561,7 +561,9 @@ window.RT_DATA = {
           "body": "$125.00 still due on this job in the Housecall Pro jobs export."
         }
       ],
-      "dueAmount": 125.0
+      "dueAmount": 125.0,
+      "stripePaymentUrl": "https://buy.stripe.com/bJeeVcdmG4UR6dxffW6Na01",
+      "invoiceId": "55702-01"
     },
     {
       "id": "25069",
@@ -586,8 +588,8 @@ window.RT_DATA = {
           "id": "t25069-est",
           "kind": "system",
           "time": "",
-          "title": "Estimate 25069 · Awaiting approval",
-          "body": "Furnace control board — $865.00."
+          "title": "Estimate 25069 \u00b7 Awaiting approval",
+          "body": "Furnace control board \u2014 $865.00."
         }
       ],
       "dueAmount": 0
@@ -664,14 +666,14 @@ window.RT_DATA = {
           "id": "t55707-inv100",
           "kind": "system",
           "time": "Sep 19, 2026, 8:12 PM",
-          "title": "Invoice 100 · Paid",
+          "title": "Invoice 100 \u00b7 Paid",
           "body": "Invoice 100 marked paid in Housecall Pro."
         },
         {
           "id": "t55707-inv97",
           "kind": "system",
           "time": "Sep 11, 2026, 6:53 AM",
-          "title": "Invoice 97 · Paid",
+          "title": "Invoice 97 \u00b7 Paid",
           "body": "Invoice 97 marked paid in Housecall Pro."
         },
         {
@@ -685,7 +687,8 @@ window.RT_DATA = {
       "dueAmount": 592.5,
       "invoiceId": "97",
       "estimateId": "25066",
-      "schedule": "Sep 11, 2026, 4:00 PM"
+      "schedule": "Sep 11, 2026, 4:00 PM",
+      "stripePaymentUrl": "https://buy.stripe.com/7sY3cu5Ue3QNeK3ebS6Na02"
     },
     {
       "id": "55700",
@@ -790,7 +793,7 @@ window.RT_DATA = {
           "id": "t55689-inv80",
           "kind": "system",
           "time": "Jul 18, 2026, 7:45 PM",
-          "title": "Invoice 80 · Paid",
+          "title": "Invoice 80 \u00b7 Paid",
           "body": "Invoice 80 marked paid in Housecall Pro."
         }
       ],
@@ -835,21 +838,21 @@ window.RT_DATA = {
           "id": "t55623-inv9",
           "kind": "system",
           "time": "Oct 3, 2024, 2:44 PM",
-          "title": "Invoice 9 · Paid",
+          "title": "Invoice 9 \u00b7 Paid",
           "body": "Invoice 9 marked paid in Housecall Pro."
         },
         {
           "id": "t55623-inv9-BF",
           "kind": "system",
           "time": "Oct 3, 2024, 2:39 PM",
-          "title": "Invoice 9-BF · Paid",
+          "title": "Invoice 9-BF \u00b7 Paid",
           "body": "Invoice 9-BF marked paid in Housecall Pro."
         },
         {
           "id": "t55623-inv8",
           "kind": "system",
           "time": "Oct 3, 2024, 2:42 PM",
-          "title": "Invoice 8 · Paid",
+          "title": "Invoice 8 \u00b7 Paid",
           "body": "Invoice 8 marked paid in Housecall Pro."
         }
       ],
@@ -891,7 +894,9 @@ window.RT_DATA = {
           "body": "$263.00 still due on this job in the Housecall Pro jobs export."
         }
       ],
-      "dueAmount": 263.0
+      "dueAmount": 263.0,
+      "stripePaymentUrl": "https://buy.stripe.com/7sY4gy96qcnjcBV2ta6Na00",
+      "invoiceId": "55674-01"
     },
     {
       "id": "55719",
@@ -924,7 +929,7 @@ window.RT_DATA = {
           "id": "t55719-inv116",
           "kind": "system",
           "time": "Nov 8, 2026, 4:45 PM",
-          "title": "Invoice 116 · Paid",
+          "title": "Invoice 116 \u00b7 Paid",
           "body": "Invoice 116 marked paid in Housecall Pro."
         }
       ],
@@ -968,7 +973,7 @@ window.RT_DATA = {
           "id": "t55718-inv115",
           "kind": "system",
           "time": "Nov 7, 2026, 4:41 PM",
-          "title": "Invoice 115 · Paid",
+          "title": "Invoice 115 \u00b7 Paid",
           "body": "Invoice 115 marked paid in Housecall Pro."
         }
       ],
@@ -1012,7 +1017,7 @@ window.RT_DATA = {
           "id": "t55717-inv112",
           "kind": "system",
           "time": "Oct 29, 2026, 7:43 PM",
-          "title": "Invoice 112 · Paid",
+          "title": "Invoice 112 \u00b7 Paid",
           "body": "Invoice 112 marked paid in Housecall Pro."
         }
       ],
@@ -1028,11 +1033,11 @@ window.RT_DATA = {
       "address": "1413 E Luray St",
       "city": "Long Beach",
       "phone": "(562) 607-6212",
-      "problem": "Annual HVAC Maintenance Plan — Prepayment",
+      "problem": "Annual HVAC Maintenance Plan \u2014 Prepayment",
       "status": "paid",
       "lineItems": [
         {
-          "label": "Annual HVAC Maintenance Plan — Prepayment",
+          "label": "Annual HVAC Maintenance Plan \u2014 Prepayment",
           "amount": 806.25
         }
       ],
@@ -1044,7 +1049,7 @@ window.RT_DATA = {
           "kind": "call",
           "time": "Oct 13, 2026, 10:26 PM",
           "title": "Job created",
-          "body": "Annual HVAC Maintenance Plan — Prepayment"
+          "body": "Annual HVAC Maintenance Plan \u2014 Prepayment"
         },
         {
           "id": "t55716-sched",
@@ -1057,14 +1062,14 @@ window.RT_DATA = {
           "id": "t55716-inv113",
           "kind": "system",
           "time": "Oct 31, 2026, 11:46 AM",
-          "title": "Invoice 113 · Paid",
+          "title": "Invoice 113 \u00b7 Paid",
           "body": "Invoice 113 marked paid in Housecall Pro."
         },
         {
           "id": "t55716-inv111",
           "kind": "system",
           "time": "Oct 27, 2026, 6:03 AM",
-          "title": "Invoice 111 · Paid",
+          "title": "Invoice 111 \u00b7 Paid",
           "body": "Invoice 111 marked paid in Housecall Pro."
         }
       ],
@@ -1108,21 +1113,21 @@ window.RT_DATA = {
           "id": "t55715-inv110",
           "kind": "system",
           "time": "Oct 13, 2026, 9:05 PM",
-          "title": "Invoice 110 · Paid",
+          "title": "Invoice 110 \u00b7 Paid",
           "body": "Invoice 110 marked paid in Housecall Pro."
         },
         {
           "id": "t55715-inv109",
           "kind": "system",
           "time": "",
-          "title": "Invoice 109 · Paid",
+          "title": "Invoice 109 \u00b7 Paid",
           "body": "Invoice 109 marked paid in Housecall Pro."
         },
         {
           "id": "t55715-inv107",
           "kind": "system",
           "time": "Oct 9, 2026, 10:00 AM",
-          "title": "Invoice 107 · Paid",
+          "title": "Invoice 107 \u00b7 Paid",
           "body": "Invoice 107 marked paid in Housecall Pro."
         }
       ],
@@ -1166,14 +1171,14 @@ window.RT_DATA = {
           "id": "t55714-inv106",
           "kind": "system",
           "time": "Oct 7, 2026, 8:21 PM",
-          "title": "Invoice 106 · Paid",
+          "title": "Invoice 106 \u00b7 Paid",
           "body": "Invoice 106 marked paid in Housecall Pro."
         },
         {
           "id": "t55714-inv105",
           "kind": "system",
           "time": "Oct 5, 2026, 8:26 PM",
-          "title": "Invoice 105 · Paid",
+          "title": "Invoice 105 \u00b7 Paid",
           "body": "Invoice 105 marked paid in Housecall Pro."
         }
       ],
@@ -1217,7 +1222,7 @@ window.RT_DATA = {
           "id": "t55713-inv104",
           "kind": "system",
           "time": "",
-          "title": "Invoice 104 · Paid",
+          "title": "Invoice 104 \u00b7 Paid",
           "body": "Invoice 104 marked paid in Housecall Pro."
         }
       ],
@@ -1257,7 +1262,7 @@ window.RT_DATA = {
           "id": "t55712-inv114",
           "kind": "system",
           "time": "Nov 7, 2026, 11:56 AM",
-          "title": "Invoice 114 · Paid",
+          "title": "Invoice 114 \u00b7 Paid",
           "body": "Invoice 114 marked paid in Housecall Pro."
         }
       ],
@@ -1301,7 +1306,7 @@ window.RT_DATA = {
           "id": "t55711-inv103",
           "kind": "system",
           "time": "Oct 3, 2026, 9:20 AM",
-          "title": "Invoice 103 · Paid",
+          "title": "Invoice 103 \u00b7 Paid",
           "body": "Invoice 103 marked paid in Housecall Pro."
         }
       ],
@@ -1345,14 +1350,14 @@ window.RT_DATA = {
           "id": "t55710-inv102",
           "kind": "system",
           "time": "Sep 26, 2026, 1:03 PM",
-          "title": "Invoice 102 · Paid",
+          "title": "Invoice 102 \u00b7 Paid",
           "body": "Invoice 102 marked paid in Housecall Pro."
         },
         {
           "id": "t55710-inv101",
           "kind": "system",
           "time": "Sep 26, 2026, 1:03 PM",
-          "title": "Invoice 101 · Paid",
+          "title": "Invoice 101 \u00b7 Paid",
           "body": "Invoice 101 marked paid in Housecall Pro."
         }
       ],
@@ -1396,7 +1401,7 @@ window.RT_DATA = {
           "id": "t55709-inv99",
           "kind": "system",
           "time": "Sep 15, 2026, 8:54 PM",
-          "title": "Invoice 99 · Paid",
+          "title": "Invoice 99 \u00b7 Paid",
           "body": "Invoice 99 marked paid in Housecall Pro."
         }
       ],
@@ -1440,7 +1445,7 @@ window.RT_DATA = {
           "id": "t55708-inv96",
           "kind": "system",
           "time": "Sep 5, 2026, 4:47 PM",
-          "title": "Invoice 96 · Paid",
+          "title": "Invoice 96 \u00b7 Paid",
           "body": "Invoice 96 marked paid in Housecall Pro."
         }
       ],
@@ -1479,7 +1484,7 @@ window.RT_DATA = {
           "id": "t55705-inv95",
           "kind": "system",
           "time": "Aug 30, 2026, 4:35 PM",
-          "title": "Invoice 95 · Paid",
+          "title": "Invoice 95 \u00b7 Paid",
           "body": "Invoice 95 marked paid in Housecall Pro."
         }
       ],
@@ -1523,14 +1528,14 @@ window.RT_DATA = {
           "id": "t55704-inv93",
           "kind": "system",
           "time": "Aug 29, 2026, 4:21 PM",
-          "title": "Invoice 93 · Paid",
+          "title": "Invoice 93 \u00b7 Paid",
           "body": "Invoice 93 marked paid in Housecall Pro."
         },
         {
           "id": "t55704-inv92",
           "kind": "system",
           "time": "Aug 28, 2026, 11:55 AM",
-          "title": "Invoice 92 · Paid",
+          "title": "Invoice 92 \u00b7 Paid",
           "body": "Invoice 92 marked paid in Housecall Pro."
         }
       ],
@@ -1574,7 +1579,7 @@ window.RT_DATA = {
           "id": "t55703-inv91",
           "kind": "system",
           "time": "Aug 24, 2026, 7:04 PM",
-          "title": "Invoice 91 · Paid",
+          "title": "Invoice 91 \u00b7 Paid",
           "body": "Invoice 91 marked paid in Housecall Pro."
         }
       ],
@@ -1618,28 +1623,28 @@ window.RT_DATA = {
           "id": "t55699-inv117",
           "kind": "system",
           "time": "Nov 15, 2026, 4:31 PM",
-          "title": "Invoice 117 · Pending Payment",
-          "body": "Invoice 117 · Pending Payment"
+          "title": "Invoice 117 \u00b7 Pending Payment",
+          "body": "Invoice 117 \u00b7 Pending Payment"
         },
         {
           "id": "t55699-inv108",
           "kind": "system",
           "time": "Oct 12, 2026, 9:10 PM",
-          "title": "Invoice 108 · Paid",
+          "title": "Invoice 108 \u00b7 Paid",
           "body": "Invoice 108 marked paid in Housecall Pro."
         },
         {
           "id": "t55699-inv98",
           "kind": "system",
           "time": "Sep 13, 2026, 6:26 PM",
-          "title": "Invoice 98 · Paid",
+          "title": "Invoice 98 \u00b7 Paid",
           "body": "Invoice 98 marked paid in Housecall Pro."
         },
         {
           "id": "t55699-inv90",
           "kind": "system",
           "time": "Aug 21, 2026, 7:25 PM",
-          "title": "Invoice 90 · Paid",
+          "title": "Invoice 90 \u00b7 Paid",
           "body": "Invoice 90 marked paid in Housecall Pro."
         }
       ],
@@ -1684,7 +1689,7 @@ window.RT_DATA = {
           "id": "t55698-inv89",
           "kind": "system",
           "time": "Aug 20, 2026, 6:45 PM",
-          "title": "Invoice 89 · Paid",
+          "title": "Invoice 89 \u00b7 Paid",
           "body": "Invoice 89 marked paid in Housecall Pro."
         }
       ],
@@ -1728,7 +1733,7 @@ window.RT_DATA = {
           "id": "t55697-inv88",
           "kind": "system",
           "time": "Aug 18, 2026, 11:29 PM",
-          "title": "Invoice 88 · Paid",
+          "title": "Invoice 88 \u00b7 Paid",
           "body": "Invoice 88 marked paid in Housecall Pro."
         }
       ],
@@ -1772,7 +1777,7 @@ window.RT_DATA = {
           "id": "t55696-inv94",
           "kind": "system",
           "time": "Aug 30, 2026, 12:24 PM",
-          "title": "Invoice 94 · Paid",
+          "title": "Invoice 94 \u00b7 Paid",
           "body": "Invoice 94 marked paid in Housecall Pro."
         }
       ],
@@ -1816,7 +1821,7 @@ window.RT_DATA = {
           "id": "t55695-inv87",
           "kind": "system",
           "time": "Aug 11, 2026, 7:09 PM",
-          "title": "Invoice 87 · Paid",
+          "title": "Invoice 87 \u00b7 Paid",
           "body": "Invoice 87 marked paid in Housecall Pro."
         }
       ],
@@ -1860,7 +1865,7 @@ window.RT_DATA = {
           "id": "t55693-inv86",
           "kind": "system",
           "time": "Aug 8, 2026, 10:40 AM",
-          "title": "Invoice 86 · Paid",
+          "title": "Invoice 86 \u00b7 Paid",
           "body": "Invoice 86 marked paid in Housecall Pro."
         }
       ],
@@ -1899,7 +1904,7 @@ window.RT_DATA = {
           "id": "t55692-inv85",
           "kind": "system",
           "time": "Aug 2, 2026, 4:19 PM",
-          "title": "Invoice 85 · Paid",
+          "title": "Invoice 85 \u00b7 Paid",
           "body": "Invoice 85 marked paid in Housecall Pro."
         }
       ],
@@ -1943,7 +1948,7 @@ window.RT_DATA = {
           "id": "t55691-inv84",
           "kind": "system",
           "time": "Aug 2, 2026, 2:55 PM",
-          "title": "Invoice 84 · Paid",
+          "title": "Invoice 84 \u00b7 Paid",
           "body": "Invoice 84 marked paid in Housecall Pro."
         }
       ],
@@ -1983,7 +1988,7 @@ window.RT_DATA = {
           "id": "t55690-inv82",
           "kind": "system",
           "time": "Jul 28, 2026, 6:26 PM",
-          "title": "Invoice 82 · Paid",
+          "title": "Invoice 82 \u00b7 Paid",
           "body": "Invoice 82 marked paid in Housecall Pro."
         }
       ],
@@ -2027,7 +2032,7 @@ window.RT_DATA = {
           "id": "t55688-inv81",
           "kind": "system",
           "time": "Jul 18, 2026, 7:46 PM",
-          "title": "Invoice 81 · Paid",
+          "title": "Invoice 81 \u00b7 Paid",
           "body": "Invoice 81 marked paid in Housecall Pro."
         }
       ],
@@ -2072,14 +2077,14 @@ window.RT_DATA = {
           "id": "t55687-inv118",
           "kind": "system",
           "time": "Nov 21, 2026, 3:23 PM",
-          "title": "Invoice 118 · Paid",
+          "title": "Invoice 118 \u00b7 Paid",
           "body": "Invoice 118 marked paid in Housecall Pro."
         },
         {
           "id": "t55687-inv83",
           "kind": "system",
           "time": "Aug 2, 2026, 11:14 AM",
-          "title": "Invoice 83 · Paid",
+          "title": "Invoice 83 \u00b7 Paid",
           "body": "Invoice 83 marked paid in Housecall Pro."
         }
       ],
@@ -2123,7 +2128,7 @@ window.RT_DATA = {
           "id": "t55686-inv78",
           "kind": "system",
           "time": "Jun 10, 2026, 7:42 PM",
-          "title": "Invoice 78 · Paid",
+          "title": "Invoice 78 \u00b7 Paid",
           "body": "Invoice 78 marked paid in Housecall Pro."
         }
       ],
@@ -2167,7 +2172,7 @@ window.RT_DATA = {
           "id": "t55685-inv79",
           "kind": "system",
           "time": "Jun 13, 2026, 10:22 AM",
-          "title": "Invoice 79 · Paid",
+          "title": "Invoice 79 \u00b7 Paid",
           "body": "Invoice 79 marked paid in Housecall Pro."
         }
       ],
@@ -2211,7 +2216,7 @@ window.RT_DATA = {
           "id": "t55684-inv77",
           "kind": "system",
           "time": "May 30, 2026, 3:17 PM",
-          "title": "Invoice 77 · Paid",
+          "title": "Invoice 77 \u00b7 Paid",
           "body": "Invoice 77 marked paid in Housecall Pro."
         }
       ],
@@ -2255,7 +2260,7 @@ window.RT_DATA = {
           "id": "t55683-inv76",
           "kind": "system",
           "time": "May 22, 2026, 6:35 PM",
-          "title": "Invoice 76 · Paid",
+          "title": "Invoice 76 \u00b7 Paid",
           "body": "Invoice 76 marked paid in Housecall Pro."
         }
       ],
@@ -2299,7 +2304,7 @@ window.RT_DATA = {
           "id": "t55682-inv75",
           "kind": "system",
           "time": "May 16, 2026, 11:01 AM",
-          "title": "Invoice 75 · Paid",
+          "title": "Invoice 75 \u00b7 Paid",
           "body": "Invoice 75 marked paid in Housecall Pro."
         }
       ],
@@ -2343,7 +2348,7 @@ window.RT_DATA = {
           "id": "t55680-inv74",
           "kind": "system",
           "time": "May 3, 2026, 5:52 PM",
-          "title": "Invoice 74 · Paid",
+          "title": "Invoice 74 \u00b7 Paid",
           "body": "Invoice 74 marked paid in Housecall Pro."
         }
       ],
@@ -2391,42 +2396,42 @@ window.RT_DATA = {
           "id": "t55679-inv73",
           "kind": "system",
           "time": "May 2, 2026, 3:03 PM",
-          "title": "Invoice 73 · Paid",
+          "title": "Invoice 73 \u00b7 Paid",
           "body": "Invoice 73 marked paid in Housecall Pro."
         },
         {
           "id": "t55679-inv72",
           "kind": "system",
           "time": "",
-          "title": "Invoice 72 · Paid",
+          "title": "Invoice 72 \u00b7 Paid",
           "body": "Invoice 72 marked paid in Housecall Pro."
         },
         {
           "id": "t55679-inv71",
           "kind": "system",
           "time": "",
-          "title": "Invoice 71 · Paid",
+          "title": "Invoice 71 \u00b7 Paid",
           "body": "Invoice 71 marked paid in Housecall Pro."
         },
         {
           "id": "t55679-inv69",
           "kind": "system",
           "time": "",
-          "title": "Invoice 69 · Paid",
+          "title": "Invoice 69 \u00b7 Paid",
           "body": "Invoice 69 marked paid in Housecall Pro."
         },
         {
           "id": "t55679-inv68",
           "kind": "system",
           "time": "",
-          "title": "Invoice 68 · Paid",
+          "title": "Invoice 68 \u00b7 Paid",
           "body": "Invoice 68 marked paid in Housecall Pro."
         },
         {
           "id": "t55679-inv67",
           "kind": "system",
           "time": "",
-          "title": "Invoice 67 · Paid",
+          "title": "Invoice 67 \u00b7 Paid",
           "body": "Invoice 67 marked paid in Housecall Pro."
         }
       ],
@@ -2483,7 +2488,7 @@ window.RT_DATA = {
           "id": "t55678-inv70",
           "kind": "system",
           "time": "May 2, 2026, 10:55 AM",
-          "title": "Invoice 70 · Paid",
+          "title": "Invoice 70 \u00b7 Paid",
           "body": "Invoice 70 marked paid in Housecall Pro."
         }
       ],
@@ -2528,7 +2533,7 @@ window.RT_DATA = {
           "id": "t55677-inv66",
           "kind": "system",
           "time": "Mar 17, 2026, 8:22 PM",
-          "title": "Invoice 66 · Paid",
+          "title": "Invoice 66 \u00b7 Paid",
           "body": "Invoice 66 marked paid in Housecall Pro."
         }
       ],
@@ -2572,7 +2577,7 @@ window.RT_DATA = {
           "id": "t55676-inv65",
           "kind": "system",
           "time": "Mar 9, 2026, 7:37 PM",
-          "title": "Invoice 65 · Paid",
+          "title": "Invoice 65 \u00b7 Paid",
           "body": "Invoice 65 marked paid in Housecall Pro."
         }
       ],
@@ -2620,7 +2625,7 @@ window.RT_DATA = {
           "id": "t55675-inv64",
           "kind": "system",
           "time": "Feb 22, 2026, 9:03 AM",
-          "title": "Invoice 64 · Paid",
+          "title": "Invoice 64 \u00b7 Paid",
           "body": "Invoice 64 marked paid in Housecall Pro."
         }
       ],
@@ -2665,7 +2670,7 @@ window.RT_DATA = {
           "id": "t55673-inv63",
           "kind": "system",
           "time": "Feb 16, 2026, 10:36 AM",
-          "title": "Invoice 63 · Paid",
+          "title": "Invoice 63 \u00b7 Paid",
           "body": "Invoice 63 marked paid in Housecall Pro."
         }
       ],
@@ -2745,14 +2750,14 @@ window.RT_DATA = {
           "id": "t55671-inv62",
           "kind": "system",
           "time": "",
-          "title": "Invoice 62 · Paid",
+          "title": "Invoice 62 \u00b7 Paid",
           "body": "Invoice 62 marked paid in Housecall Pro."
         },
         {
           "id": "t55671-inv61",
           "kind": "system",
           "time": "Jan 1, 2026, 12:01 PM",
-          "title": "Invoice 61 · Paid",
+          "title": "Invoice 61 \u00b7 Paid",
           "body": "Invoice 61 marked paid in Housecall Pro."
         }
       ],
@@ -2796,7 +2801,7 @@ window.RT_DATA = {
           "id": "t55670-inv60",
           "kind": "system",
           "time": "Dec 29, 2025, 5:27 PM",
-          "title": "Invoice 60 · Paid",
+          "title": "Invoice 60 \u00b7 Paid",
           "body": "Invoice 60 marked paid in Housecall Pro."
         }
       ],
@@ -2840,7 +2845,7 @@ window.RT_DATA = {
           "id": "t55668-inv59",
           "kind": "system",
           "time": "Dec 10, 2025, 8:16 PM",
-          "title": "Invoice 59 · Paid",
+          "title": "Invoice 59 \u00b7 Paid",
           "body": "Invoice 59 marked paid in Housecall Pro."
         }
       ],
@@ -2884,7 +2889,7 @@ window.RT_DATA = {
           "id": "t55667-inv58",
           "kind": "system",
           "time": "Nov 1, 2025, 1:05 PM",
-          "title": "Invoice 58 · Paid",
+          "title": "Invoice 58 \u00b7 Paid",
           "body": "Invoice 58 marked paid in Housecall Pro."
         }
       ],
@@ -2928,7 +2933,7 @@ window.RT_DATA = {
           "id": "t55666-inv57",
           "kind": "system",
           "time": "Nov 1, 2025, 11:13 AM",
-          "title": "Invoice 57 · Paid",
+          "title": "Invoice 57 \u00b7 Paid",
           "body": "Invoice 57 marked paid in Housecall Pro."
         }
       ],
@@ -2972,7 +2977,7 @@ window.RT_DATA = {
           "id": "t55665-inv56",
           "kind": "system",
           "time": "Oct 25, 2025, 11:10 AM",
-          "title": "Invoice 56 · Paid",
+          "title": "Invoice 56 \u00b7 Paid",
           "body": "Invoice 56 marked paid in Housecall Pro."
         }
       ],
@@ -3016,7 +3021,7 @@ window.RT_DATA = {
           "id": "t55664-inv55",
           "kind": "system",
           "time": "Oct 19, 2025, 12:06 PM",
-          "title": "Invoice 55 · Paid",
+          "title": "Invoice 55 \u00b7 Paid",
           "body": "Invoice 55 marked paid in Housecall Pro."
         }
       ],
@@ -3060,7 +3065,7 @@ window.RT_DATA = {
           "id": "t55663-inv54",
           "kind": "system",
           "time": "Oct 16, 2025, 4:43 PM",
-          "title": "Invoice 54 · Paid",
+          "title": "Invoice 54 \u00b7 Paid",
           "body": "Invoice 54 marked paid in Housecall Pro."
         }
       ],
@@ -3104,21 +3109,21 @@ window.RT_DATA = {
           "id": "t55662-inv53",
           "kind": "system",
           "time": "Oct 14, 2025, 7:31 PM",
-          "title": "Invoice 53 · Paid",
+          "title": "Invoice 53 \u00b7 Paid",
           "body": "Invoice 53 marked paid in Housecall Pro."
         },
         {
           "id": "t55662-inv52",
           "kind": "system",
           "time": "Oct 3, 2025, 9:43 PM",
-          "title": "Invoice 52 · Paid",
+          "title": "Invoice 52 \u00b7 Paid",
           "body": "Invoice 52 marked paid in Housecall Pro."
         },
         {
           "id": "t55662-inv51",
           "kind": "system",
           "time": "",
-          "title": "Invoice 51 · Paid",
+          "title": "Invoice 51 \u00b7 Paid",
           "body": "Invoice 51 marked paid in Housecall Pro."
         }
       ],
@@ -3157,7 +3162,7 @@ window.RT_DATA = {
           "id": "t55661-inv50",
           "kind": "system",
           "time": "Sep 26, 2025, 5:59 PM",
-          "title": "Invoice 50 · Paid",
+          "title": "Invoice 50 \u00b7 Paid",
           "body": "Invoice 50 marked paid in Housecall Pro."
         }
       ],
@@ -3201,7 +3206,7 @@ window.RT_DATA = {
           "id": "t55660-inv49",
           "kind": "system",
           "time": "Sep 14, 2025, 8:10 PM",
-          "title": "Invoice 49 · Paid",
+          "title": "Invoice 49 \u00b7 Paid",
           "body": "Invoice 49 marked paid in Housecall Pro."
         }
       ],
@@ -3246,7 +3251,7 @@ window.RT_DATA = {
           "id": "t55659-inv48",
           "kind": "system",
           "time": "Sep 8, 2025, 6:51 PM",
-          "title": "Invoice 48 · Paid",
+          "title": "Invoice 48 \u00b7 Paid",
           "body": "Invoice 48 marked paid in Housecall Pro."
         }
       ],
@@ -3290,7 +3295,7 @@ window.RT_DATA = {
           "id": "t55658-inv47",
           "kind": "system",
           "time": "Sep 6, 2025, 11:09 AM",
-          "title": "Invoice 47 · Paid",
+          "title": "Invoice 47 \u00b7 Paid",
           "body": "Invoice 47 marked paid in Housecall Pro."
         }
       ],
@@ -3334,7 +3339,7 @@ window.RT_DATA = {
           "id": "t55657-inv46",
           "kind": "system",
           "time": "Sep 2, 2025, 10:16 PM",
-          "title": "Invoice 46 · Paid",
+          "title": "Invoice 46 \u00b7 Paid",
           "body": "Invoice 46 marked paid in Housecall Pro."
         }
       ],
@@ -3378,7 +3383,7 @@ window.RT_DATA = {
           "id": "t55656-inv45",
           "kind": "system",
           "time": "Aug 23, 2025, 11:24 AM",
-          "title": "Invoice 45 · Paid",
+          "title": "Invoice 45 \u00b7 Paid",
           "body": "Invoice 45 marked paid in Housecall Pro."
         }
       ],
@@ -3422,7 +3427,7 @@ window.RT_DATA = {
           "id": "t55655-inv44",
           "kind": "system",
           "time": "Aug 23, 2025, 10:07 AM",
-          "title": "Invoice 44 · Paid",
+          "title": "Invoice 44 \u00b7 Paid",
           "body": "Invoice 44 marked paid in Housecall Pro."
         }
       ],
@@ -3466,7 +3471,7 @@ window.RT_DATA = {
           "id": "t55654-inv43",
           "kind": "system",
           "time": "Aug 21, 2025, 11:14 AM",
-          "title": "Invoice 43 · Paid",
+          "title": "Invoice 43 \u00b7 Paid",
           "body": "Invoice 43 marked paid in Housecall Pro."
         }
       ],
@@ -3510,7 +3515,7 @@ window.RT_DATA = {
           "id": "t55653-inv42",
           "kind": "system",
           "time": "Aug 9, 2025, 2:53 PM",
-          "title": "Invoice 42 · Paid",
+          "title": "Invoice 42 \u00b7 Paid",
           "body": "Invoice 42 marked paid in Housecall Pro."
         }
       ],
@@ -3554,7 +3559,7 @@ window.RT_DATA = {
           "id": "t55652-inv39",
           "kind": "system",
           "time": "Jul 19, 2025, 2:50 PM",
-          "title": "Invoice 39 · Paid",
+          "title": "Invoice 39 \u00b7 Paid",
           "body": "Invoice 39 marked paid in Housecall Pro."
         }
       ],
@@ -3598,7 +3603,7 @@ window.RT_DATA = {
           "id": "t55651-inv40",
           "kind": "system",
           "time": "Aug 2, 2025, 2:38 PM",
-          "title": "Invoice 40 · Paid",
+          "title": "Invoice 40 \u00b7 Paid",
           "body": "Invoice 40 marked paid in Housecall Pro."
         }
       ],
@@ -3663,7 +3668,7 @@ window.RT_DATA = {
           "id": "t55650-inv41",
           "kind": "system",
           "time": "Aug 6, 2025, 6:44 PM",
-          "title": "Invoice 41 · Paid",
+          "title": "Invoice 41 \u00b7 Paid",
           "body": "Invoice 41 marked paid in Housecall Pro."
         }
       ],
@@ -3708,7 +3713,7 @@ window.RT_DATA = {
           "id": "t55648-inv38",
           "kind": "system",
           "time": "Jun 23, 2025, 7:59 PM",
-          "title": "Invoice 38 · Paid",
+          "title": "Invoice 38 \u00b7 Paid",
           "body": "Invoice 38 marked paid in Housecall Pro."
         }
       ],
@@ -3752,7 +3757,7 @@ window.RT_DATA = {
           "id": "t55647-inv37",
           "kind": "system",
           "time": "Jun 22, 2025, 3:57 PM",
-          "title": "Invoice 37 · Paid",
+          "title": "Invoice 37 \u00b7 Paid",
           "body": "Invoice 37 marked paid in Housecall Pro."
         }
       ],
@@ -3796,7 +3801,7 @@ window.RT_DATA = {
           "id": "t55646-inv34",
           "kind": "system",
           "time": "Jun 14, 2025, 11:20 AM",
-          "title": "Invoice 34 · Paid",
+          "title": "Invoice 34 \u00b7 Paid",
           "body": "Invoice 34 marked paid in Housecall Pro."
         }
       ],
@@ -3840,7 +3845,7 @@ window.RT_DATA = {
           "id": "t55645-inv35",
           "kind": "system",
           "time": "Jun 14, 2025, 12:51 PM",
-          "title": "Invoice 35 · Paid",
+          "title": "Invoice 35 \u00b7 Paid",
           "body": "Invoice 35 marked paid in Housecall Pro."
         }
       ],
@@ -3884,7 +3889,7 @@ window.RT_DATA = {
           "id": "t55644-inv36",
           "kind": "system",
           "time": "Jun 14, 2025, 3:03 PM",
-          "title": "Invoice 36 · Paid",
+          "title": "Invoice 36 \u00b7 Paid",
           "body": "Invoice 36 marked paid in Housecall Pro."
         }
       ],
@@ -3928,7 +3933,7 @@ window.RT_DATA = {
           "id": "t55643-inv33",
           "kind": "system",
           "time": "Jun 2, 2025, 11:59 AM",
-          "title": "Invoice 33 · Paid",
+          "title": "Invoice 33 \u00b7 Paid",
           "body": "Invoice 33 marked paid in Housecall Pro."
         }
       ],
@@ -3972,7 +3977,7 @@ window.RT_DATA = {
           "id": "t55642-inv31",
           "kind": "system",
           "time": "May 26, 2025, 1:48 PM",
-          "title": "Invoice 31 · Paid",
+          "title": "Invoice 31 \u00b7 Paid",
           "body": "Invoice 31 marked paid in Housecall Pro."
         }
       ],
@@ -4016,7 +4021,7 @@ window.RT_DATA = {
           "id": "t55641-inv32",
           "kind": "system",
           "time": "May 27, 2025, 6:49 PM",
-          "title": "Invoice 32 · Paid",
+          "title": "Invoice 32 \u00b7 Paid",
           "body": "Invoice 32 marked paid in Housecall Pro."
         }
       ],
@@ -4060,7 +4065,7 @@ window.RT_DATA = {
           "id": "t55640-inv30",
           "kind": "system",
           "time": "May 11, 2025, 9:00 PM",
-          "title": "Invoice 30 · Paid",
+          "title": "Invoice 30 \u00b7 Paid",
           "body": "Invoice 30 marked paid in Housecall Pro."
         }
       ],
@@ -4104,7 +4109,7 @@ window.RT_DATA = {
           "id": "t55639-inv29",
           "kind": "system",
           "time": "Apr 17, 2025, 10:19 AM",
-          "title": "Invoice 29 · Paid",
+          "title": "Invoice 29 \u00b7 Paid",
           "body": "Invoice 29 marked paid in Housecall Pro."
         }
       ],
@@ -4148,7 +4153,7 @@ window.RT_DATA = {
           "id": "t55638-inv27",
           "kind": "system",
           "time": "Mar 17, 2025, 6:09 PM",
-          "title": "Invoice 27 · Paid",
+          "title": "Invoice 27 \u00b7 Paid",
           "body": "Invoice 27 marked paid in Housecall Pro."
         }
       ],
@@ -4192,7 +4197,7 @@ window.RT_DATA = {
           "id": "t55637-inv25",
           "kind": "system",
           "time": "Feb 15, 2025, 2:43 PM",
-          "title": "Invoice 25 · Paid",
+          "title": "Invoice 25 \u00b7 Paid",
           "body": "Invoice 25 marked paid in Housecall Pro."
         }
       ],
@@ -4236,14 +4241,14 @@ window.RT_DATA = {
           "id": "t55636-inv28",
           "kind": "system",
           "time": "Mar 22, 2025, 8:53 AM",
-          "title": "Invoice 28 · Paid",
+          "title": "Invoice 28 \u00b7 Paid",
           "body": "Invoice 28 marked paid in Housecall Pro."
         },
         {
           "id": "t55636-inv23",
           "kind": "system",
           "time": "Mar 22, 2025, 8:52 AM",
-          "title": "Invoice 23 · Paid",
+          "title": "Invoice 23 \u00b7 Paid",
           "body": "Invoice 23 marked paid in Housecall Pro."
         }
       ],
@@ -4287,7 +4292,7 @@ window.RT_DATA = {
           "id": "t55635-inv26",
           "kind": "system",
           "time": "Mar 8, 2025, 12:12 PM",
-          "title": "Invoice 26 · Paid",
+          "title": "Invoice 26 \u00b7 Paid",
           "body": "Invoice 26 marked paid in Housecall Pro."
         }
       ],
@@ -4331,7 +4336,7 @@ window.RT_DATA = {
           "id": "t55634-inv24",
           "kind": "system",
           "time": "Jan 16, 2025, 5:39 PM",
-          "title": "Invoice 24 · Paid",
+          "title": "Invoice 24 \u00b7 Paid",
           "body": "Invoice 24 marked paid in Housecall Pro."
         }
       ],
@@ -4375,7 +4380,7 @@ window.RT_DATA = {
           "id": "t55633-inv22",
           "kind": "system",
           "time": "Dec 23, 2024, 4:54 PM",
-          "title": "Invoice 22 · Paid",
+          "title": "Invoice 22 \u00b7 Paid",
           "body": "Invoice 22 marked paid in Housecall Pro."
         }
       ],
@@ -4419,7 +4424,7 @@ window.RT_DATA = {
           "id": "t55632-inv21",
           "kind": "system",
           "time": "Dec 8, 2024, 1:00 PM",
-          "title": "Invoice 21 · Paid",
+          "title": "Invoice 21 \u00b7 Paid",
           "body": "Invoice 21 marked paid in Housecall Pro."
         }
       ],
@@ -4463,7 +4468,7 @@ window.RT_DATA = {
           "id": "t55631-inv20",
           "kind": "system",
           "time": "Dec 7, 2024, 9:06 PM",
-          "title": "Invoice 20 · Paid",
+          "title": "Invoice 20 \u00b7 Paid",
           "body": "Invoice 20 marked paid in Housecall Pro."
         }
       ],
@@ -4507,7 +4512,7 @@ window.RT_DATA = {
           "id": "t55630-inv17",
           "kind": "system",
           "time": "Nov 18, 2024, 10:12 PM",
-          "title": "Invoice 17 · Paid",
+          "title": "Invoice 17 \u00b7 Paid",
           "body": "Invoice 17 marked paid in Housecall Pro."
         }
       ],
@@ -4555,7 +4560,7 @@ window.RT_DATA = {
           "id": "t55629-inv19",
           "kind": "system",
           "time": "Nov 30, 2024, 7:03 PM",
-          "title": "Invoice 19 · Paid",
+          "title": "Invoice 19 \u00b7 Paid",
           "body": "Invoice 19 marked paid in Housecall Pro."
         }
       ],
@@ -4604,7 +4609,7 @@ window.RT_DATA = {
           "id": "t55628-inv16",
           "kind": "system",
           "time": "Nov 18, 2024, 5:02 PM",
-          "title": "Invoice 16 · Paid",
+          "title": "Invoice 16 \u00b7 Paid",
           "body": "Invoice 16 marked paid in Housecall Pro."
         }
       ],
@@ -4649,7 +4654,7 @@ window.RT_DATA = {
           "id": "t55627-inv18",
           "kind": "system",
           "time": "Nov 19, 2024, 5:57 PM",
-          "title": "Invoice 18 · Paid",
+          "title": "Invoice 18 \u00b7 Paid",
           "body": "Invoice 18 marked paid in Housecall Pro."
         }
       ],
@@ -4693,7 +4698,7 @@ window.RT_DATA = {
           "id": "t55626-inv15",
           "kind": "system",
           "time": "Nov 17, 2024, 2:43 PM",
-          "title": "Invoice 15 · Paid",
+          "title": "Invoice 15 \u00b7 Paid",
           "body": "Invoice 15 marked paid in Housecall Pro."
         }
       ],
@@ -4737,7 +4742,7 @@ window.RT_DATA = {
           "id": "t55625-inv14",
           "kind": "system",
           "time": "Dec 9, 2024, 3:47 PM",
-          "title": "Invoice 14 · Paid",
+          "title": "Invoice 14 \u00b7 Paid",
           "body": "Invoice 14 marked paid in Housecall Pro."
         }
       ],
@@ -4785,21 +4790,21 @@ window.RT_DATA = {
           "id": "t55624-inv13",
           "kind": "system",
           "time": "Oct 26, 2024, 3:57 PM",
-          "title": "Invoice 13 · Paid",
+          "title": "Invoice 13 \u00b7 Paid",
           "body": "Invoice 13 marked paid in Housecall Pro."
         },
         {
           "id": "t55624-inv12",
           "kind": "system",
           "time": "Oct 26, 2024, 1:56 PM",
-          "title": "Invoice 12 · Paid",
+          "title": "Invoice 12 \u00b7 Paid",
           "body": "Invoice 12 marked paid in Housecall Pro."
         },
         {
           "id": "t55624-inv11",
           "kind": "system",
           "time": "Oct 25, 2024, 4:28 PM",
-          "title": "Invoice 11 · Paid",
+          "title": "Invoice 11 \u00b7 Paid",
           "body": "Invoice 11 marked paid in Housecall Pro."
         }
       ],
@@ -4848,14 +4853,14 @@ window.RT_DATA = {
           "id": "t55622-inv10",
           "kind": "system",
           "time": "Oct 5, 2024, 7:47 PM",
-          "title": "Invoice 10 · Paid",
+          "title": "Invoice 10 \u00b7 Paid",
           "body": "Invoice 10 marked paid in Housecall Pro."
         },
         {
           "id": "t55622-inv10-BF",
           "kind": "system",
           "time": "Sep 25, 2024, 10:28 PM",
-          "title": "Invoice 10-BF · Paid",
+          "title": "Invoice 10-BF \u00b7 Paid",
           "body": "Invoice 10-BF marked paid in Housecall Pro."
         }
       ],
@@ -4900,14 +4905,14 @@ window.RT_DATA = {
           "id": "t55616-inv7",
           "kind": "system",
           "time": "Sep 26, 2024, 1:25 PM",
-          "title": "Invoice 7 · Paid",
+          "title": "Invoice 7 \u00b7 Paid",
           "body": "Invoice 7 marked paid in Housecall Pro."
         },
         {
           "id": "t55616-inv6",
           "kind": "system",
           "time": "Sep 26, 2024, 9:16 PM",
-          "title": "Invoice 6 · Paid",
+          "title": "Invoice 6 \u00b7 Paid",
           "body": "Invoice 6 marked paid in Housecall Pro."
         }
       ],
@@ -4951,14 +4956,14 @@ window.RT_DATA = {
           "id": "t55615-inv5",
           "kind": "system",
           "time": "Sep 7, 2024, 2:10 PM",
-          "title": "Invoice 5 · Paid",
+          "title": "Invoice 5 \u00b7 Paid",
           "body": "Invoice 5 marked paid in Housecall Pro."
         },
         {
           "id": "t55615-inv5-BF",
           "kind": "system",
           "time": "Sep 7, 2024, 2:08 PM",
-          "title": "Invoice 5-BF · Paid",
+          "title": "Invoice 5-BF \u00b7 Paid",
           "body": "Invoice 5-BF marked paid in Housecall Pro."
         }
       ],
@@ -5002,7 +5007,7 @@ window.RT_DATA = {
           "id": "t55614-inv4",
           "kind": "system",
           "time": "Sep 7, 2024, 11:48 AM",
-          "title": "Invoice 4 · Paid",
+          "title": "Invoice 4 \u00b7 Paid",
           "body": "Invoice 4 marked paid in Housecall Pro."
         }
       ],
@@ -5039,7 +5044,7 @@ window.RT_DATA = {
           "id": "t55613-inv3",
           "kind": "system",
           "time": "Sep 2, 2024, 9:54 PM",
-          "title": "Invoice 3 · Paid",
+          "title": "Invoice 3 \u00b7 Paid",
           "body": "Invoice 3 marked paid in Housecall Pro."
         }
       ],
@@ -5082,7 +5087,7 @@ window.RT_DATA = {
           "id": "t55612-inv2",
           "kind": "system",
           "time": "Sep 2, 2024, 8:51 AM",
-          "title": "Invoice 2 · Paid",
+          "title": "Invoice 2 \u00b7 Paid",
           "body": "Invoice 2 marked paid in Housecall Pro."
         }
       ],
@@ -5126,7 +5131,7 @@ window.RT_DATA = {
           "id": "t1-inv1",
           "kind": "system",
           "time": "Sep 1, 2024, 9:52 AM",
-          "title": "Invoice 1 · Paid",
+          "title": "Invoice 1 \u00b7 Paid",
           "body": "Invoice 1 marked paid in Housecall Pro."
         }
       ],
@@ -5141,7 +5146,7 @@ window.RT_DATA = {
       "id": "diag-confirmed",
       "kind": "repair",
       "name": "Diagnostic / service call",
-      "detail": "Confirmed selling rate — one diagnostic hour plus truck",
+      "detail": "Confirmed selling rate \u2014 one diagnostic hour plus truck",
       "price": 150,
       "tag": "Confirmed"
     },
@@ -5166,7 +5171,7 @@ window.RT_DATA = {
       "id": "repair-1",
       "kind": "repair",
       "name": "Run Capacitor Replacement",
-      "detail": "Electrical / Controls — Replace the failed run capacitor with a properly rated replacement, inspect accessible wiring, and verify system operation and motor/compressor amperage after r",
+      "detail": "Electrical / Controls \u2014 Replace the failed run capacitor with a properly rated replacement, inspect accessible wiring, and verify system operation and motor/compressor amperage after r",
       "price": 600,
       "tag": "Draft price book"
     },
@@ -5174,7 +5179,7 @@ window.RT_DATA = {
       "id": "repair-2",
       "kind": "repair",
       "name": "Universal Run Capacitor Upgrade",
-      "detail": "Electrical / Controls — Install a universal run capacitor where appropriate, secure it properly, verify capacitance setup, and test system operation.",
+      "detail": "Electrical / Controls \u2014 Install a universal run capacitor where appropriate, secure it properly, verify capacitance setup, and test system operation.",
       "price": 775,
       "tag": "Draft price book"
     },
@@ -5182,7 +5187,7 @@ window.RT_DATA = {
       "id": "repair-3",
       "kind": "repair",
       "name": "Contactor Replacement",
-      "detail": "Electrical / Controls — Replace the failed contactor, reconnect accessible control and line-voltage wiring, and verify proper control voltage and equipment operation.",
+      "detail": "Electrical / Controls \u2014 Replace the failed contactor, reconnect accessible control and line-voltage wiring, and verify proper control voltage and equipment operation.",
       "price": 675,
       "tag": "Draft price book"
     },
@@ -5190,7 +5195,7 @@ window.RT_DATA = {
       "id": "repair-4",
       "kind": "repair",
       "name": "Low-Voltage Transformer Replacement",
-      "detail": "Electrical / Controls — Replace the failed low-voltage transformer and verify correct primary/secondary voltage and normal system control operation.",
+      "detail": "Electrical / Controls \u2014 Replace the failed low-voltage transformer and verify correct primary/secondary voltage and normal system control operation.",
       "price": 700,
       "tag": "Draft price book"
     },
@@ -5198,7 +5203,7 @@ window.RT_DATA = {
       "id": "repair-5",
       "kind": "repair",
       "name": "Low-Voltage Fuse / Short Repair",
-      "detail": "Electrical / Controls — Replace the failed low-voltage fuse and perform limited accessible circuit checks to confirm normal control operation.",
+      "detail": "Electrical / Controls \u2014 Replace the failed low-voltage fuse and perform limited accessible circuit checks to confirm normal control operation.",
       "price": 600,
       "tag": "Draft price book"
     },
@@ -5206,7 +5211,7 @@ window.RT_DATA = {
       "id": "repair-6",
       "kind": "repair",
       "name": "Control Relay / Time Delay Replacement",
-      "detail": "Electrical / Controls — Replace the failed control relay or time-delay device and verify the controlled component cycles properly.",
+      "detail": "Electrical / Controls \u2014 Replace the failed control relay or time-delay device and verify the controlled component cycles properly.",
       "price": 675,
       "tag": "Draft price book"
     },
@@ -5214,7 +5219,7 @@ window.RT_DATA = {
       "id": "repair-7",
       "kind": "repair",
       "name": "Disconnect Replacement",
-      "detail": "Electrical / Controls — Replace the existing HVAC disconnect with a properly sized replacement and verify secure electrical connections and equipment operation.",
+      "detail": "Electrical / Controls \u2014 Replace the existing HVAC disconnect with a properly sized replacement and verify secure electrical connections and equipment operation.",
       "price": 925,
       "tag": "Draft price book"
     },
@@ -5222,7 +5227,7 @@ window.RT_DATA = {
       "id": "repair-8",
       "kind": "repair",
       "name": "Basic Thermostat Replacement",
-      "detail": "Electrical / Controls — Install and configure a compatible programmable thermostat and verify heating, cooling, and fan operation.",
+      "detail": "Electrical / Controls \u2014 Install and configure a compatible programmable thermostat and verify heating, cooling, and fan operation.",
       "price": 725,
       "tag": "Draft price book"
     },
@@ -5230,7 +5235,7 @@ window.RT_DATA = {
       "id": "repair-9",
       "kind": "repair",
       "name": "Wi-Fi Thermostat Replacement",
-      "detail": "Electrical / Controls — Install and configure a compatible Wi-Fi thermostat, verify equipment operation, and provide basic connection guidance.",
+      "detail": "Electrical / Controls \u2014 Install and configure a compatible Wi-Fi thermostat, verify equipment operation, and provide basic connection guidance.",
       "price": 1050,
       "tag": "Draft price book"
     },
@@ -5238,47 +5243,47 @@ window.RT_DATA = {
       "id": "repair-10",
       "kind": "repair",
       "name": "Hard Start Kit Installation",
-      "detail": "Electrical / Controls — Install a properly selected compressor start-assist kit and verify compressor starting and operating performance.",
+      "detail": "Electrical / Controls \u2014 Install a properly selected compressor start-assist kit and verify compressor starting and operating performance.",
       "price": 750,
       "tag": "Draft price book"
     },
     {
       "id": "repair-11",
       "kind": "repair",
-      "name": "Condenser Fan Motor Replacement — Direct",
-      "detail": "Airflow / Motors — Replace the failed condenser fan motor, install the required run capacitor if applicable, verify rotation and fan operation, and check motor amperage.",
+      "name": "Condenser Fan Motor Replacement \u2014 Direct",
+      "detail": "Airflow / Motors \u2014 Replace the failed condenser fan motor, install the required run capacitor if applicable, verify rotation and fan operation, and check motor amperage.",
       "price": 1425,
       "tag": "Draft price book"
     },
     {
       "id": "repair-12",
       "kind": "repair",
-      "name": "Condenser Fan Motor Replacement — Universal",
-      "detail": "Airflow / Motors — Install and configure a compatible universal condenser fan motor and capacitor, set proper rotation, and verify motor amperage and condenser airflow.",
+      "name": "Condenser Fan Motor Replacement \u2014 Universal",
+      "detail": "Airflow / Motors \u2014 Install and configure a compatible universal condenser fan motor and capacitor, set proper rotation, and verify motor amperage and condenser airflow.",
       "price": 1300,
       "tag": "Draft price book"
     },
     {
       "id": "repair-13",
       "kind": "repair",
-      "name": "Blower Motor Replacement — Direct",
-      "detail": "Airflow / Motors — Replace the failed blower motor, install the required capacitor if applicable, verify rotation, blower speed, amperage, and system airflow.",
+      "name": "Blower Motor Replacement \u2014 Direct",
+      "detail": "Airflow / Motors \u2014 Replace the failed blower motor, install the required capacitor if applicable, verify rotation, blower speed, amperage, and system airflow.",
       "price": 1675,
       "tag": "Draft price book"
     },
     {
       "id": "repair-14",
       "kind": "repair",
-      "name": "Blower Motor Replacement — Universal PSC",
-      "detail": "Airflow / Motors — Install and configure a compatible universal PSC blower motor, set the required speed, and verify rotation, amperage, and airflow.",
+      "name": "Blower Motor Replacement \u2014 Universal PSC",
+      "detail": "Airflow / Motors \u2014 Install and configure a compatible universal PSC blower motor, set the required speed, and verify rotation, amperage, and airflow.",
       "price": 1500,
       "tag": "Draft price book"
     },
     {
       "id": "repair-15",
       "kind": "repair",
-      "name": "Blower Wheel Cleaning — Accessible",
-      "detail": "Airflow / Motors — Remove and clean the accessible blower wheel and housing as needed, reinstall, and verify blower operation and airflow.",
+      "name": "Blower Wheel Cleaning \u2014 Accessible",
+      "detail": "Airflow / Motors \u2014 Remove and clean the accessible blower wheel and housing as needed, reinstall, and verify blower operation and airflow.",
       "price": 950,
       "tag": "Draft price book"
     },
@@ -5286,7 +5291,7 @@ window.RT_DATA = {
       "id": "repair-16",
       "kind": "repair",
       "name": "Condensate Drain Clearing",
-      "detail": "Condensate — Clear the accessible condensate drain and trap, flush the line, and verify drainage during system operation.",
+      "detail": "Condensate \u2014 Clear the accessible condensate drain and trap, flush the line, and verify drainage during system operation.",
       "price": 650,
       "tag": "Draft price book"
     },
@@ -5294,7 +5299,7 @@ window.RT_DATA = {
       "id": "repair-17",
       "kind": "repair",
       "name": "Condensate Float Switch Installation",
-      "detail": "Condensate — Install a condensate safety switch and verify that the system shuts down properly when the switch is activated.",
+      "detail": "Condensate \u2014 Install a condensate safety switch and verify that the system shuts down properly when the switch is activated.",
       "price": 675,
       "tag": "Draft price book"
     },
@@ -5302,15 +5307,15 @@ window.RT_DATA = {
       "id": "repair-18",
       "kind": "repair",
       "name": "Condensate Pump Replacement",
-      "detail": "Condensate — Replace the condensate pump, reconnect the accessible drain and discharge tubing, and verify pump operation and safety function.",
+      "detail": "Condensate \u2014 Replace the condensate pump, reconnect the accessible drain and discharge tubing, and verify pump operation and safety function.",
       "price": 900,
       "tag": "Draft price book"
     },
     {
       "id": "repair-19",
       "kind": "repair",
-      "name": "Condensate Drain Rebuild — Minor",
-      "detail": "Condensate — Rebuild the accessible condensate trap and nearby drain piping as required and verify proper drainage.",
+      "name": "Condensate Drain Rebuild \u2014 Minor",
+      "detail": "Condensate \u2014 Rebuild the accessible condensate trap and nearby drain piping as required and verify proper drainage.",
       "price": 825,
       "tag": "Draft price book"
     },
@@ -5318,7 +5323,7 @@ window.RT_DATA = {
       "id": "repair-20",
       "kind": "repair",
       "name": "Hot Surface Igniter Replacement",
-      "detail": "Heating — Replace the failed hot-surface igniter and verify normal ignition sequence and furnace operation.",
+      "detail": "Heating \u2014 Replace the failed hot-surface igniter and verify normal ignition sequence and furnace operation.",
       "price": 800,
       "tag": "Draft price book"
     },
@@ -5326,7 +5331,7 @@ window.RT_DATA = {
       "id": "repair-21",
       "kind": "repair",
       "name": "Flame Sensor Service",
-      "detail": "Heating — Clean and inspect the flame sensor and verify stable flame signal and normal furnace cycling.",
+      "detail": "Heating \u2014 Clean and inspect the flame sensor and verify stable flame signal and normal furnace cycling.",
       "price": 575,
       "tag": "Draft price book"
     },
@@ -5334,7 +5339,7 @@ window.RT_DATA = {
       "id": "repair-22",
       "kind": "repair",
       "name": "Flame Sensor Replacement",
-      "detail": "Heating — Replace the failed flame sensor and verify stable flame sensing and normal furnace operation.",
+      "detail": "Heating \u2014 Replace the failed flame sensor and verify stable flame sensing and normal furnace operation.",
       "price": 650,
       "tag": "Draft price book"
     },
@@ -5342,7 +5347,7 @@ window.RT_DATA = {
       "id": "repair-23",
       "kind": "repair",
       "name": "Pressure Switch Replacement",
-      "detail": "Heating — Replace the failed furnace pressure switch and verify the inducer/vent safety sequence and heating operation.",
+      "detail": "Heating \u2014 Replace the failed furnace pressure switch and verify the inducer/vent safety sequence and heating operation.",
       "price": 850,
       "tag": "Draft price book"
     },
@@ -5350,7 +5355,7 @@ window.RT_DATA = {
       "id": "repair-24",
       "kind": "repair",
       "name": "Gas Valve Replacement",
-      "detail": "Heating — Replace the failed gas valve, check accessible gas connections for leakage, and verify normal ignition and heating operation.",
+      "detail": "Heating \u2014 Replace the failed gas valve, check accessible gas connections for leakage, and verify normal ignition and heating operation.",
       "price": 1300,
       "tag": "Draft price book"
     },
@@ -5358,7 +5363,7 @@ window.RT_DATA = {
       "id": "repair-25",
       "kind": "repair",
       "name": "Inducer Motor Assembly Replacement",
-      "detail": "Heating — Replace the failed inducer assembly and verify venting safety sequence, ignition, and furnace operation.",
+      "detail": "Heating \u2014 Replace the failed inducer assembly and verify venting safety sequence, ignition, and furnace operation.",
       "price": 1625,
       "tag": "Draft price book"
     },
@@ -5366,7 +5371,7 @@ window.RT_DATA = {
       "id": "repair-26",
       "kind": "repair",
       "name": "Furnace Control Board Replacement",
-      "detail": "Heating — Replace the failed furnace control board, reconnect existing controls, configure applicable settings, and verify heating and cooling control operation.",
+      "detail": "Heating \u2014 Replace the failed furnace control board, reconnect existing controls, configure applicable settings, and verify heating and cooling control operation.",
       "price": 1475,
       "tag": "Draft price book"
     },
@@ -5374,15 +5379,15 @@ window.RT_DATA = {
       "id": "repair-27",
       "kind": "repair",
       "name": "Schrader Core / Service Port Repair",
-      "detail": "Refrigeration — Replace leaking accessible service-port cores and caps as required, leak-check the repair, and verify system operation.",
+      "detail": "Refrigeration \u2014 Replace leaking accessible service-port cores and caps as required, leak-check the repair, and verify system operation.",
       "price": 700,
       "tag": "Draft price book"
     },
     {
       "id": "repair-28",
       "kind": "repair",
-      "name": "Refrigerant Leak Search — Standard",
-      "detail": "Refrigeration — Perform an electronic and visual refrigerant leak search of accessible system components and document the findings for repair or replacement planning.",
+      "name": "Refrigerant Leak Search \u2014 Standard",
+      "detail": "Refrigeration \u2014 Perform an electronic and visual refrigerant leak search of accessible system components and document the findings for repair or replacement planning.",
       "price": 1050,
       "tag": "Draft price book"
     },
@@ -5390,14 +5395,14 @@ window.RT_DATA = {
       "id": "repair-29",
       "kind": "repair",
       "name": "Nitrogen Pressure Test / Isolation",
-      "detail": "Refrigeration — Pressure-test the refrigerant circuit with nitrogen and isolate accessible sections as practical to help identify a leak location.",
+      "detail": "Refrigeration \u2014 Pressure-test the refrigerant circuit with nitrogen and isolate accessible sections as practical to help identify a leak location.",
       "price": 1150,
       "tag": "Draft price book"
     },
     {
       "id": "pkg-1",
       "kind": "package",
-      "name": "2-ton Payne split — Upflow",
+      "name": "2-ton Payne split \u2014 Upflow",
       "detail": "Planning package price from the replacement price book. Excludes relocation, crane, long line set, permits, and major duct work.",
       "price": 10900,
       "tons": 2,
@@ -5406,7 +5411,7 @@ window.RT_DATA = {
     {
       "id": "pkg-2",
       "kind": "package",
-      "name": "2-ton Payne split — Horizontal",
+      "name": "2-ton Payne split \u2014 Horizontal",
       "detail": "Planning package price from the replacement price book. Excludes relocation, crane, long line set, permits, and major duct work.",
       "price": 11500,
       "tons": 2,
@@ -5415,7 +5420,7 @@ window.RT_DATA = {
     {
       "id": "pkg-3",
       "kind": "package",
-      "name": "2.5-ton Payne split — Upflow",
+      "name": "2.5-ton Payne split \u2014 Upflow",
       "detail": "Planning package price from the replacement price book. Excludes relocation, crane, long line set, permits, and major duct work.",
       "price": 11200,
       "tons": 2.5,
@@ -5424,7 +5429,7 @@ window.RT_DATA = {
     {
       "id": "pkg-4",
       "kind": "package",
-      "name": "2.5-ton Payne split — Horizontal",
+      "name": "2.5-ton Payne split \u2014 Horizontal",
       "detail": "Planning package price from the replacement price book. Excludes relocation, crane, long line set, permits, and major duct work.",
       "price": 11800,
       "tons": 2.5,
@@ -5433,7 +5438,7 @@ window.RT_DATA = {
     {
       "id": "pkg-5",
       "kind": "package",
-      "name": "3-ton Payne split — Upflow",
+      "name": "3-ton Payne split \u2014 Upflow",
       "detail": "Planning package price from the replacement price book. Excludes relocation, crane, long line set, permits, and major duct work.",
       "price": 11500,
       "tons": 3,
@@ -5442,7 +5447,7 @@ window.RT_DATA = {
     {
       "id": "pkg-6",
       "kind": "package",
-      "name": "3-ton Payne split — Horizontal",
+      "name": "3-ton Payne split \u2014 Horizontal",
       "detail": "Planning package price from the replacement price book. Excludes relocation, crane, long line set, permits, and major duct work.",
       "price": 12200,
       "tons": 3,
@@ -5451,7 +5456,7 @@ window.RT_DATA = {
     {
       "id": "pkg-7",
       "kind": "package",
-      "name": "3.5-ton Payne split — Upflow",
+      "name": "3.5-ton Payne split \u2014 Upflow",
       "detail": "Planning package price from the replacement price book. Excludes relocation, crane, long line set, permits, and major duct work.",
       "price": 12200,
       "tons": 3.5,
@@ -5460,7 +5465,7 @@ window.RT_DATA = {
     {
       "id": "pkg-8",
       "kind": "package",
-      "name": "3.5-ton Payne split — Horizontal",
+      "name": "3.5-ton Payne split \u2014 Horizontal",
       "detail": "Planning package price from the replacement price book. Excludes relocation, crane, long line set, permits, and major duct work.",
       "price": 12700,
       "tons": 3.5,
@@ -5469,7 +5474,7 @@ window.RT_DATA = {
     {
       "id": "pkg-9",
       "kind": "package",
-      "name": "4-ton Payne split — Upflow",
+      "name": "4-ton Payne split \u2014 Upflow",
       "detail": "Planning package price from the replacement price book. Excludes relocation, crane, long line set, permits, and major duct work.",
       "price": 12700,
       "tons": 4,
@@ -5478,7 +5483,7 @@ window.RT_DATA = {
     {
       "id": "pkg-10",
       "kind": "package",
-      "name": "4-ton Payne split — Horizontal",
+      "name": "4-ton Payne split \u2014 Horizontal",
       "detail": "Planning package price from the replacement price book. Excludes relocation, crane, long line set, permits, and major duct work.",
       "price": 13200,
       "tons": 4,
@@ -5487,7 +5492,7 @@ window.RT_DATA = {
     {
       "id": "pkg-11",
       "kind": "package",
-      "name": "5-ton Payne split — Upflow",
+      "name": "5-ton Payne split \u2014 Upflow",
       "detail": "Planning package price from the replacement price book. Excludes relocation, crane, long line set, permits, and major duct work.",
       "price": 13500,
       "tons": 5,
@@ -5496,7 +5501,7 @@ window.RT_DATA = {
     {
       "id": "pkg-12",
       "kind": "package",
-      "name": "5-ton Payne split — Horizontal",
+      "name": "5-ton Payne split \u2014 Horizontal",
       "detail": "Planning package price from the replacement price book. Excludes relocation, crane, long line set, permits, and major duct work.",
       "price": 14100,
       "tons": 5,
@@ -5513,7 +5518,7 @@ window.RT_DATA = {
     {
       "id": "addon-2",
       "kind": "addon",
-      "name": "Attic access — difficult",
+      "name": "Attic access \u2014 difficult",
       "detail": "Conditional. Tight crawl, long carry, limited staging or high heat",
       "price": 1150,
       "tag": "Planning price"
@@ -5521,7 +5526,7 @@ window.RT_DATA = {
     {
       "id": "addon-3",
       "kind": "addon",
-      "name": "Line set 26–50 ft, accessible",
+      "name": "Line set 26\u201350 ft, accessible",
       "detail": "Conditional. New copper beyond short standard run",
       "price": 1700,
       "tag": "Planning price"
@@ -5529,7 +5534,7 @@ window.RT_DATA = {
     {
       "id": "addon-4",
       "kind": "addon",
-      "name": "Line set 26–50 ft, difficult/concealed",
+      "name": "Line set 26\u201350 ft, difficult/concealed",
       "detail": "Conditional. Wall/ceiling fishing, finished spaces or multiple penetrations",
       "price": 3075,
       "tag": "Planning price"
@@ -5590,5 +5595,16 @@ window.RT_DATA = {
       "price": 1375,
       "tag": "Planning price"
     }
-  ]
+  ],
+  "payment": {
+    "venmoHandle": "Steve-Seguine",
+    "zellePhone": "5624878750",
+    "zellePhoneDisplay": "562-487-8750",
+    "stripeReusableUrl": "https://buy.stripe.com/aFa8wOgyS2MJ1XhaZG6Na03",
+    "links": {
+      "55674": "https://buy.stripe.com/7sY4gy96qcnjcBV2ta6Na00",
+      "55702": "https://buy.stripe.com/bJeeVcdmG4UR6dxffW6Na01",
+      "55707": "https://buy.stripe.com/7sY3cu5Ue3QNeK3ebS6Na02"
+    }
+  }
 };

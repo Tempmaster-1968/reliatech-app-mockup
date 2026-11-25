@@ -1,12 +1,23 @@
 # ReliaTech
 
-A phone-app mockup for ReliaTech Services (Long Beach HVAC). Job, customer, invoice, and estimate records are loaded from Housecall Pro exports. The Price book tab is seeded from confirmed service rates and recorded supplier costs (AC Pro ticket, Sigler quotes, Payne bundles, and Sigler duct material prices). Costed items use Steve’s default 40% GP (sell = cost ÷ (1 − 0.40), 35% floor, rounded to the nearest dollar or to the nearest $0.50 under $20). Refrigerant uses a 125% markup (sell = cost × 2.25, about 55.6% GP). Confirmed service rates are not marked up again. Items Steve hasn’t confirmed stay marked Needs Steve’s OK; he can approve one item or Approve all. The page is public — treat the link accordingly.
+A phone-app mockup for ReliaTech Services (Long Beach HVAC). Job, customer, invoice, and estimate records are loaded from Housecall Pro exports. The Price book tab is seeded from confirmed service rates and recorded supplier costs (AC Pro ticket, Sigler quotes, Payne bundles, and Sigler duct material prices). Costed items use Steve’s default 40% GP (sell = cost ÷ (1 − 0.40), 35% floor, rounded to the nearest dollar or to the nearest $0.50 under $20). Refrigerant uses a 125% markup (sell = cost × 2.25, about 55.6% GP). Draft flat-rate repairs (Needs Steve’s OK) use a first-repair price of $150 diagnostic + labor hours × $85 + $65 truck + part sell, and an add-on price of labor hours × $85 + part sell; estimates price the first flat-rate repair at the full price and further ones at the add-on. Confirmed service rates are not marked up again. Items Steve hasn’t confirmed stay marked Needs Steve’s OK; he can approve one item or Approve all. The page is public — treat the link accordingly.
 
 Open this on an iPhone in Safari (no account or sign-in):
 
 **https://tempmaster-1968.github.io/reliatech-app-mockup/**
 
 This is the permanent address. Future updates are published to the same URL.
+
+
+## Paying an invoice
+
+Open a job with a balance (or Money → Unpaid invoices) and tap **Pay now**. The payment screen offers:
+
+- **Card / Apple Pay** — opens a Stripe Payment Link. Open invoices with a known balance have a link for that amount and invoice number. New invoices use a reusable ReliaTech Services payment link; the customer enters the invoice number and amount on the Stripe page. Creating a link does not charge a card.
+- **Venmo** — opens Venmo to @Steve-Seguine with the amount and invoice memo filled in.
+- **Zelle** — shows 562-487-8750 with copy buttons for the number and the memo. Zelle has no payment link.
+
+**Mark paid** is on Steve’s side of the invoice. Choose a method (Card/Stripe, Venmo, Zelle, Cash, or Check) and a date. That marks the invoice paid in this app only; it does not take a payment and stays on this phone until the records are exported again.
 
 ## Add to Home Screen (iPhone)
 

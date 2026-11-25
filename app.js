@@ -1965,6 +1965,14 @@
   const SHOW_SAMPLE_BADGE = !!(window.RT_DATA && window.RT_DATA.showSampleBadge);
   const PRICE_BOOK_NOTE = (window.RT_PRICEBOOK && window.RT_PRICEBOOK.note) || "Confirmed service rates are not marked up again. Costed items use 40% GP by default (35% floor). Refrigerant uses a 125% markup (sell = cost × 2.25). Draft flat-rate repairs use a first-repair price (diagnostic + labor + truck + part) and an add-on price (labor + part). Proposed sells need Steve’s OK.";
   const MONEY_NOTE = (window.RT_DATA && window.RT_DATA.moneyNote) || "";
+  const PAYMENT = (window.RT_DATA && window.RT_DATA.payment) ? window.RT_DATA.payment : {
+    venmoHandle: "Steve-Seguine",
+    zellePhone: "5624878750",
+    zellePhoneDisplay: "562-487-8750",
+    stripeReusableUrl: "",
+    links: {}
+  };
+  const PAY_METHODS = ["Card/Stripe", "Venmo", "Zelle", "Cash", "Check"];
 
   /* state and remaining UI will be appended */
   window.__RT_BOOT = { INITIAL_CUSTOMERS: INITIAL_CUSTOMERS, INITIAL_JOBS: INITIAL_JOBS, PAST_JOBS: PAST_JOBS };
@@ -2080,6 +2088,7 @@
     screen: null,
     scheduleVisitId: null,
     scheduleDraft: { date: "", time: "" },
+    paidDraft: { method: "Card/Stripe", date: "" },
     openAddressId: null,
     addressDraft: null,
     addressEditingId: null,
@@ -2203,6 +2212,62 @@
   function todayYmd() {
     const p = tzParts(new Date());
     return p.year + "-" + pad2(p.month) + "-" + pad2(p.day);
+  }
+  function invoiceNumber(job) {
+    return (job && job.invoiceId) ? String(job.invoiceId) : ((job && job.id) ? job.id + "-01" : "");
+  }
+  function invoiceDue(job) {
+    if (!job || job.status === "paid") return 0;
+    if (typeof job.dueAmount === "number") return Number(job.dueAmount) || 0;
+    if (job.status === "invoiced") return Number(job.total) || 0;
+    return 0;
+  }
+  function isPayable(job) {
+    return invoiceDue(job) > 0;
+  }
+  function stripeLinkFor(job) {
+    if (job && job.stripePaymentUrl) return job.stripePaymentUrl;
+    if (job && PAYMENT.links && PAYMENT.links[job.id]) return PAYMENT.links[job.id];
+    return PAYMENT.stripeReusableUrl || "";
+  }
+  function usesReusableStripe(job) {
+    const url = stripeLinkFor(job);
+    return !!(url && PAYMENT.stripeReusableUrl && url === PAYMENT.stripeReusableUrl);
+  }
+  function venmoLink(job) {
+    const handle = String(PAYMENT.venmoHandle || "Steve-Seguine").replace(/^@/, "");
+    const amt = invoiceDue(job).toFixed(2);
+    const note = encodeURIComponent("ReliaTech Invoice " + invoiceNumber(job));
+    return "https://venmo.com/" + handle + "?txn=pay&amount=" + amt + "&note=" + note;
+  }
+  function zellePhoneDisplay() {
+    return PAYMENT.zellePhoneDisplay || "562-487-8750";
+  }
+  function zelleMemo(job) {
+    return "ReliaTech Invoice " + invoiceNumber(job);
+  }
+  function emptyPaidDraft() {
+    return { method: "Card/Stripe", date: todayYmd() };
+  }
+  function copyText(text, okMsg) {
+    const value = String(text || "");
+    function ok() { showToast(okMsg || "Copied"); }
+    function fallback() {
+      const ta = document.createElement("textarea");
+      ta.value = value;
+      ta.setAttribute("readonly", "readonly");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); ok(); } catch (e) { showToast("Copy failed"); }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(value).then(ok).catch(fallback);
+    } else {
+      fallback();
+    }
   }
   function addDaysYmd(ymd, days) {
     const p = String(ymd || todayYmd()).split("-");
@@ -2631,6 +2696,10 @@
       if (k === "name") state.packCustomName = v;
       else state.packCustomAmount = v;
       renderKeepFocus(k === "name" ? "pack-custom-name" : "pack-custom-amount");
+    },
+    setPaidDate: function (v) {
+      if (!state.paidDraft) state.paidDraft = emptyPaidDraft();
+      state.paidDraft.date = v;
     }
   };
 
@@ -2940,8 +3009,9 @@
       '<button class="btn" ' + act("openPriceBook") + ">Build estimate</button>" +
       (job.estimateId ? '<button class="btn ghost" ' + act("sheet", "approval") + ">Send for approval · " + job.estimateId + "</button>" : "") +
       (job.status === "done" || job.status === "approved" || job.status === "progress" ? '<button class="btn teal" ' + act("sheet", "invoice") + ">Make invoice</button>" : "") +
-      (job.status === "invoiced" || job.status === "paid" ? '<button class="btn ghost" ' + act("sheet", "invoice") + ">View invoice</button>" : "") +
-      (job.status === "invoiced" ? '<button class="btn accent" ' + act("sheet", "paid") + ">Mark paid</button>" : "") +
+      (job.status === "invoiced" || job.status === "paid" || job.invoiceId ? '<button class="btn ghost" ' + act("sheet", "invoice") + ">View invoice</button>" : "") +
+      (isPayable(job) ? '<button class="btn teal" ' + act("sheet", "pay") + ">Pay now</button>" : "") +
+      (isPayable(job) || job.status === "invoiced" ? '<button class="btn accent" ' + act("sheet", "paid") + ">Mark paid</button>" : "") +
       '<button class="btn ask" ' + act("sheet", "ask") + ">" + icon("chat", 18) + "<span>Ask ReliaTech</span></button>" +
       "</div></div></div>";
   }
@@ -3120,10 +3190,17 @@
 
   function moneyScreen() {
     const all = state.jobs.concat(state.moneyJobs);
-    const collected = (window.RT_DATA && typeof window.RT_DATA.collected === "number") ? window.RT_DATA.collected : all.filter(function (j) { return j.status === "paid"; }).reduce(function (s, j) { return s + j.total; }, 0);
-    const outstanding = (window.RT_DATA && typeof window.RT_DATA.outstanding === "number") ? window.RT_DATA.outstanding : all.filter(function (j) { return j.status === "invoiced"; }).reduce(function (s, j) { return s + (j.dueAmount || j.total); }, 0);
+    const unpaid = all.filter(isPayable);
+    const liveOutstanding = unpaid.reduce(function (s, j) { return s + invoiceDue(j); }, 0);
+    const outstanding = liveOutstanding;
+    let collected = (window.RT_DATA && typeof window.RT_DATA.collected === "number") ? window.RT_DATA.collected : all.filter(function (j) { return j.status === "paid"; }).reduce(function (s, j) { return s + j.total; }, 0);
+    all.forEach(function (j) {
+      const init = INITIAL_JOBS.find(function (x) { return x.id === j.id; }) || PAST_JOBS.find(function (x) { return x.id === j.id; });
+      if (j.status === "paid" && init && init.status !== "paid") {
+        collected += Number(init.dueAmount || init.total || 0);
+      }
+    });
     const openEst = (window.RT_DATA && typeof window.RT_DATA.openEstimates === "number") ? window.RT_DATA.openEstimates : all.filter(function (j) { return j.status === "estimate" || j.status === "approved"; }).reduce(function (s, j) { return s + j.total; }, 0);
-    const unpaid = all.filter(function (j) { return (j.dueAmount || 0) > 0 || j.status === "invoiced"; });
     return topBar({ kicker: "ReliaTech Services", title: "Money", badge: SHOW_SAMPLE_BADGE, settings: true }) +
       '<div class="content"><div class="pad">' +
       '<div class="money-tile brand" style="margin-bottom:10px"><div class="k-up" style="color:rgba(255,255,255,.7)">Collected</div><div class="money-val">' + money(collected) + '</div><div style="font-size:12px;opacity:.8">' + (MONEY_NOTE || "From Housecall Pro job amounts minus remaining balances.") + '</div></div>' +
@@ -3361,7 +3438,7 @@
       '<button class="btn" ' + act("closeSheet") + ">Got it</button>");
   }
   function invoiceSheet(job) {
-    const existing = job.status === "invoiced" || job.status === "paid";
+    const existing = job.status === "invoiced" || job.status === "paid" || !!job.invoiceId || isPayable(job);
     const mismatch = hoursMismatch(job);
     const showTos = showTimeOnInvoice(job);
     const completed = completedTimeEntries(job);
@@ -3380,13 +3457,56 @@
       (openLeft && showTos ? '<div class="muted" style="margin-bottom:8px">Open entries are kept in the app until you clock out. They are not printed.</div>' : "") +
       (showTos ? timeOnSiteTable(job) : '<div class="muted">Time on site will not print on this invoice. Travel, breaks, and edit history are never printed.</div>') +
       "</div>" +
-      (existing ? '<button class="btn" ' + act("closeSheet") + ">Done</button>" : '<button class="btn teal" ' + act("makeInvoice") + ">Create invoice</button>"));
+      (job.paidMethod ? '<div class="muted" style="margin-top:12px">Marked paid' + (job.paidDate ? " on " + esc(job.paidDate) : "") + " · " + esc(job.paidMethod) + (job.status === "paid" ? "" : "") + ".</div>" : "") +
+      (existing && isPayable(job) ? '<button class="btn teal" ' + act("sheet", "pay") + ">Pay now</button>" : "") +
+      (existing && (isPayable(job) || job.status === "invoiced") ? '<button class="btn accent" ' + act("sheet", "paid") + ">Mark paid</button>" : "") +
+      (existing ? '<button class="btn' + (isPayable(job) ? " ghost" : "") + '" ' + act("closeSheet") + ">Done</button>" : '<button class="btn teal" ' + act("makeInvoice") + ">Create invoice</button>"));
+  }
+
+  function paySheet(job) {
+    const inv = invoiceNumber(job);
+    const due = invoiceDue(job);
+    const stripe = stripeLinkFor(job);
+    const reusable = usesReusableStripe(job);
+    const memo = zelleMemo(job);
+    const phone = zellePhoneDisplay();
+    const stripeNote = !stripe
+      ? "A card payment link is not available for this invoice yet."
+      : (reusable
+        ? "On the Stripe page, enter invoice " + inv + " and the amount " + money(due) + ". Card and Apple Pay are offered when the device supports them."
+        : "This opens a Stripe Payment Link for invoice " + inv + " in the amount of " + money(due) + ". Card and Apple Pay are offered when the device supports them.");
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Pay now</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="k-up">Invoice ' + esc(inv) + "</div>" +
+      '<div class="pay-amt">' + money(due) + "</div>" +
+      (job.id === "55707" ? '<div class="muted" style="margin-top:-6px;margin-bottom:12px">Remaining balance on this job. Prior invoices 97 and 100 are already marked paid in Housecall Pro.</div>' : "") +
+      '<div class="pay-opt"><div class="h2">Card / Apple Pay</div><div class="muted">' + esc(stripeNote) + "</div>" +
+        (stripe ? '<a class="btn teal" href="' + esc(stripe) + '" target="_blank" rel="noopener">Pay ' + money(due) + " with card</a>" : "") +
+      "</div>" +
+      '<div class="pay-opt"><div class="h2">Venmo</div><div class="muted">Opens Venmo to @' + esc(String(PAYMENT.venmoHandle || "Steve-Seguine").replace(/^@/, "")) + " with the amount and invoice note filled in.</div>" +
+        '<a class="btn teal" href="' + esc(venmoLink(job)) + '" target="_blank" rel="noopener">Pay ' + money(due) + " with Venmo</a>" +
+      "</div>" +
+      '<div class="pay-opt"><div class="h2">Zelle</div><div class="muted">Zelle has no payment link. Open your bank app, send to this number, and use the memo below.</div>' +
+        '<div class="pay-row"><div><div class="field-lab" style="margin:0">Send to</div><div class="val">' + esc(phone) + '</div></div><button class="btn ghost inline" ' + act("copyZelle") + ">Copy number</button></div>" +
+        '<div class="pay-row"><div><div class="field-lab" style="margin:0">Amount</div><div class="val">' + money(due) + "</div></div></div>" +
+        '<div class="pay-row"><div><div class="field-lab" style="margin:0">Memo</div><div class="val">' + esc(memo) + '</div></div><button class="btn ghost inline" ' + act("copyMemo") + ">Copy memo</button></div>" +
+      "</div>" +
+      '<button class="btn accent" ' + act("sheet", "paid") + ">Mark paid</button>");
   }
 
   function paidSheet(job) {
+    const d = state.paidDraft || emptyPaidDraft();
+    const due = invoiceDue(job) || job.total || 0;
+    const inv = invoiceNumber(job);
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Mark paid</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      '<div class="muted" style="margin-bottom:12px">Mark invoice ' + esc(job.invoiceId || (job.id + "-01")) + " for " + money(job.total) + " as paid. This mockup doesn’t collect a payment.</div>" +
+      '<div class="muted" style="margin-bottom:12px">Record a payment you already received for invoice ' + esc(inv) + ". This marks it paid in this app. It does not charge a card or change Stripe, Venmo, or Zelle.</div>" +
+      '<div class="h2" style="margin-bottom:12px">' + money(due) + "</div>" +
+      '<div class="field-lab">Method</div><div class="chips" style="margin-bottom:12px">' +
+      PAY_METHODS.map(function (m) {
+        return '<button class="chip teal' + (d.method === m ? " on" : "") + '" ' + act("setPaidMethod", m) + ">" + esc(m) + "</button>";
+      }).join("") + "</div>" +
+      '<label class="field"><div class="field-lab">Date</div><input id="paid-date" type="date" value="' + esc(d.date || todayYmd()) + '" oninput="RT.setPaidDate(this.value)"></label>' +
       '<button class="btn accent" ' + act("markPaid") + ">Mark paid</button>");
   }
   function savedSheet() {
@@ -3966,6 +4086,7 @@
     if (s === "ask") return job ? askSheet(job) : "";
     if (s === "approval") return job ? approvalSheet(job) : "";
     if (s === "invoice") return job ? invoiceSheet(job) : "";
+    if (s === "pay") return job ? paySheet(job) : "";
     if (s === "paid") return job ? paidSheet(job) : "";
     if (s === "saved") return savedSheet();
     if (s === "priceBook") return job ? priceBookSheet(job) : "";
@@ -4153,7 +4274,23 @@
       if (arg === "note") state.noteDraft = emptyNoteDraft("visit");
       if (arg === "photo") state.photoDraft = emptyPhotoDraft();
       if (arg === "voiceMemo") state.memoDraft = emptyMemoDraft();
+      if (arg === "paid") state.paidDraft = emptyPaidDraft();
       render(); return;
+    }
+    if (name === "setPaidMethod") {
+      if (!state.paidDraft) state.paidDraft = emptyPaidDraft();
+      state.paidDraft.method = arg || "Card/Stripe";
+      render(); return;
+    }
+    if (name === "copyZelle") {
+      copyText(zellePhoneDisplay(), "Zelle number copied");
+      return;
+    }
+    if (name === "copyMemo") {
+      const job = getJob(state.openJobId);
+      if (!job) return;
+      copyText(zelleMemo(job), "Memo copied");
+      return;
     }
     if (name === "openNewCall") {
       state.sheet = "newCall"; state.newCallStep = 1;
@@ -4466,14 +4603,25 @@
       const job = getJob(state.openJobId); if (!job) return;
       job.invoiceId = job.invoiceId || (job.id + "-01");
       job.status = "invoiced";
+      if (!(Number(job.dueAmount) > 0)) job.dueAmount = Number(job.total) || 0;
       job.timeline = [{ id: "i" + Date.now(), kind: "system", time: "Just now", title: "Invoice sent", body: "Invoice " + job.invoiceId + " for " + money(job.total) + "." }].concat(job.timeline);
       state.sheet = null; showToast("Invoice " + job.invoiceId + " created"); return;
     }
     if (name === "markPaid") {
       const job = getJob(state.openJobId); if (!job) return;
+      const d = state.paidDraft || emptyPaidDraft();
+      const method = d.method || "Card/Stripe";
+      const date = d.date || todayYmd();
+      if (PAY_METHODS.indexOf(method) === -1) { showToast("Choose a payment method"); return; }
+      if (!date) { showToast("Choose a payment date"); return; }
+      const due = invoiceDue(job) || job.total || 0;
+      job.invoiceId = job.invoiceId || (job.id + "-01");
       job.status = "paid";
-      job.timeline = [{ id: "pay" + Date.now(), kind: "system", time: "Just now", title: "Paid", body: "Invoice " + (job.invoiceId || (job.id + "-01")) + " marked paid, " + money(job.total) + "." }].concat(job.timeline);
-      state.sheet = null; showToast("Marked paid · sample only"); return;
+      job.dueAmount = 0;
+      job.paidMethod = method;
+      job.paidDate = date;
+      job.timeline = [{ id: "pay" + Date.now(), kind: "system", time: "Just now", title: "Paid", body: "Invoice " + job.invoiceId + " marked paid, " + money(due) + ", " + method + " on " + date + "." }].concat(job.timeline);
+      state.sheet = null; showToast("Marked paid · " + method); return;
     }
     if (name === "pickTech") {
       state.currentTech = arg;
