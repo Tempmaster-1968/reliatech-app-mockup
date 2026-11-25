@@ -555,7 +555,7 @@ window.RT_DATA = {
       "total": 1.0,
       "dueAmount": 1.0,
       "invoiceId": "TEST-01",
-      "payId": "TEST-01",
+      "payId": "J64n0E9QYcFS",
       "stripePaymentUrl": "https://buy.stripe.com/bJe5kCeqKdrn0Td8Ry6Na04",
       "readingSets": [],
       "timeline": [
@@ -604,7 +604,7 @@ window.RT_DATA = {
       "dueAmount": 125.0,
       "stripePaymentUrl": "https://buy.stripe.com/bJeeVcdmG4UR6dxffW6Na01",
       "invoiceId": "55702-01",
-      "payId": "55702-01"
+      "payId": "vUlHcOw6nbVL"
     },
     {
       "id": "25069",
@@ -730,7 +730,7 @@ window.RT_DATA = {
       "estimateId": "25066",
       "schedule": "Sep 11, 2026, 4:00 PM",
       "stripePaymentUrl": "https://buy.stripe.com/7sY3cu5Ue3QNeK3ebS6Na02",
-      "payId": "55707-balance"
+      "payId": "73xtMFCSjCwe"
     },
     {
       "id": "55700",
@@ -939,7 +939,7 @@ window.RT_DATA = {
       "dueAmount": 263.0,
       "stripePaymentUrl": "https://buy.stripe.com/7sY4gy96qcnjcBV2ta6Na00",
       "invoiceId": "55674-01",
-      "payId": "55674-01"
+      "payId": "tT0l9BZuiTMT"
     },
     {
       "id": "55719",
@@ -5649,12 +5649,6 @@ window.RT_DATA = {
       "55702": "https://buy.stripe.com/bJeeVcdmG4UR6dxffW6Na01",
       "55707": "https://buy.stripe.com/7sY3cu5Ue3QNeK3ebS6Na02",
       "TEST": "https://buy.stripe.com/bJe5kCeqKdrn0Td8Ry6Na04"
-    },
-    "payFiles": {
-      "TEST": "TEST-01",
-      "55674": "55674-01",
-      "55702": "55702-01",
-      "55707": "55707-balance"
     }
   }
 };

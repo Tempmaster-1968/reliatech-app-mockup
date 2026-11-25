@@ -2351,11 +2351,8 @@
     return "";
   }
   function payFileId(job) {
-    if (job && job.payId) return job.payId;
-    if (job && PAYMENT.payFiles && PAYMENT.payFiles[job.id]) return PAYMENT.payFiles[job.id];
-    const inv = invoiceNumber(job);
-    if (PAYMENT.payFiles && PAYMENT.payFiles[inv]) return PAYMENT.payFiles[inv];
-    return "";
+    const id = job && job.payId ? String(job.payId) : "";
+    return /^[A-Za-z0-9]{10,32}$/.test(id) ? id : "";
   }
   function invoicePayload(job) {
     const party = invoiceParty(job);
@@ -2377,10 +2374,9 @@
     return btoa(unescape(encodeURIComponent(json))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
   }
   function customerPayUrl(job) {
-    const base = PUBLIC_PAY_BASE + "pay.html";
     const slug = payFileId(job);
-    if (slug) return base + "?inv=" + encodeURIComponent(slug);
-    return base + "?d=" + encodePayPayload(invoicePayload(job));
+    if (slug) return PUBLIC_PAY_BASE + "pay/" + encodeURIComponent(slug) + "/";
+    return PUBLIC_PAY_BASE + "pay.html?d=" + encodePayPayload(invoicePayload(job));
   }
   function invoiceMessage(job) {
     const party = invoiceParty(job);

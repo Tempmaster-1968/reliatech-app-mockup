@@ -1,4 +1,4 @@
-/* Customer invoice payment page. Loads only the invoice named in the URL — never the main app dataset. */
+/* Customer invoice payment page. Loads only the invoice for this unguessable link — never the main app dataset. */
 (function () {
   const VENMO = "Steve-Seguine";
   const ZELLE = "562-487-8750";
@@ -22,8 +22,9 @@
   }
   function error(msg) {
     document.title = "Invoice not found — ReliaTech Services";
+    const icon = asset("icon-180.png");
     show(
-      '<div class="pay-brand"><img src="icon-180.png" alt=""><div><div class="kicker">ReliaTech Services</div><div class="title">Invoice</div></div></div>' +
+      '<div class="pay-brand"><img src="' + icon + '" alt=""><div><div class="kicker">ReliaTech Services</div><div class="title">Invoice</div></div></div>' +
       '<div class="pay-err"><div class="h1">Invoice not found</div><div class="muted">' + esc(msg) + "</div></div>"
     );
   }
@@ -47,8 +48,31 @@
       navigator.clipboard.writeText(value).then(ok).catch(fallback);
     } else fallback();
   }
-  function validInv(inv) {
-    return /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/.test(inv) && inv.indexOf("..") === -1;
+  function validCode(c) {
+    return /^[A-Za-z0-9]{10,32}$/.test(c || "");
+  }
+  /* Asset paths: this page may live at /pay/CODE/ or at /pay.html */
+  function asset(name) {
+    const parts = location.pathname.split("/").filter(Boolean);
+    if (parts.indexOf("pay") !== -1 && parts[parts.length - 1] !== "pay.html") return "../../" + name;
+    return name;
+  }
+  function payCodeFromLocation() {
+    const params = new URLSearchParams(location.search);
+    const c = (params.get("c") || "").trim();
+    if (validCode(c)) return c;
+    const parts = location.pathname.split("/").filter(Boolean);
+    const i = parts.lastIndexOf("pay");
+    if (i !== -1 && parts[i + 1]) {
+      const code = parts[i + 1].replace(/\.html$/i, "");
+      if (validCode(code)) return code;
+    }
+    return "";
+  }
+  function dataUrl(code) {
+    const parts = location.pathname.split("/").filter(Boolean);
+    if (parts.indexOf("pay") !== -1 && parts[parts.length - 1] !== "pay.html") return "data.json";
+    return "pay/" + encodeURIComponent(code) + "/data.json";
   }
   function decodePayload(d) {
     try {
@@ -83,9 +107,10 @@
     const lines = (inv.lineItems && inv.lineItems.length)
       ? inv.lineItems
       : [{ label: "Balance due", amount: amount }];
+    const icon = asset("icon-180.png");
     document.title = "Invoice " + inv.invoiceId + " — ReliaTech Services";
     show(
-      '<div class="pay-brand"><img src="icon-180.png" alt="ReliaTech"><div><div class="kicker">ReliaTech Services</div><div class="title">Invoice</div></div></div>' +
+      '<div class="pay-brand"><img src="' + icon + '" alt="ReliaTech"><div><div class="kicker">ReliaTech Services</div><div class="title">Invoice</div></div></div>' +
       '<div class="content"><div class="pad">' +
         '<div class="k-up">Invoice ' + esc(inv.invoiceId) + "</div>" +
         '<div class="h1" style="margin:4px 0 2px">' + esc(inv.customerName || "") + "</div>" +
@@ -122,10 +147,21 @@
   });
 
   const params = new URLSearchParams(location.search);
-  const inv = (params.get("inv") || "").trim();
+  /* Old guessable ?inv=invoice-number links are no longer supported. */
+  if (params.get("inv") && !params.get("c")) {
+    error("This payment link is no longer valid. Please ask ReliaTech Services for a new one.");
+    return;
+  }
   const packed = (params.get("d") || "").trim();
-  if (inv && validInv(inv)) {
-    fetch("inv/" + inv + ".json", { cache: "no-store" })
+  const code = payCodeFromLocation();
+  if (code) {
+    const cParam = (params.get("c") || "").trim();
+    if (cParam && validCode(cParam) && /pay\.html$/i.test(location.pathname)) {
+      const dest = location.pathname.replace(/pay\.html$/i, "pay/" + encodeURIComponent(cParam) + "/");
+      location.replace(dest);
+      return;
+    }
+    fetch(dataUrl(code), { cache: "no-store" })
       .then(function (res) {
         if (!res.ok) throw new Error("not found");
         return res.json();
