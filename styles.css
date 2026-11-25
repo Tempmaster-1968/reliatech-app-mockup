@@ -719,3 +719,10 @@ button.plan-card, button.prospect-card {
 .doc-block { background: var(--field); border-radius: 12px; padding: 10px 12px; }
 .doc-block .h2 { font-size: 15px; }
 .check-row { display: flex; align-items: flex-start; gap: 10px; }
+
+.book-row { width: 100%; text-align: left; }
+.cap-thumb { display: block; max-width: 100%; border-radius: 12px; margin-top: 8px; }
+.memo-audio { width: 100%; margin-top: 8px; }
+.memo-live { background: #F6E2B8; color: #8A4B08; border-radius: 12px; padding: 12px; margin-bottom: 12px; font-weight: 650; }
+.list-card audio { width: 100%; margin-top: 8px; }
+.tab span { white-space: nowrap; }

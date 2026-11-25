@@ -708,7 +708,12 @@
       earlier +
       '<div class="doc"><div class="k-up">ReliaTech Services</div>' +
       docBlocksHtml(snap, { showReferred: true }) +
-      (rec.lineItems || []).map(function (l) { return '<div class="row" style="margin-top:6px"><div>' + esc(l.label) + "</div><div>" + money(l.amount) + "</div></div>"; }).join("") +
+      (rec.lineItems || []).map(function (l, i) {
+        const known = lineInBook(l.label);
+        return '<div class="row" style="margin-top:6px;align-items:flex-start"><div>' + esc(l.label) +
+          (known ? "" : '<div><button class="link-btn" ' + act("saveLineToBook", "saved|" + rec.id + "|" + i) + ">Save to price book</button></div>") +
+          "</div><div>" + money(l.amount) + "</div></div>";
+      }).join("") +
       '<div class="row" style="margin-top:12px;font-weight:750"><div>Total</div><div>' + money(rec.total || 0) + "</div></div></div>" +
       '<button class="btn" style="margin-top:12px" ' + act("closeSheet") + ">Done</button>");
   }
@@ -733,7 +738,8 @@
     mic: '<path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
     clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3 1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
-    cal: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/>'
+    cal: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/>',
+    book: '<path d="M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 0-2 2V4z"/><path d="M9 8h8M9 12h8"/>'
   };
   function icon(name, size) {
     size = size || 22;
@@ -1201,10 +1207,254 @@
     if (opens.length > 1) return opens[0];
     return null;
   }
+
+  function seedPriceBook() {
+    return (window.RT_PRICEBOOK && Array.isArray(window.RT_PRICEBOOK.items))
+      ? window.RT_PRICEBOOK.items.map(function (x) { return JSON.parse(JSON.stringify(x)); })
+      : [];
+  }
+  function mergePriceBook(seed, saved) {
+    const byId = {};
+    (seed || []).forEach(function (it) { byId[it.id] = JSON.parse(JSON.stringify(it)); });
+    const extra = [];
+    (saved || []).forEach(function (s) {
+      if (!s || !s.id) return;
+      if (byId[s.id]) {
+        const base = byId[s.id];
+        byId[s.id] = Object.assign({}, base, {
+          name: s.name != null ? s.name : base.name,
+          category: s.category != null ? s.category : base.category,
+          unit: s.unit != null ? s.unit : base.unit,
+          sku: s.sku != null ? s.sku : base.sku,
+          cost: s.cost !== undefined ? s.cost : base.cost,
+          gp: s.gp !== undefined ? s.gp : base.gp,
+          sell: s.sell !== undefined ? s.sell : base.sell,
+          sellLocked: s.sellLocked != null ? s.sellLocked : base.sellLocked,
+          status: s.status || base.status,
+          detail: s.detail != null ? s.detail : base.detail,
+          source: base.source,
+          sourceFile: base.sourceFile,
+          seeded: !!base.seeded
+        });
+      } else {
+        extra.push(JSON.parse(JSON.stringify(s)));
+      }
+    });
+    return (seed || []).map(function (it) { return byId[it.id]; }).concat(extra);
+  }
+  function bookItems() { return state.priceBook || []; }
+  function getBookItem(id) { return bookItems().find(function (x) { return x.id === id; }) || null; }
+  function sellOf(item) {
+    if (!item) return null;
+    if (item.cost != null && item.cost !== "" && item.gp != null && item.gp !== "" && !item.sellLocked) {
+      const gp = Number(item.gp) / 100;
+      if (!(gp >= 0 && gp < 1)) return item.sell != null && item.sell !== "" ? Number(item.sell) : null;
+      return Math.round(Number(item.cost) / (1 - gp) * 100) / 100;
+    }
+    if (item.sell != null && item.sell !== "") return Number(item.sell);
+    return null;
+  }
+  function gpFromSell(cost, sell) {
+    const c = Number(cost), s = Number(sell);
+    if (!(c > 0) || !(s > 0) || s <= c) return null;
+    return Math.round((1 - c / s) * 1000) / 10;
+  }
+  function applyBookMath(item, edited) {
+    const copy = Object.assign({}, item);
+    if (copy.sellLocked) return copy;
+    if (edited === "gp" && copy.cost != null && copy.cost !== "" && copy.gp != null && copy.gp !== "") {
+      copy.sell = sellOf(copy);
+    } else if (edited === "sell" && copy.cost != null && copy.cost !== "" && copy.sell != null && copy.sell !== "") {
+      const g = gpFromSell(copy.cost, copy.sell);
+      if (g != null) copy.gp = g;
+    } else if (edited === "cost" && copy.gp != null && copy.gp !== "") {
+      copy.sell = sellOf(copy);
+    }
+    return copy;
+  }
+  function bookCategories() {
+    const set = {};
+    bookItems().forEach(function (it) { if (it.category) set[it.category] = true; });
+    return Object.keys(set).sort();
+  }
+  function emptyBookItem() {
+    return { id: "pb-new-" + Date.now(), name: "", category: "Parts", unit: "ea", sku: "", cost: "", gp: "", sell: "", sellLocked: false, status: "needs_ok", source: "Added in the ReliaTech app.", sourceFile: "", detail: "", seeded: false };
+  }
+  function lineInBook(label) {
+    const n = normalizeName(label);
+    if (!n) return null;
+    let best = null, bestScore = 0;
+    bookItems().forEach(function (it) {
+      const sc = Math.max(scoreName(label, it.name), scoreName(label, (it.name || "") + (it.unit ? " " + it.unit : "")));
+      if (sc > bestScore) { bestScore = sc; best = it; }
+    });
+    return bestScore >= 80 ? best : null;
+  }
+  function emptyPhotoDraft() { return { data: "", caption: "" }; }
+  function emptyMemoDraft() { return { data: "", caption: "", recording: false, error: "" }; }
+  function captureTargetJob() {
+    return state.openJobId ? getJob(state.openJobId) : null;
+  }
+  function pushCapture(job, item) {
+    if (job) {
+      job.timeline = [item].concat(job.timeline || []);
+      return "job";
+    }
+    state.unfiledCaptures = [Object.assign({ jobId: "" }, item)].concat(state.unfiledCaptures || []);
+    return "unfiled";
+  }
+  function migrateLooseCaptures(saved) {
+    const loose = ((saved && saved.captures) || []).concat((saved && saved.unfiledCaptures) || []);
+    const out = [];
+    loose.forEach(function (cap) {
+      if (!cap) return;
+      if (cap.jobId && getJob(cap.jobId)) {
+        const job = getJob(cap.jobId);
+        const id = cap.id || ("cap" + Date.now());
+        if (!(job.timeline || []).some(function (t) { return t.id === id; })) {
+          job.timeline = [Object.assign({}, cap, { id: id })].concat(job.timeline || []);
+        }
+      } else {
+        out.push(cap);
+      }
+    });
+    return out;
+  }
+  function nextSaturdayMorningIso() {
+    const now = new Date();
+    const fmt = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+    /* Walk day by day in the user's zone until Saturday, 8:00 */
+    const parts = tzParts(now);
+    let d = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 16, 0, 0)); /* noon-ish UTC probe */
+    for (let i = 0; i < 8; i++) {
+      const p = tzParts(d);
+      const wd = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short" }).format(d);
+      const isSat = wd === "Sat";
+      const todaySat = isSat && p.year === parts.year && p.month === parts.month && p.day === parts.day;
+      if (isSat && (!todaySat || Number(parts.hour) < 8)) {
+        const guess = new Date(d.getTime());
+        /* set 8:00 PT via iterating minutes is heavy; construct from Y-M-D 08:00 PT */
+        const label = p.year + "-" + pad2(p.month) + "-" + pad2(p.day) + "T08:00";
+        return fromInputValue(label);
+      }
+      d = new Date(d.getTime() + 24 * 3600 * 1000);
+    }
+    return null;
+  }
+  function resolveRequestedTime(phrase) {
+    const raw = String(phrase || "").trim();
+    if (!raw) return { label: "", iso: "" };
+    const s = raw.toLowerCase();
+    const weekdays = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+    let hour = 8, minute = 0;
+    if (/\bevening\b/.test(s)) { hour = 16; minute = 30; }
+    else if (/\bafternoon\b/.test(s)) { hour = 13; minute = 0; }
+    else if (/\bnight\b/.test(s) || /\btonight\b/.test(s)) { hour = 18; minute = 0; }
+    else if (/\bmorning\b/.test(s)) { hour = 8; minute = 0; }
+    const tm = s.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
+    if (tm) {
+      hour = Number(tm[1]); minute = Number(tm[2] || 0);
+      if (tm[3] === "pm" && hour < 12) hour += 12;
+      if (tm[3] === "am" && hour === 12) hour = 0;
+    }
+    const now = new Date();
+    const pNow = tzParts(now);
+    let addDays = 0;
+    let named = null;
+    Object.keys(weekdays).forEach(function (k) { if (s.indexOf(k) !== -1) named = weekdays[k]; });
+    if (/\btomorrow\b/.test(s)) addDays = 1;
+    else if (/\btonight\b/.test(s) || /\btoday\b/.test(s)) addDays = 0;
+    else if (named != null) {
+      const wdName = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short" }).format(now);
+      const map = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+      const today = map[wdName];
+      addDays = (named - today + 7) % 7;
+      if (addDays === 0 && (Number(pNow.hour) > hour || (Number(pNow.hour) === hour && Number(pNow.minute) >= minute))) addDays = 7;
+    } else {
+      return { label: raw, iso: "" };
+    }
+    const base = new Date(now.getTime() + addDays * 24 * 3600 * 1000);
+    const p = tzParts(base);
+    const iso = fromInputValue(p.year + "-" + pad2(p.month) + "-" + pad2(p.day) + "T" + pad2(hour) + ":" + pad2(minute));
+    return { label: raw, iso: iso || "" };
+  }
+  function scoreJobVoice(query, job) {
+    const c = getCustomer(job.customerId);
+    const loc = serviceAddressOf(job);
+    const names = [job.customer, c && c.name, job.address, job.city, loc && loc.address, loc && loc.city, loc && loc.label, loc && loc.onsiteName, job.problem].filter(Boolean);
+    let best = 0;
+    names.forEach(function (n) { best = Math.max(best, scoreName(query, n)); });
+    const q = normalizeName(query);
+    names.forEach(function (n) {
+      const nn = normalizeName(n);
+      if (q && nn && nn.indexOf(q) !== -1) best = Math.max(best, q.length >= 5 ? 92 : (q.length >= 3 ? 75 : 60));
+    });
+    return best;
+  }
+  function matchBoardJobs(query) {
+    const q = String(query || "").trim();
+    if (!q) return [];
+    return state.jobs.filter(isBoardJob).map(function (j) { return { job: j, score: scoreJobVoice(q, j) }; })
+      .filter(function (x) { return x.score >= 50; })
+      .sort(function (a, b) { return b.score - a.score; });
+  }
+  function looksLikeTimePhrase(s) {
+    const t = String(s || "").trim();
+    if (!t) return false;
+    if (t.length > 48) return false;
+    return /^(?:this |next |on )?(?:tonight|tomorrow|today|(?:mon|tues|wednes|thurs|fri|satur|sun)day)(?:\s+(?:morning|afternoon|evening|night|am|pm))?$|^(?:in the |this )?(?:morning|afternoon|evening)$|^\d{1,2}(?::\d{2})?\s*(?:am|pm)$/i.test(t)
+      || /\b(saturday|sunday|monday|tuesday|wednesday|thursday|friday|tonight|tomorrow|morning|afternoon|evening)\b/i.test(t);
+  }
+  function parseVoiceNewJob(raw) {
+    const s = String(raw || "").trim();
+    const m = s.match(/^(?:new job|create (?:a )?new job|create (?:a )?job|start (?:a )?(?:new )?job)(?:\s+for)?[:\s]+(.+)$/i);
+    if (!m) return null;
+    let rest = m[1].replace(/^for\s+/i, "").trim();
+    const parts = rest.split(/\s*,\s*/).map(function (x) { return x.trim(); }).filter(Boolean);
+    const customerPart = (parts[0] || rest).replace(/^for\s+/i, "").trim();
+    let when = "", problemParts = [];
+    for (let i = 1; i < parts.length; i++) {
+      if (looksLikeTimePhrase(parts[i]) && !problemParts.length) when = parts[i];
+      else if (looksLikeTimePhrase(parts[i]) && parts[i].length <= 32) when = parts[i];
+      else problemParts.push(parts[i]);
+    }
+    if (parts.length === 1) {
+      const end = rest.match(/^(.*?)\s+((?:this |next )?(?:tonight|tomorrow|(?:mon|tues|wednes|thurs|fri|satur|sun)day(?:\s+(?:morning|afternoon|evening|night)?)?))\s*$/i);
+      if (end) {
+        /* customer + maybe problem all in one phrase — keep as customer unless "for Name" already split */
+      }
+    }
+    const ranked = rankedCustomers(customerPart);
+    const customer = ranked.length ? ranked[0].c : null;
+    const addrs = customer ? serviceAddresses(customer) : [];
+    const resolved = resolveRequestedTime(when);
+    return {
+      kind: "newJob",
+      raw: raw,
+      draft: {
+        jobId: nextJobId(state.jobs),
+        customerId: customer ? customer.id : "",
+        customerName: customer ? customer.name : customerPart,
+        isNewCustomer: !customer,
+        newName: customer ? "" : customerPart,
+        newPhone: "",
+        newAddress: "",
+        newCity: "Long Beach",
+        addressId: addrs.length === 1 ? addrs[0].id : "",
+        problem: problemParts.join(", ") || "New call",
+        whenLabel: when,
+        whenIso: resolved.iso || "",
+        billToCustomerId: customer ? customer.id : ""
+      }
+    };
+  }
+
   function parseVoiceCommand(text, context) {
     const raw = String(text || "").trim();
+    const newJob = parseVoiceNewJob(raw);
+    if (newJob) return newJob;
     const s = raw.toLowerCase().replace(/[.,!?]/g, " ").replace(/\s+/g, " ").trim();
-    if (!s) return { error: "Say or type a command, like “clock me in” or “clock me out.”", raw: raw };
+    if (!s) return { error: "Say or type a command, like “clock me in for Lopez”, “clock me in on Elm”, or “new job for Lisa Mezo, AC not cooling, Saturday morning.”", raw: raw };
     const contextJob = context && context.job ? context.job : (state.openJobId ? getJob(state.openJobId) : null);
     const contextCust = context && context.customer ? context.customer : (state.openCustomerId ? getCustomer(state.openCustomerId) : null);
     let action = null, customerQuery = "", work = "";
@@ -1224,47 +1474,65 @@
     } else if (/clock(?: me| us)? in|set me in progress|clock in/.test(s)) {
       action = "clockIn";
     } else {
-      return { error: "I didn’t catch a clock-in or clock-out command. Try “clock me in”, “clock me in for Lewis”, “start AC repair for Lewis”, or “clock me out.”", raw: raw };
+      return { error: "I didn’t catch that. Try “clock me in”, “clock me in for Lopez”, “clock me in on Elm”, “clock me out”, or “new job for Lisa Mezo, AC not cooling, Saturday morning.”", raw: raw };
     }
 
-    let customer = null, job = null;
+    function result(extra) {
+      const job = extra.job || null;
+      const customer = extra.customer || (job ? (getCustomer(job.customerId) || { id: job.customerId, name: job.customer }) : null);
+      return Object.assign({
+        action: action,
+        raw: raw,
+        tech: state.currentTech || DEFAULT_TECH,
+        customer: customer,
+        customerId: customer ? customer.id : "",
+        customerName: customer ? customer.name : (job ? job.customer : (extra.spoken || "")),
+        job: job,
+        jobId: job ? job.id : "",
+        problem: job ? job.problem : (work || ""),
+        work: work,
+        needsNewJob: false
+      }, extra);
+    }
+
     if (customerQuery) {
-      const matches = rankedCustomers(customerQuery);
-      if (!matches.length) return { error: "I couldn’t find a customer matching “" + customerQuery + ".”", raw: raw, action: action };
-      customer = matches[0].c;
-    } else if (contextJob) {
-      customer = getCustomer(contextJob.customerId) || { id: contextJob.customerId, name: contextJob.customer };
-    } else if (contextCust) {
-      customer = contextCust;
+      const boardHits = matchBoardJobs(customerQuery);
+      if (boardHits.length === 1) return result({ job: boardHits[0].job });
+      if (boardHits.length > 1) return result({ needsPick: true, matches: boardHits.map(function (x) { return x.job; }) });
+      const custHits = rankedCustomers(customerQuery);
+      if (custHits.length) {
+        const customer = custHits[0].c;
+        return result({
+          customer: customer,
+          needsNewJob: action === "clockIn",
+          offerReason: "No active or upcoming job matches “" + customerQuery + ".” You can create one for " + customer.name + "."
+        });
+      }
+      if (action === "clockIn") {
+        return result({
+          needsNewJob: true,
+          noMatch: true,
+          spoken: customerQuery,
+          offerReason: "No active or upcoming job matches “" + customerQuery + ".” You can create a new job."
+        });
+      }
+      return { error: "I couldn’t find an active or upcoming job matching “" + customerQuery + ".”", raw: raw, action: action };
     }
 
-    if (customer) {
-      job = pickJobForVoice(customer.id, work, contextJob);
-    } else if (contextJob) {
-      job = contextJob;
-      customer = getCustomer(contextJob.customerId) || { id: contextJob.customerId, name: contextJob.customer };
+    if (contextJob) {
+      return result({ job: contextJob });
     }
-
-    const needsNewJob = !!(customer && !job && action === "clockIn");
-    if (!customer && !job) {
-      return { error: "I need a job or a customer for that. Open a job, or say “clock me in for [customer].”", raw: raw, action: action };
+    if (contextCust) {
+      const boardHits = state.jobs.filter(isBoardJob).filter(function (j) { return j.customerId === contextCust.id; });
+      if (boardHits.length === 1) return result({ job: boardHits[0], customer: contextCust });
+      if (boardHits.length > 1) return result({ needsPick: true, matches: boardHits, customer: contextCust });
+      return result({
+        customer: contextCust,
+        needsNewJob: action === "clockIn",
+        offerReason: "No active or upcoming job for " + contextCust.name + ". You can create one."
+      });
     }
-    if (action === "clockOut" && job && !anyOpenEntry(job) && !openEntryFor(job, state.currentTech)) {
-      /* still confirm; the confirm handler will explain if nothing is open */
-    }
-    return {
-      action: action,
-      raw: raw,
-      tech: state.currentTech || DEFAULT_TECH,
-      customer: customer,
-      customerId: customer ? customer.id : "",
-      customerName: customer ? customer.name : (job ? job.customer : ""),
-      job: job,
-      jobId: job ? job.id : "",
-      problem: job ? job.problem : (work || ""),
-      work: work,
-      needsNewJob: needsNewJob
-    };
+    return { error: "I need a customer or a street for that. Open a job, or say “clock me in for [customer]” or “clock me in on [street].”", raw: raw, action: action };
   }
 
   function timeOnSiteTable(job, opts) {
@@ -1355,7 +1623,7 @@
   const INITIAL_JOBS = (window.RT_DATA && window.RT_DATA.jobs) ? window.RT_DATA.jobs : [];
   const PAST_JOBS = (window.RT_DATA && window.RT_DATA.moneyJobs) ? window.RT_DATA.moneyJobs : [];
   const SHOW_SAMPLE_BADGE = !!(window.RT_DATA && window.RT_DATA.showSampleBadge);
-  const PRICE_BOOK_NOTE = (window.RT_DATA && window.RT_DATA.priceBookNote) || "Prices come from ReliaTech Price Books in Drive.";
+  const PRICE_BOOK_NOTE = (window.RT_PRICEBOOK && window.RT_PRICEBOOK.note) || "Confirmed service rates and supplier costs from ReliaTech price records. Costed items need Steve’s OK before they are used as selling prices.";
   const MONEY_NOTE = (window.RT_DATA && window.RT_DATA.moneyNote) || "";
 
   /* state and remaining UI will be appended */
@@ -1479,9 +1747,27 @@
     moveQuery: "",
     billToDraft: null,
     assetAddressId: null,
-    viewEstimateId: null
+    viewEstimateId: null,
+    priceBook: [],
+    priceBookQuery: "",
+    priceBookCategory: "all",
+    priceBookFilter: "all",
+    priceDraft: null,
+    unfiledCaptures: [],
+    photoDraft: { data: "", caption: "" },
+    memoDraft: { data: "", caption: "", recording: false, error: "" },
+    voicePick: null,
+    voiceJobDraft: null,
+    attachCaptureId: null,
+    attachQuery: "",
+    packCustomName: "",
+    packCustomAmount: "",
+    saveLineDraft: null
   };
   state.techRecords = normalizeTechRecords(state.techs, _saved && _saved.techRecords);
+  state.priceBook = mergePriceBook(seedPriceBook(), _saved && _saved.priceBook);
+  state.unfiledCaptures = migrateLooseCaptures(_saved);
+  if (state.tab === "capture") state.tab = "jobs";
   state.techs = techNamesFrom(state.techRecords);
   (function migratePlanData() {
     const forcePlan = (PLAN_SEED.plans || []).find(function (p) { return p.id === "p-doreen-offer"; });
@@ -1536,7 +1822,9 @@
         plans: state.plans,
         visits: state.visits,
         settings: state.settings,
-        showCompleted: false
+        showCompleted: false,
+        priceBook: state.priceBook,
+        unfiledCaptures: state.unfiledCaptures
       }));
     } catch (e) {}
   }
@@ -1555,8 +1843,14 @@
     state.compareIds = [];
     state.voiceConfirm = null;
     state.viewEstimateId = null;
+    state.voicePick = null;
+    state.voiceJobDraft = null;
+    state.attachCaptureId = null;
+    state.priceDraft = null;
+    state.saveLineDraft = null;
     if (state.voice) state.voice.listening = false;
     if (recognition) { try { recognition.abort(); } catch (e) {} }
+    if (typeof stopMemoRecord === "function") try { stopMemoRecord(true); } catch (e) {}
     render();
   }
   function nextCustomerId() {
@@ -1919,6 +2213,60 @@
       if (!job) return;
       job[k] = v;
       renderKeepFocus(k === "customerRef" ? "job-ref" : "job-referred");
+    },
+    setPriceBookQuery: function (v) { state.priceBookQuery = v; renderKeepFocus("pb-q"); },
+    setPriceDraft: function (k, v) {
+      if (!state.priceDraft) return;
+      let val = v;
+      if (k === "cost" || k === "gp" || k === "sell") val = v === "" ? "" : Number(v);
+      state.priceDraft[k] = val;
+      state.priceDraft = applyBookMath(state.priceDraft, k);
+      const id = k === "name" ? "pb-name" : ("pb-" + k);
+      renderKeepFocus(id);
+    },
+    setVoiceJobField: function (k, v) {
+      if (!state.voiceJobDraft) return;
+      state.voiceJobDraft[k] = v;
+      if (k === "whenLabel") {
+        const r = resolveRequestedTime(v);
+        state.voiceJobDraft.whenIso = r.iso || "";
+      }
+      const ids = { newName: "vj-newName", newPhone: "vj-newPhone", newAddress: "vj-newAddress", newCity: "vj-newCity", problem: "vj-problem", whenLabel: "vj-whenLabel" };
+      renderKeepFocus(ids[k] || "vj-problem");
+    },
+    setPhotoCaption: function (v) { if (!state.photoDraft) state.photoDraft = emptyPhotoDraft(); state.photoDraft.caption = v; renderKeepFocus("photo-cap"); },
+    setMemoCaption: function (v) { if (!state.memoDraft) state.memoDraft = emptyMemoDraft(); state.memoDraft.caption = v; renderKeepFocus("memo-cap"); },
+    setPhotoFile: function (el) {
+      const f = el.files && el.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = function () {
+        resizeDataUrl(String(reader.result || ""), function (data) {
+          if (!state.photoDraft) state.photoDraft = emptyPhotoDraft();
+          state.photoDraft.data = data;
+          render();
+        });
+      };
+      reader.readAsDataURL(f);
+    },
+    setMemoFile: function (el) {
+      const f = el.files && el.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = function () {
+        if (!state.memoDraft) state.memoDraft = emptyMemoDraft();
+        state.memoDraft.data = String(reader.result || "");
+        state.memoDraft.recording = false;
+        state.memoDraft.error = "";
+        render();
+      };
+      reader.readAsDataURL(f);
+    },
+    setAttachQuery: function (v) { state.attachQuery = v; renderKeepFocus("att-q"); },
+    setPackCustom: function (k, v) {
+      if (k === "name") state.packCustomName = v;
+      else state.packCustomAmount = v;
+      renderKeepFocus(k === "name" ? "pack-custom-name" : "pack-custom-amount");
     }
   };
 
@@ -1947,7 +2295,7 @@
       "</div>";
   }
   function tabBar() {
-    const tabs = [["jobs", "Jobs", "jobs"], ["capture", "Capture", "capture"], ["customers", "Customers", "customers"], ["money", "Money", "money"]];
+    const tabs = [["jobs", "Jobs", "jobs"], ["customers", "Customers", "customers"], ["pricebook", "Price book", "book"], ["money", "Money", "money"]];
     return '<div class="tabbar">' + tabs.map(function (t) {
       return '<button class="tab' + (state.tab === t[0] ? " on" : "") + '" ' + act("tab", t[0]) + '>' + icon(t[2], 22) + "<span>" + t[1] + "</span></button>";
     }).join("") + "</div>";
@@ -2011,6 +2359,7 @@
       actingAsBar() +
       '<div class="content"><div class="pad pad-fab">' +
       '<div class="search">' + icon("search", 16) + '<input id="search-q" type="search" placeholder="Search jobs or addresses" value="' + esc(state.query) + '" oninput="RT.setQuery(this.value)"></div>' +
+      unfiledSection() +
       '<div class="jobs-toolbar"><div class="section" style="margin:0">' + heading + "</div>" + links + "</div>" +
       chips +
       dueHtml +
@@ -2199,7 +2548,6 @@
 
   function jobDetail(job) {
     const st = STATUS[job.status], col = sc(job.status);
-    const iconFor = { call: "phone", note: "note", photo: "photo", reading: "reading", system: "chat" };
     return topBar({ back: "closeJob", title: "Job " + job.id, badge: SHOW_SAMPLE_BADGE }) +
       '<div class="content screen"><div class="pad">' +
       jobPartiesHeader(job) +
@@ -2209,15 +2557,14 @@
       jobEquipmentSection(job) +
       timeSection(job) +
       '<div class="panel" style="margin-bottom:16px">' + stepper(job.status) + "</div>" +
-      '<div class="section">Quick capture</div><div class="quick">' +
-      '<button class="quick-btn" ' + act("sheet", "note") + ">" + icon("note") + "<span>Note</span></button>" +
+      '<div class="section">On this job</div><div class="quick">' +
       '<button class="quick-btn" ' + act("sheet", "photo") + ">" + icon("photo") + "<span>Photo</span></button>" +
+      '<button class="quick-btn" ' + act("sheet", "voiceMemo") + ">" + icon("mic") + "<span>Voice memo</span></button>" +
+      '<button class="quick-btn" ' + act("sheet", "note") + ">" + icon("note") + "<span>Note</span></button>" +
       '<button class="quick-btn" ' + act("sheet", "reading") + ">" + icon("reading") + "<span>Reading</span></button>" +
       "</div>" +
       readingsSection(job) +
-      '<div class="section">Timeline</div><div class="timeline">' + job.timeline.map(function (item) {
-        return '<div class="t-item"><div class="t-ico">' + icon(iconFor[item.kind] || "note", 16) + "</div><div style=\"min-width:0\"><div class=\"meta\">" + esc(item.time) + "</div><div style=\"font-weight:700;font-size:14px;margin:2px 0\">" + esc(item.title) + "</div><div class=\"muted\">" + esc(item.body) + "</div></div></div>";
-      }).join("") + "</div>" +
+      '<div class="section">Timeline</div><div class="timeline">' + (job.timeline || []).map(timelineItemHtml).join("") + "</div>" +
       estimateHistoryHtml(job) +
       '<div class="actions">' +
       '<button class="btn" ' + act("openPriceBook") + ">Build estimate</button>" +
@@ -2618,10 +2965,15 @@
   }
 
   function photoSheet() {
+    const d = state.photoDraft || emptyPhotoDraft();
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Add a photo</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      '<div class="photo-ph">' + icon("photo", 28) + "<span>Camera stays on the phone in the real app</span></div>" +
-      '<button class="btn" ' + act("savePhoto") + ">Add sample photo</button>");
+      (d.data
+        ? '<img class="cap-thumb" alt="Preview" src="' + d.data + '">'
+        : '<div class="photo-ph">' + icon("photo", 28) + "<span>Take a photo or choose one from the library</span></div>") +
+      '<label class="btn ghost" style="display:block;text-align:center;margin:8px 0 12px">Take or choose a photo<input type="file" accept="image/*" capture="environment" aria-label="Job photo" style="position:absolute;opacity:0;width:0;height:0" onchange="RT.setPhotoFile(this)"></label>' +
+      '<label class="field"><div class="field-lab">Caption (optional)</div><input id="photo-cap" value="' + esc(d.caption || "") + '" oninput="RT.setPhotoCaption(this.value)"></label>' +
+      (d.data ? '<button class="btn" ' + act("savePhoto") + ">Save photo to this job</button>" : ""));
   }
   function askSheet(job) {
     const q = "What should I check first?";
@@ -2753,36 +3105,48 @@
   }
 
   function priceBookSheet(job) {
-    const q = state.packQuery.trim().toLowerCase();
-    const tab = state.packTab;
-    let items = PRICE_BOOK.filter(function (p) {
-      const kindOk = tab === "repair" ? p.kind === "repair" : (p.kind === "package" || p.kind === "addon");
-      const tonsOk = p.kind !== "package" || p.tons === state.packTons;
-      const hit = !q || [p.name, p.detail || ""].join(" ").toLowerCase().indexOf(q) !== -1;
-      return kindOk && tonsOk && hit;
+    const q = (state.packQuery || "").trim().toLowerCase();
+    const tab = state.packTab || "all";
+    const cats = bookCategories();
+    let items = bookItems().filter(function (p) {
+      const hit = !q || [p.name, p.detail || "", p.sku || "", p.category || ""].join(" ").toLowerCase().indexOf(q) !== -1;
+      const catOk = tab === "all" || p.category === tab;
+      return hit && catOk;
     });
     const total = draftTotal(state.packDraft);
     function lineRow(l, i) {
-      return '<div class="row" style="margin-bottom:8px"><div style="min-width:0"><div style="font-weight:650;font-size:13px">' + esc(l.label) + '</div><div class="meta">From price book' + (l.unit === "lb" ? " · per lb" : "") + "</div></div>" +
+      return '<div class="row" style="margin-bottom:8px"><div style="min-width:0"><div style="font-weight:650;font-size:13px">' + esc(l.label) + '</div><div class="meta">' + (l.fromBook ? "From price book" : "Custom line") + (l.unit === "lb" ? " · per lb" : "") + "</div></div>" +
         '<div class="qty"><button ' + act("qty", i + "|-") + ">−</button><span style=\"min-width:16px;text-align:center;font-weight:700\">" + l.qty + "</span><button " + act("qty", i + "|+") + ">+</button></div>" +
         "<div style=\"font-weight:700;min-width:64px;text-align:right\">" + money(l.amount * l.qty) + "</div></div>";
     }
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Price book</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      '<div class="muted" style="margin-bottom:10px">' + PRICE_BOOK_NOTE + '</div>' +
+      '<div class="muted" style="margin-bottom:10px">' + PRICE_BOOK_NOTE + "</div>" +
       (state.packDraft.length ? '<div class="cart"><div class="k-up">This estimate</div>' + state.packDraft.map(lineRow).join("") + '<div class="row" style="font-weight:750;margin-top:6px"><div>Total</div><div>' + money(total) + "</div></div></div>" : "") +
       '<div class="search">' + icon("search", 16) + '<input id="pack-q" type="search" placeholder="Search the price book" value="' + esc(state.packQuery) + '" oninput="RT.setPackQ(this.value)"></div>' +
-      '<div class="chips"><button class="chip' + (tab === "repair" ? " on" : "") + '" ' + act("packTab", "repair") + ">Repairs</button><button class=\"chip" + (tab === "replace" ? " on" : "") + '" ' + act("packTab", "replace") + ">Replacements</button></div>" +
-      (tab === "replace" ? '<div class="chips">' + [2, 2.5, 3, 3.5, 4, 5].map(function (t) { return '<button class="chip teal' + (state.packTons === t ? " on" : "") + '" ' + act("packTons", String(t)) + ">" + t + "-ton</button>"; }).join("") + "</div>" : "") +
+      '<div class="chips"><button class="chip' + (tab === "all" ? " on" : "") + '" ' + act("packTab", "all") + ">All</button>" +
+        cats.map(function (c) { return '<button class="chip' + (tab === c ? " on" : "") + '" ' + act("packTab", c) + ">" + esc(c) + "</button>"; }).join("") +
+      "</div>" +
       items.map(function (p) {
-        const tier = p.tier ? TIER[p.tier] : null;
-        return '<div class="book-item"><button ' + act("addItem", p.id) + '><div class="row"><div style="font-weight:750">' + esc(p.name) + "</div><div style=\"font-weight:750\">" + money(p.price) + (p.unit ? "<span class=\"meta\">/" + p.unit + "</span>" : "") + "</div></div>" +
+        const sell = sellOf(p);
+        const needs = p.status === "needs_ok";
+        return '<div class="book-item">' + (sell != null
+          ? '<button ' + act("addItem", p.id) + ">"
+          : '<button type="button" disabled>') +
+          '<div class="row"><div style="font-weight:750">' + esc(p.name) + '</div><div style="font-weight:750">' + (sell != null ? money(sell) : "—") + (p.unit ? "<span class=\"meta\">/" + p.unit + "</span>" : "") + "</div></div>" +
           (p.detail ? '<div class="muted" style="margin-top:2px">' + esc(p.detail) + "</div>" : "") +
-          ((tier || p.tag) ? '<div style="margin-top:6px">' + pill(tier ? tier.label : p.tag, "#fff", tier ? tier.color : "#148A8A") + "</div>" : "") +
+          '<div class="muted" style="margin-top:2px">' + esc(p.category || "") + (p.cost != null && p.cost !== "" ? " · Cost " + money(Number(p.cost)) : "") + (p.gp != null && p.gp !== "" ? " · GP " + p.gp + "%" : "") + "</div>" +
+          (needs ? '<div style="margin-top:6px">' + pill("Needs Steve’s OK", "#8A4B08", "#F6E2B8") + "</div>" : "") +
+          (sell == null ? '<div class="muted" style="margin-top:4px">Set a sell price in the Price book tab first</div>' : "") +
           "</button></div>";
       }).join("") +
+      '<div class="section">Custom line</div>' +
+      '<label class="field"><div class="field-lab">Description</div><input id="pack-custom-name" value="' + esc(state.packCustomName || "") + '" oninput="RT.setPackCustom(\'name\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Amount</div><input id="pack-custom-amount" inputmode="decimal" value="' + esc(state.packCustomAmount || "") + '" oninput="RT.setPackCustom(\'amount\', this.value)"></label>' +
+      '<button class="btn ghost" style="margin-bottom:10px" ' + act("addCustomLine") + ">Add custom line</button>" +
       (state.packDraft.length ? '<button class="btn accent" style="margin-top:8px" ' + act("previewEst") + ">Preview estimate</button>" : ""));
   }
+
 
   function estimatePreviewSheet(job) {
     const lines = state.packDraft;
@@ -2792,9 +3156,15 @@
       '<div class="sheet-head"><div class="sheet-title">Estimate ' + esc(estId) + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
       '<div class="doc"><div class="k-up">ReliaTech Services</div>' +
       docBlocksHtml(job, { showReferred: true }) +
-      lines.map(function (l) { return '<div class="row" style="margin-top:6px"><div>' + esc(draftLabel(l)) + '<div class="meta">From price book</div></div><div>' + money(l.amount * l.qty) + "</div></div>"; }).join("") +
+      lines.map(function (l, i) {
+        const known = l.fromBook || lineInBook(l.label);
+        return '<div class="row" style="margin-top:6px;align-items:flex-start"><div>' + esc(draftLabel(l)) +
+          '<div class="meta">' + (known ? "From price book" : "Not in the price book") + "</div>" +
+          (known ? "" : '<button class="link-btn" ' + act("saveLineToBook", "draft|" + i) + ">Save to price book</button>") +
+          "</div><div>" + money(l.amount * l.qty) + "</div></div>";
+      }).join("") +
       '<div class="row" style="margin-top:12px;font-weight:750"><div>Total</div><div>' + money(total) + "</div></div></div>" +
-      '<div class="note">' + PRICE_BOOK_NOTE + ' This preview stays on the phone and is not sent.</div>' +
+      '<div class="note">' + PRICE_BOOK_NOTE + " This preview stays on the phone and is not sent.</div>" +
       '<button class="btn" style="margin-top:12px" ' + act("saveEstimate") + ">Save estimate to job</button>");
   }
 
@@ -2867,11 +3237,11 @@
       '<div class="sheet-head"><div class="sheet-title">Voice command</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
       (v.listening ? '<div class="voice-orb" aria-hidden="true"></div><div class="h2" style="text-align:center;margin-bottom:8px">Listening…</div>' : "") +
       '<div id="voice-status" class="muted" style="text-align:center;margin-bottom:10px">' +
-        esc(v.listening ? "Try “clock me in”, “clock me in for Lewis”, “start AC repair for Lewis”, or “clock me out.”" : (v.error || "Voice is ready when you are.")) +
+        esc(v.listening ? "Try “clock me in for Lopez”, “clock me in on Elm”, “clock me out”, or “new job for Lisa Mezo, AC not cooling, Saturday morning.”" : (v.error || "Voice is ready when you are. You can also type the command.")) +
       "</div>" +
       '<div id="voice-text" class="voice-text">' + esc(v.text || "") + "</div>" +
       (v.fallback || !v.listening ? '<label class="field"><div class="field-lab">' + (v.fallback ? "Type the command" : "Or type it") + "</div>" +
-        '<input id="voice-input" type="text" placeholder="clock me in for Lewis" value="' + esc(v.text || "") + '" oninput="RT.setVoiceText(this.value)"></label>' +
+        '<input id="voice-input" type="text" placeholder="clock me in for Lopez, or new job for Lisa Mezo, AC not cooling, Saturday morning" value="' + esc(v.text || "") + '" oninput="RT.setVoiceText(this.value)"></label>' +
         '<button class="btn" ' + act("submitVoice") + ">Continue</button>" +
         (speechAvailable() && !v.listening ? '<button class="btn ghost" style="margin-top:8px" ' + act("openVoice") + ">Listen again</button>" : "") : "")
     );
@@ -2897,8 +3267,8 @@
         '<div class="confirm-row"><div class="field-lab">Action</div><div class="h2">' + esc(actionLab) + "</div></div>" +
       "</div>" +
       (c.needsNewJob
-        ? '<button class="btn accent" ' + act("voiceNewJob") + ">New job for " + esc(c.customerName || "customer") + "</button>" +
-          '<div class="note">This opens the same New job flow as the customer page. After the job is created you’ll be asked to confirm clock-in.</div>'
+        ? '<button class="btn accent" ' + act("voiceOfferNewJob") + ">Create a job" + (c.customerName ? " for " + esc(c.customerName) : "") + "</button>" +
+          '<div class="note">' + esc(c.offerReason || "No matching job on the board. Create one, then confirm clock-in.") + "</div>"
         : '<button class="btn teal" ' + act("confirmVoice") + ">Confirm " + esc(actionLab.toLowerCase()) + "</button>") +
       '<button class="btn ghost" style="margin-top:8px" ' + act("closeSheet") + ">Cancel</button>"
     );
@@ -2967,6 +3337,189 @@
       }).join("") + "</div>");
   }
 
+
+  function unfiledSection() {
+    const caps = state.unfiledCaptures || [];
+    if (!caps.length) return "";
+    return '<div class="section-row"><div class="section" style="margin:0">Unfiled</div><div class="muted">' + caps.length + (caps.length === 1 ? " item" : " items") + " with no job</div></div>" +
+      '<div class="stack" style="margin-bottom:16px">' + caps.map(function (cap) {
+        return '<div class="list-card"><div class="job-body"><div class="job-name" style="margin-top:0">' + esc(cap.title || "Capture") + '</div><div class="muted">' + esc(cap.body || cap.time || "") + "</div>" +
+          (cap.photo ? '<img class="cap-thumb" alt="" src="' + cap.photo + '">' : "") +
+          (cap.audio ? '<audio controls preload="metadata" src="' + cap.audio + '"></audio>' : "") +
+          "</div><button class=\"btn ghost\" style=\"margin-top:8px\" " + act("openAttachCapture", cap.id) + ">Attach to a job</button></div>";
+      }).join("") + "</div>";
+  }
+  function timelineItemHtml(item) {
+    const iconFor = { call: "phone", note: "note", photo: "photo", reading: "reading", system: "chat", voice: "mic" };
+    return '<div class="t-item"><div class="t-ico">' + icon(iconFor[item.kind] || "note", 16) + '</div><div style="min-width:0"><div class="meta">' + esc(item.time || "") + '</div><div style="font-weight:700;font-size:14px;margin:2px 0">' + esc(item.title || "") + "</div>" +
+      (item.body ? '<div class="muted">' + esc(item.body) + "</div>" : "") +
+      (item.photo ? '<img class="cap-thumb" alt="" src="' + item.photo + '">' : "") +
+      (item.audio ? '<audio class="memo-audio" controls preload="metadata" src="' + item.audio + '"></audio>' : "") +
+      "</div></div>";
+  }
+  function priceBookScreen() {
+    const q = (state.priceBookQuery || "").trim().toLowerCase();
+    const cat = state.priceBookCategory || "all";
+    const filter = state.priceBookFilter || "all";
+    const cats = bookCategories();
+    const items = bookItems().filter(function (it) {
+      if (cat !== "all" && it.category !== cat) return false;
+      if (filter === "needs_ok" && it.status !== "needs_ok") return false;
+      if (filter === "confirmed" && it.status !== "confirmed") return false;
+      if (!q) return true;
+      return [it.name, it.sku, it.category, it.detail, it.source, it.sourceFile].join(" ").toLowerCase().indexOf(q) !== -1;
+    });
+    const needs = bookItems().filter(function (it) { return it.status === "needs_ok"; }).length;
+    return topBar({ kicker: "ReliaTech Services", title: "Price book", badge: SHOW_SAMPLE_BADGE, settings: true }) +
+      '<div class="content"><div class="pad">' +
+      '<div class="muted" style="margin-bottom:12px">Confirmed service rates are ready to use. Costed parts and equipment are marked Needs Steve’s OK until you set a GP or sell price and tap Approve. Sell price is cost ÷ (1 − GP).</div>' +
+      '<div class="search">' + icon("search", 16) + '<input id="pb-q" type="search" placeholder="Search the price book" value="' + esc(state.priceBookQuery || "") + '" oninput="RT.setPriceBookQuery(this.value)"></div>' +
+      '<div class="chips">' +
+        '<button class="chip' + (filter === "all" && cat === "all" ? " on" : "") + '" ' + act("pbFilter", "all") + ">All</button>" +
+        '<button class="chip' + (filter === "needs_ok" ? " on" : "") + '" ' + act("pbFilter", "needs_ok") + ">Needs Steve’s OK" + (needs ? " · " + needs : "") + "</button>" +
+        cats.map(function (c) { return '<button class="chip' + (cat === c ? " on" : "") + '" ' + act("pbCategory", c) + ">" + esc(c) + "</button>"; }).join("") +
+      "</div>" +
+      '<button class="btn" style="margin:4px 0 14px" ' + act("openNewBookItem") + ">Add item</button>" +
+      '<div class="stack">' + (items.length ? items.map(priceBookCard).join("") : '<div class="muted">No items match.</div>') + "</div></div></div>" +
+      tabBar();
+  }
+  function priceBookCard(it) {
+    const sell = sellOf(it);
+    const needs = it.status === "needs_ok";
+    return '<button class="list-card book-row" ' + act("openBookItem", it.id) + '><div class="job-body" style="width:100%">' +
+      '<div class="row"><div class="job-name" style="margin-top:0">' + esc(it.name) + "</div><div style=\"font-weight:750\">" + (sell != null ? money(sell) : "—") + (it.unit ? '<span class="meta">/' + esc(it.unit) + "</span>" : "") + "</div></div>" +
+      '<div class="muted">' + esc(it.category || "") + (it.sku ? " · " + esc(it.sku) : "") +
+        (it.cost != null && it.cost !== "" ? " · Cost " + money(Number(it.cost)) : "") +
+        (it.gp != null && it.gp !== "" ? " · GP " + it.gp + "%" : "") +
+        (sell != null && !it.sellLocked && it.cost != null && it.cost !== "" ? " · Sell " + money(sell) : "") +
+      "</div>" +
+      (needs ? '<div style="margin-top:6px">' + pill("Needs Steve’s OK", "#8A4B08", "#F6E2B8") + "</div>" : "") +
+      "</div></button>";
+  }
+  function priceBookEditSheet() {
+    const d = state.priceDraft; if (!d) return "";
+    const isNew = !!d._isNew;
+    const sell = sellOf(d);
+    const locked = !!d.sellLocked;
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">' + (isNew ? "Add price book item" : "Edit item") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      (d.status === "needs_ok" ? '<div class="warn-banner">Needs Steve’s OK. Review the cost and set a GP or sell price, then tap Approve.</div>' : "") +
+      '<label class="field"><div class="field-lab">Name</div><input id="pb-name" value="' + esc(d.name || "") + '" oninput="RT.setPriceDraft(\'name\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Category</div><input id="pb-category" value="' + esc(d.category || "") + '" oninput="RT.setPriceDraft(\'category\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">SKU</div><input id="pb-sku" value="' + esc(d.sku || "") + '" oninput="RT.setPriceDraft(\'sku\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Unit</div><input id="pb-unit" value="' + esc(d.unit || "ea") + '" oninput="RT.setPriceDraft(\'unit\', this.value)"></label>' +
+      (locked ? "" : '<label class="field"><div class="field-lab">Cost</div><input id="pb-cost" inputmode="decimal" value="' + esc(d.cost === 0 || d.cost ? String(d.cost) : "") + '" oninput="RT.setPriceDraft(\'cost\', this.value)"></label>') +
+      (locked ? "" : '<label class="field"><div class="field-lab">GP %</div><input id="pb-gp" inputmode="decimal" placeholder="e.g. 35" value="' + esc(d.gp === 0 || d.gp ? String(d.gp) : "") + '" oninput="RT.setPriceDraft(\'gp\', this.value)"></label>') +
+      '<label class="field"><div class="field-lab">Sell price' + (locked ? " (confirmed rate)" : " · cost ÷ (1 − GP)") + "</div><input id=\"pb-sell\" inputmode=\"decimal\" " + (locked ? "readonly " : "") + 'value="' + esc(sell != null ? String(sell) : (d.sell === 0 || d.sell ? String(d.sell) : "")) + '" oninput="RT.setPriceDraft(\'sell\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Detail</div><textarea id="pb-detail" rows="3" oninput="RT.setPriceDraft(\'detail\', this.value)">' + esc(d.detail || "") + "</textarea></label>" +
+      (d.source ? '<div class="note">Source: ' + esc(d.source) + (d.sourceFile ? " (" + esc(d.sourceFile) + ")" : "") + "</div>" : "") +
+      '<button class="btn teal" ' + act("saveBookItem") + ">" + (isNew ? "Add item" : "Save") + "</button>" +
+      (d.status === "needs_ok" && !isNew ? '<button class="btn accent" style="margin-top:8px" ' + act("approveBookItem") + ">Approve</button>" : "")
+    );
+  }
+  function voiceMemoSheet() {
+    const d = state.memoDraft || emptyMemoDraft();
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Voice memo</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      (d.recording ? '<div class="memo-live">Recording… tap stop when you’re done.</div>' : "") +
+      (d.error ? '<div class="warn-banner">' + esc(d.error) + "</div>" : "") +
+      (d.data && !d.recording ? '<audio class="memo-audio" controls preload="metadata" src="' + d.data + '"></audio>' : "") +
+      (d.recording
+        ? '<button class="btn accent" ' + act("stopMemo") + ">Stop recording</button>"
+        : '<button class="btn teal" ' + act("startMemo") + ">" + (d.data ? "Re-record" : "Start recording") + "</button>") +
+      '<label class="field" style="margin-top:12px"><div class="field-lab">Caption (optional)</div><input id="memo-cap" value="' + esc(d.caption || "") + '" oninput="RT.setMemoCaption(this.value)"></label>' +
+      '<div class="muted" style="margin-bottom:10px">Or choose an audio file if the mic isn’t available.</div>' +
+      '<input type="file" accept="audio/*" aria-label="Voice memo file" onchange="RT.setMemoFile(this)">' +
+      (d.data && !d.recording ? '<button class="btn" style="margin-top:12px" ' + act("saveMemo") + ">Save voice memo to this job</button>" : "")
+    );
+  }
+  function voicePickSheet() {
+    const p = state.voicePick; if (!p) return "";
+    const actionLab = p.action === "clockOut" ? "Clock out" : "Clock in";
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Which job?</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      (p.raw ? '<div class="muted" style="margin-bottom:10px">“' + esc(p.raw) + '” matches more than one active or upcoming job. Pick one to ' + esc(actionLab.toLowerCase()) + ".</div>" : "") +
+      '<div class="stack">' + (p.matches || []).map(function (j) {
+        const loc = serviceAddressOf(j);
+        const line = formatAddrLine(loc && loc.address, loc && loc.city) || formatAddrLine(j.address, j.city) || "";
+        return '<button class="list-card" ' + act("pickVoiceJob", j.id) + '><div class="job-body"><div class="job-name" style="margin-top:0">' + esc(j.customer) + " · #" + esc(j.id) + "</div>" +
+          '<div class="muted">' + esc(line) + (j.problem ? " · " + esc(j.problem) : "") + "</div></div></button>";
+      }).join("") + "</div>" +
+      '<button class="btn ghost" style="margin-top:8px" ' + act("closeSheet") + ">Cancel</button>"
+    );
+  }
+  function voiceNewJobSheet() {
+    const d = state.voiceJobDraft; if (!d) return "";
+    const cust = d.customerId ? getCustomer(d.customerId) : null;
+    const addrs = cust ? serviceAddresses(cust) : [];
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">New job draft</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      (d.raw ? '<div class="muted" style="margin-bottom:10px">“' + esc(d.raw) + '”</div>' : "") +
+      '<div class="confirm-card">' +
+        '<div class="confirm-row"><div class="field-lab">Job number</div><div class="h2">#' + esc(d.jobId) + "</div></div>" +
+        (d.offerReason ? '<div class="muted" style="margin-bottom:8px">' + esc(d.offerReason) + "</div>" : "") +
+      "</div>" +
+      (d.isNewCustomer
+        ? '<div class="note">No matching customer. Add them, then confirm the job.</div>' +
+          '<label class="field"><div class="field-lab">Customer name</div><input id="vj-newName" value="' + esc(d.newName || "") + '" oninput="RT.setVoiceJobField(\'newName\', this.value)"></label>' +
+          '<label class="field"><div class="field-lab">Phone</div><input id="vj-newPhone" type="tel" value="' + esc(d.newPhone || "") + '" oninput="RT.setVoiceJobField(\'newPhone\', this.value)"></label>' +
+          '<label class="field"><div class="field-lab">Service address</div><input id="vj-newAddress" value="' + esc(d.newAddress || "") + '" oninput="RT.setVoiceJobField(\'newAddress\', this.value)"></label>' +
+          '<label class="field"><div class="field-lab">City</div><input id="vj-newCity" value="' + esc(d.newCity || "") + '" oninput="RT.setVoiceJobField(\'newCity\', this.value)"></label>'
+        : '<div class="confirm-row"><div class="field-lab">Customer</div><div class="h2">' + esc(d.customerName || "") + "</div></div>" +
+          (addrs.length > 1
+            ? '<div class="field-lab">Service address</div><div class="stack" style="margin-bottom:12px">' + addrs.map(function (a) {
+                return '<button class="dash' + (d.addressId === a.id ? " sel" : "") + '" ' + act("voiceJobAddress", a.id) + ">" + esc(addressLine(a) || "Address") + "</button>";
+              }).join("") + "</div>"
+            : (addrs.length === 1 ? '<div class="muted" style="margin-bottom:12px">' + esc(addressLine(addrs[0])) + "</div>" : '<div class="muted" style="margin-bottom:12px">No service address on file yet.</div>'))
+      ) +
+      '<label class="field"><div class="field-lab">Problem</div><input id="vj-problem" value="' + esc(d.problem || "") + '" oninput="RT.setVoiceJobField(\'problem\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Requested time</div><input id="vj-whenLabel" value="' + esc(d.whenLabel || "") + '" oninput="RT.setVoiceJobField(\'whenLabel\', this.value)"></label>' +
+      (d.whenIso ? '<div class="muted" style="margin-bottom:12px">Would schedule for ' + esc(formatWhen(d.whenIso)) + ".</div>" : "") +
+      '<button class="btn teal" ' + act("confirmVoiceNewJob") + ">Confirm and create job #" + esc(d.jobId) + "</button>" +
+      '<button class="btn ghost" style="margin-top:8px" ' + act("closeSheet") + ">Cancel</button>"
+    );
+  }
+  function attachCaptureSheet() {
+    const cap = (state.unfiledCaptures || []).find(function (c) { return c.id === state.attachCaptureId; });
+    const q = (state.attachQuery || "").trim().toLowerCase();
+    const jobs = state.jobs.filter(function (j) {
+      if (j.status === "paid") return false;
+      return !q || [j.id, j.customer, j.address, j.city, j.problem].join(" ").toLowerCase().indexOf(q) !== -1;
+    });
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Attach to a job</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      (cap ? '<div class="muted" style="margin-bottom:10px">' + esc(cap.title || "Capture") + "</div>" : "") +
+      '<div class="search">' + icon("search", 16) + '<input id="att-q" type="search" placeholder="Search jobs" value="' + esc(state.attachQuery || "") + '" oninput="RT.setAttachQuery(this.value)"></div>' +
+      '<div class="stack">' + jobs.map(function (j) {
+        return '<button class="list-card" ' + act("attachCaptureToJob", j.id) + '><div class="job-body"><div class="job-name" style="margin-top:0">' + esc(j.customer) + " · #" + j.id + '</div><div class="muted">' + esc(j.problem || "") + "</div></div></button>";
+      }).join("") + "</div>"
+    );
+  }
+  function formatWhen(iso) {
+    if (!iso) return "";
+    try {
+      return new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+    } catch (e) { return iso; }
+  }
+  function resizeDataUrl(data, cb) {
+    const img = new Image();
+    img.onload = function () {
+      const max = 1280;
+      let w = img.width, h = img.height;
+      if (w > max || h > max) {
+        const scale = Math.min(max / w, max / h);
+        w = Math.round(w * scale); h = Math.round(h * scale);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      cb(canvas.toDataURL("image/jpeg", 0.72));
+    };
+    img.onerror = function () { cb(data); };
+    img.src = data;
+  }
+
   function sheetHtml() {
     const s = state.sheet;
     if (!s) return "";
@@ -2982,6 +3535,11 @@
     if (s === "actingAs") return actingAsSheet();
     if (s === "voice") return voiceSheet();
     if (s === "voiceConfirm") return voiceConfirmSheet();
+    if (s === "voicePick") return voicePickSheet();
+    if (s === "voiceNewJob") return voiceNewJobSheet();
+    if (s === "voiceMemo") return voiceMemoSheet();
+    if (s === "priceBookEdit") return priceBookEditSheet();
+    if (s === "attachCapture") return attachCaptureSheet();
     if (s === "photo") return photoSheet();
     if (s === "reading") return job ? readingSheet(job) : "";
     if (s === "ask") return job ? askSheet(job) : "";
@@ -3039,7 +3597,7 @@
     }
     if (state.tab === "customers") return customersList();
     if (state.tab === "money") return moneyScreen();
-    if (state.tab === "capture") return captureScreen();
+    if (state.tab === "pricebook") return priceBookScreen();
     return jobsList();
   }
 
@@ -3172,6 +3730,8 @@
       state.sheet = arg;
       if (arg === "reading") { const j = getJob(state.openJobId); state.readingDraft = { mode: defaultMode(j), label: "Arrival", values: {}, fromScreenshot: false }; }
       if (arg === "note") state.noteDraft = emptyNoteDraft("visit");
+      if (arg === "photo") state.photoDraft = emptyPhotoDraft();
+      if (arg === "voiceMemo") state.memoDraft = emptyMemoDraft();
       render(); return;
     }
     if (name === "openNewCall") {
@@ -3390,9 +3950,14 @@
       return;
     }
     if (name === "savePhoto") {
-      const job = getJob(state.openJobId); if (!job) return;
-      job.timeline = [{ id: "p" + Date.now(), kind: "photo", time: "Just now", title: "Photo", body: "Sample photo added to this job." }].concat(job.timeline);
-      state.sheet = "saved"; render(); return;
+      const d = state.photoDraft || emptyPhotoDraft();
+      if (!d.data) { showToast("Take or choose a photo first"); return; }
+      const item = { id: "p" + Date.now(), kind: "photo", time: "Just now", title: "Photo", body: d.caption || "Photo added to this job.", photo: d.data };
+      const where = pushCapture(getJob(state.openJobId), item);
+      state.photoDraft = emptyPhotoDraft();
+      state.sheet = "saved";
+      showToast(where === "job" ? "Photo saved on this job" : "Photo saved in Unfiled");
+      return;
     }
     if (name === "readMode") { state.readingDraft.mode = arg; state.readingDraft.values = {}; state.readingDraft.fromScreenshot = false; if ((LABEL_CHIPS[arg] || []).indexOf(state.readingDraft.label) === -1) state.readingDraft.label = "Arrival"; render(); return; }
     if (name === "readLabelChip") { state.readingDraft.label = arg; render(); return; }
@@ -3424,14 +3989,25 @@
       if (i === -1) ids.push(arg); else ids.splice(i, 1);
       state.compareIds = ids; render(); return;
     }
-    if (name === "openPriceBook") { state.packTab = "repair"; state.packQuery = ""; state.packTons = 3; state.packDraft = []; state.sheet = "priceBook"; render(); return; }
+    if (name === "openPriceBook") { state.packTab = "all"; state.packQuery = ""; state.packTons = 3; state.packDraft = []; state.packCustomName = ""; state.packCustomAmount = ""; state.sheet = "priceBook"; render(); return; }
     if (name === "packTab") { state.packTab = arg; render(); return; }
     if (name === "packTons") { state.packTons = Number(arg); render(); return; }
     if (name === "addItem") {
-      const p = PRICE_BOOK.find(function (x) { return x.id === arg; }); if (!p) return;
+      const p = getBookItem(arg); if (!p) return;
+      const sell = sellOf(p);
+      if (sell == null) { showToast("Set a sell price in the Price book first"); return; }
       const existing = state.packDraft.find(function (l) { return l.id === p.id; });
       if (existing) existing.qty += 1;
-      else state.packDraft = state.packDraft.concat([{ id: p.id, label: p.name, amount: p.price, qty: 1, unit: p.unit }]);
+      else state.packDraft = state.packDraft.concat([{ id: p.id, label: p.name, amount: sell, qty: 1, unit: p.unit, fromBook: true }]);
+      render(); return;
+    }
+    if (name === "addCustomLine") {
+      const label = (state.packCustomName || "").trim();
+      const amount = Number(state.packCustomAmount);
+      if (!label || !isFinite(amount) || amount < 0) { showToast("Enter a description and amount"); return; }
+      state.packDraft = state.packDraft.concat([{ id: "custom-" + Date.now(), label: label, amount: amount, qty: 1, unit: "", fromBook: false }]);
+      state.packCustomName = "";
+      state.packCustomAmount = "";
       render(); return;
     }
     if (name === "qty") {
@@ -3744,6 +4320,223 @@
       render(); return;
     }
     if (name === "captureNeedJob") { state._pendingCapture = arg; state.sheet = "pickJob"; render(); return; }
+    if (name === "pbFilter") { state.priceBookFilter = arg; state.priceBookCategory = "all"; render(); return; }
+    if (name === "pbCategory") { state.priceBookCategory = arg; state.priceBookFilter = "all"; render(); return; }
+    if (name === "openNewBookItem") { state.priceDraft = Object.assign({}, emptyBookItem(), { _isNew: true }); state.sheet = "priceBookEdit"; render(); return; }
+    if (name === "openBookItem") {
+      const it = getBookItem(arg); if (!it) return;
+      state.priceDraft = JSON.parse(JSON.stringify(it));
+      state.sheet = "priceBookEdit";
+      render(); return;
+    }
+    if (name === "saveBookItem") {
+      const d = state.priceDraft; if (!d || !(d.name || "").trim()) { showToast("Name is required"); return; }
+      const item = applyBookMath(Object.assign({}, d, { name: d.name.trim() }));
+      delete item._isNew;
+      if (!item.status) item.status = "needs_ok";
+      if (d._isNew && item.status !== "confirmed") item.status = "needs_ok";
+      const idx = bookItems().findIndex(function (x) { return x.id === item.id; });
+      if (idx >= 0) state.priceBook[idx] = item;
+      else state.priceBook = state.priceBook.concat([item]);
+      state.priceDraft = null;
+      state.sheet = null;
+      showToast(d._isNew ? "Added · Needs Steve’s OK" : "Price book item saved");
+      return;
+    }
+    if (name === "approveBookItem") {
+      const d = state.priceDraft; if (!d) return;
+      if (sellOf(d) == null) { showToast("Set a sell price or GP first"); return; }
+      d.status = "confirmed";
+      const item = applyBookMath(Object.assign({}, d));
+      delete item._isNew;
+      const idx = bookItems().findIndex(function (x) { return x.id === item.id; });
+      if (idx >= 0) state.priceBook[idx] = item;
+      else state.priceBook = state.priceBook.concat([item]);
+      state.priceDraft = null;
+      state.sheet = null;
+      showToast("Approved");
+      return;
+    }
+    if (name === "saveLineToBook") {
+      const parts = String(arg || "").split("|");
+      let label = "", amount = 0;
+      if (parts[0] === "draft") {
+        const line = state.packDraft[Number(parts[1])];
+        if (!line) return;
+        label = line.label; amount = line.amount;
+      } else if (parts[0] === "saved") {
+        const job = getJob(state.openJobId); if (!job) return;
+        const rec = (job.estimates || []).find(function (e) { return e.id === parts[1]; }) || { lineItems: job.lineItems || [] };
+        const line = (rec.lineItems || [])[Number(parts[2])];
+        if (!line) return;
+        label = line.label; amount = line.amount;
+      }
+      if (!label) return;
+      if (lineInBook(label)) { showToast("That line is already in the price book"); return; }
+      state.priceDraft = Object.assign({}, emptyBookItem(), { _isNew: true, name: label, sell: amount, status: "needs_ok", source: "Saved from an estimate in the ReliaTech app.", category: "Parts" });
+      state.sheet = "priceBookEdit";
+      render(); return;
+    }
+    if (name === "startMemo") { startMemoRecord(); return; }
+    if (name === "stopMemo") { stopMemoRecord(false); return; }
+    if (name === "saveMemo") {
+      const d = state.memoDraft || emptyMemoDraft();
+      if (!d.data) { showToast("Record or choose a memo first"); return; }
+      const item = { id: "vm" + Date.now(), kind: "voice", time: "Just now", title: "Voice memo", body: d.caption || "Voice memo added to this job.", audio: d.data };
+      const where = pushCapture(getJob(state.openJobId), item);
+      state.memoDraft = emptyMemoDraft();
+      state.sheet = "saved";
+      showToast(where === "job" ? "Voice memo saved on this job" : "Voice memo saved in Unfiled");
+      return;
+    }
+    if (name === "openAttachCapture") { state.attachCaptureId = arg; state.attachQuery = ""; state.sheet = "attachCapture"; render(); return; }
+    if (name === "attachCaptureToJob") {
+      const job = getJob(arg);
+      const cap = (state.unfiledCaptures || []).find(function (c) { return c.id === state.attachCaptureId; });
+      if (!job || !cap) return;
+      job.timeline = [Object.assign({}, cap, { jobId: job.id })].concat(job.timeline || []);
+      state.unfiledCaptures = state.unfiledCaptures.filter(function (c) { return c.id !== cap.id; });
+      state.attachCaptureId = null;
+      state.sheet = null;
+      state.openJobId = job.id;
+      showToast("Attached to job " + job.id);
+      return;
+    }
+    if (name === "pickVoiceJob") {
+      const job = getJob(arg); if (!job || !state.voicePick) return;
+      const p = state.voicePick;
+      state.voicePick = null;
+      state.voiceConfirm = {
+        action: p.action,
+        raw: p.raw,
+        tech: p.tech || state.currentTech || DEFAULT_TECH,
+        customer: getCustomer(job.customerId) || { id: job.customerId, name: job.customer },
+        customerId: job.customerId,
+        customerName: job.customer,
+        job: job,
+        jobId: job.id,
+        problem: job.problem,
+        work: p.work || "",
+        needsNewJob: false
+      };
+      state.sheet = "voiceConfirm";
+      render(); return;
+    }
+    if (name === "voiceOfferNewJob") {
+      const c = state.voiceConfirm || {};
+      const customer = c.customerId ? getCustomer(c.customerId) : null;
+      const addrs = customer ? serviceAddresses(customer) : [];
+      const spoken = c.spoken || c.customerName || "";
+      state.clockInAfterCreate = c.action === "clockIn";
+      state._pendingVoiceRaw = c.raw || "";
+      state.voiceConfirm = null;
+      state.voiceJobDraft = {
+        raw: c.raw || "",
+        jobId: nextJobId(state.jobs),
+        customerId: customer ? customer.id : "",
+        customerName: customer ? customer.name : spoken,
+        isNewCustomer: !customer,
+        newName: customer ? "" : spoken,
+        newPhone: "",
+        newAddress: "",
+        newCity: "Long Beach",
+        addressId: addrs.length === 1 ? addrs[0].id : "",
+        problem: c.work || "New call",
+        whenLabel: "",
+        whenIso: "",
+        billToCustomerId: customer ? customer.id : "",
+        offerReason: c.offerReason || "",
+        clockAfter: c.action === "clockIn"
+      };
+      state.sheet = "voiceNewJob";
+      render(); return;
+    }
+    if (name === "voiceJobAddress") {
+      if (!state.voiceJobDraft) return;
+      state.voiceJobDraft.addressId = arg;
+      render(); return;
+    }
+    if (name === "confirmVoiceNewJob") {
+      const d = state.voiceJobDraft; if (!d) return;
+      let customerId = d.customerId, customer, address = "", city = "", phone = "", addressId = d.addressId || "", billToCustomerId = d.billToCustomerId || "";
+      if (d.isNewCustomer) {
+        const name = (d.newName || d.customerName || "").trim();
+        if (!name) { showToast("Enter a customer name"); return; }
+        customerId = nextCustomerId();
+        customer = name; address = (d.newAddress || "").trim(); city = (d.newCity || "").trim() || "Long Beach"; phone = (d.newPhone || "").trim();
+        const fresh = { id: customerId, name: customer, address: address, city: city, phone: phone, email: "", billingSameAsService: true, billingAddress: "", billingCity: "", addresses: [], assets: [], mentions: [] };
+        if (address) {
+          addressId = nextAddressId(customerId, [fresh].concat(state.customers));
+          fresh.addresses = [emptyAddress({ id: addressId, address: address, city: city })];
+        }
+        state.customers = [fresh].concat(state.customers);
+        billToCustomerId = customerId;
+      } else {
+        const c = state.customers.find(function (x) { return x.id === customerId; });
+        if (!c) { showToast("Pick a customer first"); return; }
+        ensureCustomerAddresses(c, state.customers);
+        const addrs = serviceAddresses(c);
+        if (addrs.length > 1 && !addressId) { showToast("Pick a service address"); return; }
+        const loc = (addressId && getAddressById(addressId)) || primaryAddress(c);
+        if (loc) { addressId = loc.id; address = loc.address; city = loc.city; phone = loc.onsitePhone || c.phone; }
+        else { address = c.address || ""; city = c.city || ""; phone = c.phone || ""; }
+        customer = c.name;
+        if (!billToCustomerId) billToCustomerId = c.id;
+      }
+      const id = nextJobId(state.jobs);
+      const when = resolveRequestedTime(d.whenLabel || "");
+      const problem = (d.problem || "").trim() || "New call";
+      const job = {
+        id: id,
+        customerId: customerId,
+        customer: customer,
+        address: address,
+        city: city,
+        phone: phone,
+        problem: problem,
+        status: "new",
+        lineItems: [{ label: "Diagnostic", amount: 150 }],
+        total: 150,
+        readingSets: [],
+        timeline: [t("t" + id, "call", "Just now", "Call", problem)],
+        addressId: addressId,
+        billToCustomerId: billToCustomerId,
+        customerRef: "",
+        referredBy: "",
+        estimates: [],
+        schedule: (d.whenLabel || "").trim(),
+        scheduledStart: when.iso || d.whenIso || ""
+      };
+      state.jobs = [job].concat(state.jobs);
+      const clockAfter = !!(d.clockAfter || state.clockInAfterCreate);
+      state.voiceJobDraft = null;
+      state.openCustomerId = null;
+      state.openJobId = id;
+      state.tab = "jobs";
+      if (clockAfter) {
+        state.clockInAfterCreate = false;
+        state.voiceConfirm = {
+          action: "clockIn",
+          raw: d.raw || "",
+          tech: state.currentTech || DEFAULT_TECH,
+          customer: getCustomer(customerId),
+          customerId: customerId,
+          customerName: customer,
+          job: job,
+          jobId: id,
+          problem: problem,
+          work: "",
+          needsNewJob: false
+        };
+        state.sheet = "voiceConfirm";
+        showToast("Job " + id + " created · confirm clock-in");
+        return;
+      }
+      state.sheet = null;
+      showToast("Job " + id + " created");
+      return;
+    }
+
     if (name === "pickJobCapture") {
       state.openJobId = arg; state.openCustomerId = null;
       const kind = state._pendingCapture || "note";
@@ -3756,6 +4549,63 @@
     return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   }
   let recognition = null;
+  let mediaRecorder = null;
+  let memoChunks = [];
+  let memoStream = null;
+  function startMemoRecord() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === "undefined") {
+      if (!state.memoDraft) state.memoDraft = emptyMemoDraft();
+      state.memoDraft.error = "This browser can’t record audio. Choose an audio file instead.";
+      state.sheet = "voiceMemo";
+      render();
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      memoStream = stream;
+      memoChunks = [];
+      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus"
+        : (MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
+        : (MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : ""));
+      mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = function (e) { if (e.data && e.data.size) memoChunks.push(e.data); };
+      mediaRecorder.onstop = function () {
+        if (state._discardMemo) { state._discardMemo = false; return; }
+        const blob = new Blob(memoChunks, { type: mediaRecorder && mediaRecorder.mimeType ? mediaRecorder.mimeType : "audio/webm" });
+        const reader = new FileReader();
+        reader.onload = function () {
+          if (!state.memoDraft) state.memoDraft = emptyMemoDraft();
+          state.memoDraft.data = String(reader.result || "");
+          state.memoDraft.recording = false;
+          render();
+        };
+        reader.readAsDataURL(blob);
+        if (memoStream) memoStream.getTracks().forEach(function (t) { t.stop(); });
+        memoStream = null;
+      };
+      mediaRecorder.start();
+      if (!state.memoDraft) state.memoDraft = emptyMemoDraft();
+      state.memoDraft.recording = true;
+      state.memoDraft.error = "";
+      state.sheet = "voiceMemo";
+      render();
+    }).catch(function () {
+      if (!state.memoDraft) state.memoDraft = emptyMemoDraft();
+      state.memoDraft.error = "Microphone permission was denied. Choose an audio file instead.";
+      state.sheet = "voiceMemo";
+      render();
+    });
+  }
+  function stopMemoRecord(discard) {
+    state._discardMemo = !!discard;
+    if (state.memoDraft) state.memoDraft.recording = false;
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      try { mediaRecorder.stop(); } catch (e) {}
+    } else if (memoStream) {
+      memoStream.getTracks().forEach(function (t) { t.stop(); });
+      memoStream = null;
+    }
+    if (!discard) render();
+  }
   function voiceContext() {
     return {
       job: state.openJobId ? getJob(state.openJobId) : null,
@@ -3771,6 +4621,19 @@
       state.voice.fallback = true;
       state.voice.error = parsed.error;
       state.sheet = "voice";
+      render();
+      return;
+    }
+    if (parsed.kind === "newJob") {
+      parsed.draft.raw = parsed.raw;
+      state.voiceJobDraft = parsed.draft;
+      state.sheet = "voiceNewJob";
+      render();
+      return;
+    }
+    if (parsed.needsPick) {
+      state.voicePick = parsed;
+      state.sheet = "voicePick";
       render();
       return;
     }
@@ -3848,6 +4711,7 @@
     if (!h) return;
     if (h === "plans") { state.screen = "plans"; state.openJobId = null; state.openCustomerId = null; return; }
     if (h === "settings") { state.screen = "settings"; return; }
+    if (h === "price-book" || h === "pricebook") { state.tab = "pricebook"; state.openJobId = null; state.openCustomerId = null; state.openAddressId = null; state.screen = null; return; }
     if (h === "time-corrections") { state.screen = "timeCorrections"; state.openJobId = null; state.openCustomerId = null; return; }
     if (h.indexOf("job/") === 0) {
       const id = h.slice(4);
@@ -3878,6 +4742,7 @@
     else if (state.openAddressId && state.openCustomerId) want = "customer/" + state.openCustomerId + "/address/" + state.openAddressId;
     else if (state.openCustomerId) want = "customer/" + state.openCustomerId;
     else if (state.openJobId) want = "job/" + state.openJobId;
+    else if (state.tab === "pricebook") want = "price-book";
     const next = want ? ("#" + want) : (location.pathname + (location.search || "") + (location.hash && !want ? "" : ""));
     const cur = want ? ("#" + (location.hash || "").replace(/^#/, "")) : (location.pathname + (location.search || ""));
     if (want) {
