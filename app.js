@@ -715,6 +715,7 @@
           "</div><div>" + money(l.amount) + "</div></div>";
       }).join("") +
       '<div class="row" style="margin-top:12px;font-weight:750"><div>Total</div><div>' + money(rec.total || 0) + "</div></div></div>" +
+      estimateGpHtml((rec.lineItems || []).map(function (l) { return { label: l.label, amount: l.amount, qty: 1, id: l.id, cost: l.cost, fromBook: !!l.fromBook }; })) +
       '<button class="btn" style="margin-top:12px" ' + act("closeSheet") + ">Done</button>");
   }
 
@@ -1227,14 +1228,16 @@
           unit: s.unit != null ? s.unit : base.unit,
           sku: s.sku != null ? s.sku : base.sku,
           cost: s.cost !== undefined ? s.cost : base.cost,
-          gp: s.gp !== undefined ? s.gp : base.gp,
-          sell: s.sell !== undefined ? s.sell : base.sell,
+          gp: (s.gpSource === "custom" || s.status === "confirmed") ? (s.gp !== undefined ? s.gp : base.gp) : ((s.gp != null && s.gp !== "") ? s.gp : base.gp),
+          sell: (s.gpSource === "custom" || s.status === "confirmed") ? (s.sell !== undefined ? s.sell : base.sell) : ((s.sell != null && s.sell !== "") ? s.sell : base.sell),
           sellLocked: s.sellLocked != null ? s.sellLocked : base.sellLocked,
           status: s.status || base.status,
           detail: s.detail != null ? s.detail : base.detail,
           source: base.source,
           sourceFile: base.sourceFile,
-          seeded: !!base.seeded
+          seeded: !!base.seeded,
+          gpSource: s.gpSource || base.gpSource || "default",
+          pricingRule: s.pricingRule || base.pricingRule
         });
       } else {
         extra.push(JSON.parse(JSON.stringify(s)));
@@ -1244,14 +1247,73 @@
   }
   function bookItems() { return state.priceBook || []; }
   function getBookItem(id) { return bookItems().find(function (x) { return x.id === id; }) || null; }
+  function bookSettings() {
+    const s = (typeof state !== "undefined" && state.settings) ? state.settings : {};
+    return {
+      defaultGp: Number(s.defaultGp != null && s.defaultGp !== "" ? s.defaultGp : 40),
+      minGp: Number(s.minGp != null && s.minGp !== "" ? s.minGp : 35),
+      refrigerantMinMarkup: Number(s.refrigerantMinMarkup != null && s.refrigerantMinMarkup !== "" ? s.refrigerantMinMarkup : 125)
+    };
+  }
+  function isRefrigerantItem(item) {
+    if (!item) return false;
+    if (String(item.category || "").toLowerCase() === "refrigerant") return true;
+    const hay = [item.name, item.id, item.detail].filter(Boolean).join(" ");
+    return /\b(r-?\d{2,3}[a-z]?|refrigerant)\b/i.test(hay) && !/polar pad/i.test(hay);
+  }
+  function markupToGp(markupPct) {
+    const m = Number(markupPct) / 100;
+    if (!(m >= 0)) return null;
+    return Math.round((m / (1 + m)) * 1000) / 10;
+  }
+  function defaultGpFor(item) {
+    const s = bookSettings();
+    if (isRefrigerantItem(item)) return markupToGp(s.refrigerantMinMarkup);
+    return s.defaultGp;
+  }
+  function minGpFor(item) {
+    const s = bookSettings();
+    if (isRefrigerantItem(item)) return markupToGp(s.refrigerantMinMarkup);
+    return s.minGp;
+  }
+  function roundSell(n) {
+    const x = Number(n);
+    if (!isFinite(x) || x < 0) return null;
+    if (x < 20) return Math.round(x * 2) / 2;
+    return Math.round(x);
+  }
+  function proposedSell(item) {
+    const cost = Number(item && item.cost);
+    if (!(cost > 0)) return null;
+    if (isRefrigerantItem(item)) {
+      const m = bookSettings().refrigerantMinMarkup;
+      return roundSell(cost * (1 + (isFinite(m) ? m : 125) / 100));
+    }
+    const gp = defaultGpFor(item) / 100;
+    if (!(gp >= 0 && gp < 1)) return null;
+    return roundSell(cost / (1 - gp));
+  }
   function sellOf(item) {
     if (!item) return null;
-    if (item.cost != null && item.cost !== "" && item.gp != null && item.gp !== "" && !item.sellLocked) {
-      const gp = Number(item.gp) / 100;
-      if (!(gp >= 0 && gp < 1)) return item.sell != null && item.sell !== "" ? Number(item.sell) : null;
-      return Math.round(Number(item.cost) / (1 - gp) * 100) / 100;
+    if (item.sellLocked) {
+      return item.sell != null && item.sell !== "" ? Number(item.sell) : null;
     }
+    if (item.gpSource === "custom") {
+      if (item.sell != null && item.sell !== "" && (item._edited !== "gp")) return Number(item.sell);
+      if (item.cost != null && item.cost !== "" && item.gp != null && item.gp !== "") {
+        const gp = Number(item.gp) / 100;
+        if (gp >= 0 && gp < 1) return roundSell(Number(item.cost) / (1 - gp));
+      }
+      if (item.sell != null && item.sell !== "") return Number(item.sell);
+      return proposedSell(item);
+    }
+    const proposed = proposedSell(item);
+    if (proposed != null) return proposed;
     if (item.sell != null && item.sell !== "") return Number(item.sell);
+    if (item.cost != null && item.cost !== "" && item.gp != null && item.gp !== "") {
+      const gp = Number(item.gp) / 100;
+      if (gp >= 0 && gp < 1) return roundSell(Number(item.cost) / (1 - gp));
+    }
     return null;
   }
   function gpFromSell(cost, sell) {
@@ -1259,18 +1321,99 @@
     if (!(c > 0) || !(s > 0) || s <= c) return null;
     return Math.round((1 - c / s) * 1000) / 10;
   }
+  function markupFromSell(cost, sell) {
+    const c = Number(cost), s = Number(sell);
+    if (!(c > 0) || !(s > 0)) return null;
+    return Math.round((s / c - 1) * 1000) / 10;
+  }
   function applyBookMath(item, edited) {
     const copy = Object.assign({}, item);
     if (copy.sellLocked) return copy;
+    if (edited === "category" && copy.gpSource !== "custom") {
+      copy.gp = defaultGpFor(copy);
+      copy.sell = proposedSell(copy);
+      copy.gpSource = "default";
+      return copy;
+    }
+    if (edited === "gp" || edited === "sell" || edited === "cost") copy.gpSource = "custom";
     if (edited === "gp" && copy.cost != null && copy.cost !== "" && copy.gp != null && copy.gp !== "") {
+      copy._edited = "gp";
       copy.sell = sellOf(copy);
+      delete copy._edited;
     } else if (edited === "sell" && copy.cost != null && copy.cost !== "" && copy.sell != null && copy.sell !== "") {
       const g = gpFromSell(copy.cost, copy.sell);
       if (g != null) copy.gp = g;
-    } else if (edited === "cost" && copy.gp != null && copy.gp !== "") {
-      copy.sell = sellOf(copy);
+    } else if (edited === "cost") {
+      if (copy.gpSource === "custom" && copy.gp != null && copy.gp !== "") {
+        copy._edited = "gp";
+        copy.sell = sellOf(copy);
+        delete copy._edited;
+      } else {
+        copy.gp = defaultGpFor(copy);
+        copy.sell = proposedSell(copy);
+        copy.gpSource = "default";
+      }
     }
     return copy;
+  }
+  function applyProposedPricing(items) {
+    return (items || []).map(function (it) {
+      const copy = Object.assign({}, it);
+      if (copy.sellLocked || copy.status === "confirmed" || copy.gpSource === "custom") return copy;
+      if (!(Number(copy.cost) > 0)) return copy;
+      copy.gp = defaultGpFor(copy);
+      copy.sell = proposedSell(copy);
+      copy.gpSource = "default";
+      copy.pricingRule = isRefrigerantItem(copy) ? "refrigerant_markup_125" : "default_gp_40";
+      return copy;
+    });
+  }
+  function gpBelowFloor(item) {
+    const sell = sellOf(item);
+    const cost = Number(item && item.cost);
+    if (!(cost > 0) || !(sell > 0)) return null;
+    const s = bookSettings();
+    if (isRefrigerantItem(item)) {
+      const markup = (sell / cost - 1) * 100;
+      if (markup + 0.05 < s.refrigerantMinMarkup) {
+        return "Below the refrigerant floor of " + s.refrigerantMinMarkup + "% markup (" + markupToGp(s.refrigerantMinMarkup) + "% GP). Sell should be at least cost × " + (1 + s.refrigerantMinMarkup / 100).toFixed(2).replace(/\.00$/, "") + ".";
+      }
+      return null;
+    }
+    const gp = (1 - cost / sell) * 100;
+    if (gp + 0.05 < s.minGp) return "Below the " + s.minGp + "% GP floor.";
+    return null;
+  }
+  function lineCostOf(l) {
+    if (!l) return null;
+    if (l.cost != null && l.cost !== "") return Number(l.cost) * (l.qty || 1);
+    const book = (l.id && typeof getBookItem === "function") ? getBookItem(l.id) : null;
+    const it = book || (typeof lineInBook === "function" ? lineInBook(l.label) : null);
+    if (it && it.cost != null && it.cost !== "" && !it.sellLocked) return Number(it.cost) * (l.qty || 1);
+    return null;
+  }
+  function estimateGpSummary(lines) {
+    let cost = 0, sell = 0, n = 0;
+    (lines || []).forEach(function (l) {
+      const c = lineCostOf(l);
+      if (c == null || !(c >= 0)) return;
+      const s = Number(l.amount) * (l.qty || 1);
+      if (!(s > 0)) return;
+      cost += c;
+      sell += s;
+      n += 1;
+    });
+    if (!n || !(sell > 0)) return null;
+    const gp = (1 - cost / sell) * 100;
+    return { gp: gp, cost: cost, sell: sell, counted: n, total: (lines || []).length, below: gp + 0.05 < bookSettings().minGp };
+  }
+  function estimateGpHtml(lines) {
+    const sum = estimateGpSummary(lines);
+    if (!sum) return '<div class="muted" style="margin-top:8px">Blended GP is shown when a line has a recorded cost.</div>';
+    const label = "Blended GP on " + sum.counted + " costed line" + (sum.counted === 1 ? "" : "s") + ": " + (Math.round(sum.gp * 10) / 10) + "%";
+    const extra = sum.counted < sum.total ? " Confirmed rates and lines without a cost are left out of the blend." : "";
+    if (sum.below) return '<div class="warn-banner" style="margin-top:10px">' + esc(label) + " — below the " + bookSettings().minGp + "% floor." + extra + "</div>";
+    return '<div class="note" style="margin-top:10px">' + esc(label + "." + extra) + "</div>";
   }
   function bookCategories() {
     const set = {};
@@ -1278,7 +1421,8 @@
     return Object.keys(set).sort();
   }
   function emptyBookItem() {
-    return { id: "pb-new-" + Date.now(), name: "", category: "Parts", unit: "ea", sku: "", cost: "", gp: "", sell: "", sellLocked: false, status: "needs_ok", source: "Added in the ReliaTech app.", sourceFile: "", detail: "", seeded: false };
+    const gp = bookSettings().defaultGp;
+    return { id: "pb-new-" + Date.now(), name: "", category: "Parts", unit: "ea", sku: "", cost: "", gp: gp, sell: "", sellLocked: false, status: "needs_ok", source: "Added in the ReliaTech app.", sourceFile: "", detail: "", seeded: false, gpSource: "default" };
   }
   function lineInBook(label) {
     const n = normalizeName(label);
@@ -1623,7 +1767,7 @@
   const INITIAL_JOBS = (window.RT_DATA && window.RT_DATA.jobs) ? window.RT_DATA.jobs : [];
   const PAST_JOBS = (window.RT_DATA && window.RT_DATA.moneyJobs) ? window.RT_DATA.moneyJobs : [];
   const SHOW_SAMPLE_BADGE = !!(window.RT_DATA && window.RT_DATA.showSampleBadge);
-  const PRICE_BOOK_NOTE = (window.RT_PRICEBOOK && window.RT_PRICEBOOK.note) || "Confirmed service rates and supplier costs from ReliaTech price records. Costed items need Steve’s OK before they are used as selling prices.";
+  const PRICE_BOOK_NOTE = (window.RT_PRICEBOOK && window.RT_PRICEBOOK.note) || "Confirmed service rates are not marked up again. Costed items use 40% GP by default (35% floor). Refrigerant uses a 125% markup (sell = cost × 2.25). Proposed sells need Steve’s OK.";
   const MONEY_NOTE = (window.RT_DATA && window.RT_DATA.moneyNote) || "";
 
   /* state and remaining UI will be appended */
@@ -1679,7 +1823,8 @@
     weekdayStart: "16:30", weekdayEnd: "20:00",
     saturdayStart: "08:00", saturdayEnd: "18:00",
     sundayOpen: false, timezone: TZ,
-    stevePhone: "(562) 487-8750", steveEmail: "steveseguine51@gmail.com"
+    stevePhone: "(562) 487-8750", steveEmail: "steveseguine51@gmail.com",
+    defaultGp: 40, minGp: 35, refrigerantMinMarkup: 125
   }, PLAN_SEED.settingsDefaults || {});
   function mergeById(initial, saved) {
     const byId = {};
@@ -1765,7 +1910,7 @@
     saveLineDraft: null
   };
   state.techRecords = normalizeTechRecords(state.techs, _saved && _saved.techRecords);
-  state.priceBook = mergePriceBook(seedPriceBook(), _saved && _saved.priceBook);
+  state.priceBook = applyProposedPricing(mergePriceBook(seedPriceBook(), _saved && _saved.priceBook));
   state.unfiledCaptures = migrateLooseCaptures(_saved);
   if (state.tab === "capture") state.tab = "jobs";
   state.techs = techNamesFrom(state.techRecords);
@@ -2188,7 +2333,16 @@
     },
     setTimeEdit: function (k, v) { state.timeEdit[k] = v; },
     setVoiceText: function (v) { state.voice.text = v; },
-    setSetting: function (k, v) { state.settings[k] = v; renderKeepFocus("st-" + k); },
+    setSetting: function (k, v) {
+      if (k === "defaultGp" || k === "minGp" || k === "refrigerantMinMarkup") {
+        state.settings[k] = v === "" ? "" : Number(v);
+        state.priceBook = applyProposedPricing(state.priceBook);
+        renderKeepFocus("st-" + k);
+        return;
+      }
+      state.settings[k] = v;
+      renderKeepFocus("st-" + k);
+    },
     setSched: function (k, v) { state.scheduleDraft[k] = v; },
     setBilling: function (k, v) {
       const c = getCustomer(state.openCustomerId);
@@ -2528,6 +2682,12 @@
       '<label class="field"><div class="field-lab">Saturday start (PT)</div><input id="st-saturdayStart" type="time" value="' + esc(s.saturdayStart) + '" oninput="RT.setSetting(\'saturdayStart\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Saturday end (PT)</div><input id="st-saturdayEnd" type="time" value="' + esc(s.saturdayEnd) + '" oninput="RT.setSetting(\'saturdayEnd\', this.value)"></label>' +
       '<div class="cal-note">' + esc(availabilitySummary()) + " Sunday is closed unless you turn it on in the published slots file.</div>" +
+      '<div class="section">Price book</div>' +
+      '<div class="muted" style="margin:-4px 0 12px">Steve’s November 24, 2026 rule. Default GP is 40% on costed parts, equipment, and materials, with a 35% floor. Refrigerant uses a minimum 125% markup (sell = cost × 2.25, about 55.6% GP). Changing the defaults updates items that still use the default and have not been approved.</div>' +
+      '<label class="field"><div class="field-lab">Default GP %</div><input id="st-defaultGp" inputmode="decimal" value="' + esc(String(s.defaultGp != null ? s.defaultGp : 40)) + '" oninput="RT.setSetting(\'defaultGp\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Minimum GP % (floor)</div><input id="st-minGp" inputmode="decimal" value="' + esc(String(s.minGp != null ? s.minGp : 35)) + '" oninput="RT.setSetting(\'minGp\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Refrigerant minimum markup %</div><input id="st-refrigerantMinMarkup" inputmode="decimal" value="' + esc(String(s.refrigerantMinMarkup != null ? s.refrigerantMinMarkup : 125)) + '" oninput="RT.setSetting(\'refrigerantMinMarkup\', this.value)"></label>' +
+      '<div class="note" style="margin-bottom:16px">A ' + esc(String(s.refrigerantMinMarkup != null ? s.refrigerantMinMarkup : 125)) + "% markup is " + esc(String(markupToGp(s.refrigerantMinMarkup != null ? s.refrigerantMinMarkup : 125))) + "% GP. Sell = cost × " + (1 + Number(s.refrigerantMinMarkup != null ? s.refrigerantMinMarkup : 125) / 100).toFixed(2).replace(/\.00$/, "") + ". Confirmed service rates are not marked up again.</div>" +
       '<div class="section">Calendar</div>' +
       '<div class="muted">Job appointments go on steveseguine51@gmail.com, titled like “#25076 Dan Correa — Cooling maintenance.” The customer is never invited. This app cannot write to Google Calendar by itself. After you confirm a time, ask the assistant to add or update the event.</div>' +
       "</div></div>";
@@ -3122,7 +3282,7 @@
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Price book</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
       '<div class="muted" style="margin-bottom:10px">' + PRICE_BOOK_NOTE + "</div>" +
-      (state.packDraft.length ? '<div class="cart"><div class="k-up">This estimate</div>' + state.packDraft.map(lineRow).join("") + '<div class="row" style="font-weight:750;margin-top:6px"><div>Total</div><div>' + money(total) + "</div></div></div>" : "") +
+      (state.packDraft.length ? '<div class="cart"><div class="k-up">This estimate</div>' + state.packDraft.map(lineRow).join("") + '<div class="row" style="font-weight:750;margin-top:6px"><div>Total</div><div>' + money(total) + "</div></div>" + estimateGpHtml(state.packDraft) + "</div>" : "") +
       '<div class="search">' + icon("search", 16) + '<input id="pack-q" type="search" placeholder="Search the price book" value="' + esc(state.packQuery) + '" oninput="RT.setPackQ(this.value)"></div>' +
       '<div class="chips"><button class="chip' + (tab === "all" ? " on" : "") + '" ' + act("packTab", "all") + ">All</button>" +
         cats.map(function (c) { return '<button class="chip' + (tab === c ? " on" : "") + '" ' + act("packTab", c) + ">" + esc(c) + "</button>"; }).join("") +
@@ -3164,6 +3324,7 @@
           "</div><div>" + money(l.amount * l.qty) + "</div></div>";
       }).join("") +
       '<div class="row" style="margin-top:12px;font-weight:750"><div>Total</div><div>' + money(total) + "</div></div></div>" +
+      estimateGpHtml(lines) +
       '<div class="note">' + PRICE_BOOK_NOTE + " This preview stays on the phone and is not sent.</div>" +
       '<button class="btn" style="margin-top:12px" ' + act("saveEstimate") + ">Save estimate to job</button>");
   }
@@ -3372,14 +3533,17 @@
     const needs = bookItems().filter(function (it) { return it.status === "needs_ok"; }).length;
     return topBar({ kicker: "ReliaTech Services", title: "Price book", badge: SHOW_SAMPLE_BADGE, settings: true }) +
       '<div class="content"><div class="pad">' +
-      '<div class="muted" style="margin-bottom:12px">Confirmed service rates are ready to use. Costed parts and equipment are marked Needs Steve’s OK until you set a GP or sell price and tap Approve. Sell price is cost ÷ (1 − GP).</div>' +
+      '<div class="muted" style="margin-bottom:12px">Confirmed service rates are ready to use and are not marked up again. Costed items show a proposed sell at 40% GP (35% floor), rounded to the nearest dollar or to the nearest $0.50 under $20. Refrigerant uses a 125% markup (sell = cost × 2.25, about 55.6% GP). Items stay marked Needs Steve’s OK until you approve them.</div>' +
       '<div class="search">' + icon("search", 16) + '<input id="pb-q" type="search" placeholder="Search the price book" value="' + esc(state.priceBookQuery || "") + '" oninput="RT.setPriceBookQuery(this.value)"></div>' +
       '<div class="chips">' +
         '<button class="chip' + (filter === "all" && cat === "all" ? " on" : "") + '" ' + act("pbFilter", "all") + ">All</button>" +
         '<button class="chip' + (filter === "needs_ok" ? " on" : "") + '" ' + act("pbFilter", "needs_ok") + ">Needs Steve’s OK" + (needs ? " · " + needs : "") + "</button>" +
         cats.map(function (c) { return '<button class="chip' + (cat === c ? " on" : "") + '" ' + act("pbCategory", c) + ">" + esc(c) + "</button>"; }).join("") +
       "</div>" +
-      '<button class="btn" style="margin:4px 0 14px" ' + act("openNewBookItem") + ">Add item</button>" +
+      '<div class="row" style="gap:8px;margin:4px 0 14px;flex-wrap:wrap">' +
+        '<button class="btn" style="flex:1;margin:0" ' + act("openNewBookItem") + ">Add item</button>" +
+        (needs && isAdminTech(actingAs()) ? '<button class="btn accent" style="flex:1;margin:0" ' + act("approveAllBookItems") + ">Approve all · " + needs + "</button>" : "") +
+      "</div>" +
       '<div class="stack">' + (items.length ? items.map(priceBookCard).join("") : '<div class="muted">No items match.</div>') + "</div></div></div>" +
       tabBar();
   }
@@ -3390,8 +3554,8 @@
       '<div class="row"><div class="job-name" style="margin-top:0">' + esc(it.name) + "</div><div style=\"font-weight:750\">" + (sell != null ? money(sell) : "—") + (it.unit ? '<span class="meta">/' + esc(it.unit) + "</span>" : "") + "</div></div>" +
       '<div class="muted">' + esc(it.category || "") + (it.sku ? " · " + esc(it.sku) : "") +
         (it.cost != null && it.cost !== "" ? " · Cost " + money(Number(it.cost)) : "") +
-        (it.gp != null && it.gp !== "" ? " · GP " + it.gp + "%" : "") +
-        (sell != null && !it.sellLocked && it.cost != null && it.cost !== "" ? " · Sell " + money(sell) : "") +
+        (sell != null && Number(it.cost) > 0 && !it.sellLocked ? " · GP " + (Math.round((1 - Number(it.cost) / sell) * 1000) / 10) + "%" : (it.gp != null && it.gp !== "" ? " · GP " + it.gp + "%" : "")) +
+        (isRefrigerantItem(it) && sell != null && Number(it.cost) > 0 ? " · " + markupFromSell(it.cost, sell) + "% markup" : "") +
       "</div>" +
       (needs ? '<div style="margin-top:6px">' + pill("Needs Steve’s OK", "#8A4B08", "#F6E2B8") + "</div>" : "") +
       "</div></button>";
@@ -3401,16 +3565,21 @@
     const isNew = !!d._isNew;
     const sell = sellOf(d);
     const locked = !!d.sellLocked;
+    const floorWarn = gpBelowFloor(Object.assign({}, d, { sell: sell }));
+    const ref = isRefrigerantItem(d);
+    const sellLab = locked ? " (confirmed rate)" : (ref ? " · cost × " + (1 + bookSettings().refrigerantMinMarkup / 100).toFixed(2).replace(/\.00$/, "") + " (min " + bookSettings().refrigerantMinMarkup + "% markup / " + markupToGp(bookSettings().refrigerantMinMarkup) + "% GP)" : " · cost ÷ (1 − GP); default " + bookSettings().defaultGp + "%, floor " + bookSettings().minGp + "%");
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">' + (isNew ? "Add price book item" : "Edit item") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      (d.status === "needs_ok" ? '<div class="warn-banner">Needs Steve’s OK. Review the cost and set a GP or sell price, then tap Approve.</div>' : "") +
+      (d.status === "needs_ok" ? '<div class="warn-banner">Needs Steve’s OK. Proposed sell is shown. Review it, then tap Approve or Approve all.</div>' : "") +
+      (floorWarn ? '<div class="warn-banner">' + esc(floorWarn) + "</div>" : "") +
       '<label class="field"><div class="field-lab">Name</div><input id="pb-name" value="' + esc(d.name || "") + '" oninput="RT.setPriceDraft(\'name\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Category</div><input id="pb-category" value="' + esc(d.category || "") + '" oninput="RT.setPriceDraft(\'category\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">SKU</div><input id="pb-sku" value="' + esc(d.sku || "") + '" oninput="RT.setPriceDraft(\'sku\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Unit</div><input id="pb-unit" value="' + esc(d.unit || "ea") + '" oninput="RT.setPriceDraft(\'unit\', this.value)"></label>' +
       (locked ? "" : '<label class="field"><div class="field-lab">Cost</div><input id="pb-cost" inputmode="decimal" value="' + esc(d.cost === 0 || d.cost ? String(d.cost) : "") + '" oninput="RT.setPriceDraft(\'cost\', this.value)"></label>') +
-      (locked ? "" : '<label class="field"><div class="field-lab">GP %</div><input id="pb-gp" inputmode="decimal" placeholder="e.g. 35" value="' + esc(d.gp === 0 || d.gp ? String(d.gp) : "") + '" oninput="RT.setPriceDraft(\'gp\', this.value)"></label>') +
-      '<label class="field"><div class="field-lab">Sell price' + (locked ? " (confirmed rate)" : " · cost ÷ (1 − GP)") + "</div><input id=\"pb-sell\" inputmode=\"decimal\" " + (locked ? "readonly " : "") + 'value="' + esc(sell != null ? String(sell) : (d.sell === 0 || d.sell ? String(d.sell) : "")) + '" oninput="RT.setPriceDraft(\'sell\', this.value)"></label>' +
+      (locked ? "" : '<label class="field"><div class="field-lab">GP %' + (ref ? " · equivalent of markup" : "") + "</div><input id=\"pb-gp\" inputmode=\"decimal\" placeholder=\"e.g. " + (ref ? markupToGp(bookSettings().refrigerantMinMarkup) : bookSettings().defaultGp) + '" value="' + esc(d.gp === 0 || d.gp ? String(d.gp) : (sell != null && Number(d.cost) > 0 ? String(gpFromSell(d.cost, sell) || "") : "")) + '" oninput="RT.setPriceDraft(\'gp\', this.value)"></label>') +
+      (ref && !locked && sell != null && Number(d.cost) > 0 ? '<div class="muted" style="margin:-6px 0 10px">Markup on this item: ' + esc(String(markupFromSell(d.cost, sell))) + "%</div>" : "") +
+      '<label class="field"><div class="field-lab">Sell price' + sellLab + "</div><input id=\"pb-sell\" inputmode=\"decimal\" " + (locked ? "readonly " : "") + 'value="' + esc(sell != null ? String(sell) : (d.sell === 0 || d.sell ? String(d.sell) : "")) + '" oninput="RT.setPriceDraft(\'sell\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Detail</div><textarea id="pb-detail" rows="3" oninput="RT.setPriceDraft(\'detail\', this.value)">' + esc(d.detail || "") + "</textarea></label>" +
       (d.source ? '<div class="note">Source: ' + esc(d.source) + (d.sourceFile ? " (" + esc(d.sourceFile) + ")" : "") + "</div>" : "") +
       '<button class="btn teal" ' + act("saveBookItem") + ">" + (isNew ? "Add item" : "Save") + "</button>" +
@@ -3998,7 +4167,7 @@
       if (sell == null) { showToast("Set a sell price in the Price book first"); return; }
       const existing = state.packDraft.find(function (l) { return l.id === p.id; });
       if (existing) existing.qty += 1;
-      else state.packDraft = state.packDraft.concat([{ id: p.id, label: p.name, amount: sell, qty: 1, unit: p.unit, fromBook: true }]);
+      else state.packDraft = state.packDraft.concat([{ id: p.id, label: p.name, amount: sell, qty: 1, unit: p.unit, fromBook: true, cost: (p.cost != null && p.cost !== "" && !p.sellLocked) ? Number(p.cost) : null }]);
       render(); return;
     }
     if (name === "addCustomLine") {
@@ -4022,7 +4191,7 @@
     if (name === "saveEstimate") {
       const job = getJob(state.openJobId); if (!job) return;
       const lines = state.packDraft;
-      job.lineItems = lines.map(function (l) { return { label: draftLabel(l), amount: l.amount * l.qty }; });
+      job.lineItems = lines.map(function (l) { return { label: draftLabel(l), amount: l.amount * l.qty, id: l.id, cost: lineCostOf({ id: l.id, label: l.label, amount: l.amount, qty: 1, cost: l.cost }), fromBook: !!l.fromBook }; });
       job.total = draftTotal(lines);
       if (!job.estimateId) job.estimateId = job.id + "-E01";
       if (!Array.isArray(job.estimates)) job.estimates = [];
@@ -4347,14 +4516,32 @@
       const d = state.priceDraft; if (!d) return;
       if (sellOf(d) == null) { showToast("Set a sell price or GP first"); return; }
       d.status = "confirmed";
+      d.sell = sellOf(d);
       const item = applyBookMath(Object.assign({}, d));
       delete item._isNew;
+      const warn = gpBelowFloor(item);
       const idx = bookItems().findIndex(function (x) { return x.id === item.id; });
       if (idx >= 0) state.priceBook[idx] = item;
       else state.priceBook = state.priceBook.concat([item]);
       state.priceDraft = null;
       state.sheet = null;
-      showToast("Approved");
+      showToast(warn ? ("Approved · " + warn) : "Approved");
+      return;
+    }
+    if (name === "approveAllBookItems") {
+      if (!isAdminTech(actingAs())) { showToast("Only Steve can approve the price book"); return; }
+      let n = 0, below = 0;
+      state.priceBook = bookItems().map(function (it) {
+        if (it.status !== "needs_ok" || it.sellLocked) return it;
+        const sell = sellOf(it);
+        if (sell == null) return it;
+        n += 1;
+        const next = Object.assign({}, it, { status: "confirmed", sell: sell, gp: (Number(it.cost) > 0 ? gpFromSell(it.cost, sell) : it.gp) });
+        if (gpBelowFloor(next)) below += 1;
+        return next;
+      });
+      if (!n) { showToast("Nothing to approve"); return; }
+      showToast(below ? ("Approved " + n + " item" + (n === 1 ? "" : "s") + " · " + below + " below the floor") : ("Approved " + n + " item" + (n === 1 ? "" : "s")));
       return;
     }
     if (name === "saveLineToBook") {
