@@ -13,7 +13,7 @@ This is the permanent address. Future updates are published to the same URL.
 
 Open a job with a balance (or Money → Unpaid invoices) and tap **Pay now**. The payment screen offers card / Apple Pay, Venmo, and Zelle.
 
-**Send invoice** is on the invoice (View invoice, or the job actions). It opens a prefilled text or email on Steve’s phone — nothing is sent until he presses Send. The message includes a customer payment page that shows only that invoice (`pay.html?inv=…`). Customers should use that link, not this app.
+**Send invoice** is on the invoice (View invoice, or the job actions). It opens a prefilled text or email on Steve’s phone — nothing is sent until he presses Send. The message includes a customer payment page that shows only that invoice (a unique link such as `pay/…` — not an invoice number). Customers should use that link, not this app.
 
 A $1 test invoice (TEST-01) for Nika Seguine is included so Steve can send and try a payment.
 
