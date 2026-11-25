@@ -726,3 +726,17 @@ button.plan-card, button.prospect-card {
 .memo-live { background: #F6E2B8; color: #8A4B08; border-radius: 12px; padding: 12px; margin-bottom: 12px; font-weight: 650; }
 .list-card audio { width: 100%; margin-top: 8px; }
 .tab span { white-space: nowrap; }
+
+.scope-block {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.45;
+  background: #f6f7f4;
+  border: 1px solid #e2e4dc;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  color: #1b1d16;
+}
+.steve-only { font-size: 13px; line-height: 1.45; }
+.steve-only .k-up { margin-bottom: 6px; }
