@@ -1243,7 +1243,7 @@
           seeded: !!base.seeded,
           gpSource: s.gpSource || base.gpSource || "default",
           pricingRule: s.pricingRule || base.pricingRule,
-          kind: s.kind || base.kind,
+          kind: base.kind || s.kind,
           scope: s.scope != null ? s.scope : base.scope,
           laborHours: s.laborHours != null ? s.laborHours : base.laborHours,
           hoursSource: base.hoursSource,
@@ -1256,8 +1256,11 @@
           diagnostic: base.diagnostic,
           truck: base.truck,
           laborRate: base.laborRate,
-          firstPrice: (s.gpSource === "custom" || s.status === "confirmed") ? (s.firstPrice != null ? s.firstPrice : base.firstPrice) : base.firstPrice,
-          addOnPrice: (s.gpSource === "custom" || s.status === "confirmed") ? (s.addOnPrice != null ? s.addOnPrice : base.addOnPrice) : base.addOnPrice
+          firstPrice: (base.kind === "custom_quote") ? "" : ((s.gpSource === "custom" || s.status === "confirmed") ? (s.firstPrice != null ? s.firstPrice : base.firstPrice) : base.firstPrice),
+          addOnPrice: (base.kind === "custom_quote") ? "" : ((s.gpSource === "custom" || s.status === "confirmed") ? (s.addOnPrice != null ? s.addOnPrice : base.addOnPrice) : base.addOnPrice),
+          sell: (base.kind === "custom_quote") ? "" : (s.sell !== undefined ? s.sell : base.sell),
+          needsOemCost: base.needsOemCost != null ? base.needsOemCost : s.needsOemCost,
+          needsRefrigerant: base.needsRefrigerant != null ? base.needsRefrigerant : s.needsRefrigerant
         });
       } else {
         extra.push(JSON.parse(JSON.stringify(s)));
@@ -1283,8 +1286,60 @@
   }
   function isFlatRateItem(item) {
     if (!item) return false;
+    if (item.kind === "custom_quote") return false;
     if (item.kind === "flat_rate") return true;
     return String(item.category || "") === "Flat-rate repairs";
+  }
+  function isCustomQuoteItem(item) {
+    if (!item) return false;
+    if (item.kind === "custom_quote") return true;
+    return String(item.category || "") === "Custom quote";
+  }
+  function isRepairLine(l, item) {
+    const it = item || (l && l.id ? getBookItem(l.id) : null);
+    return !!(l && (l.flatRate || l.customQuote || (it && (isFlatRateItem(it) || isCustomQuoteItem(it)))));
+  }
+  function oemPartSell(cost) {
+    const c = Number(cost);
+    if (!(c > 0)) return 0;
+    const s = proposedSell({ cost: c, category: "Parts", name: "OEM part" });
+    return s != null ? s : 0;
+  }
+  function refrigerantSell(costPerLb, lbs) {
+    const c = Number(costPerLb), q = Number(lbs);
+    if (!(c > 0) || !(q > 0)) return 0;
+    const per = proposedSell({ cost: c, category: "Refrigerant", name: "Refrigerant" });
+    if (per == null) return 0;
+    return Math.round((per * q) * 100) / 100;
+  }
+  function customQuotePrices(item, inputs) {
+    if (!item) return null;
+    const rates = flatRateConstants();
+    const hours = Number((inputs && inputs.laborHours != null && inputs.laborHours !== "") ? inputs.laborHours : item.laborHours) || 0;
+    const laborSell = hours * rates.labor;
+    const partCost = inputs && Number(inputs.partCost) > 0 ? Number(inputs.partCost) : 0;
+    const partSell = oemPartSell(partCost);
+    const refLbs = inputs && Number(inputs.refLbs) > 0 ? Number(inputs.refLbs) : 0;
+    const refCost = inputs && Number(inputs.refCost) > 0 ? Number(inputs.refCost) : 0;
+    const refSell = refrigerantSell(refCost, refLbs);
+    const refCostTotal = (refCost > 0 && refLbs > 0) ? Math.round(refCost * refLbs * 100) / 100 : 0;
+    const extras = partSell + refSell;
+    return {
+      hours: hours,
+      laborSell: laborSell,
+      partCost: partCost || null,
+      partSell: partSell,
+      refLbs: refLbs,
+      refCost: refCost || null,
+      refCostTotal: refCostTotal || null,
+      refSell: refSell,
+      diagnostic: rates.diagnostic,
+      truck: rates.truck,
+      laborRate: rates.labor,
+      first: roundSell(rates.diagnostic + laborSell + rates.truck + extras),
+      addOn: roundSell(laborSell + extras),
+      hasPart: partCost > 0
+    };
   }
   function flatRateConstants() {
     return { diagnostic: 150, labor: 85, truck: 65 };
@@ -1357,14 +1412,17 @@
     let usedFirst = false;
     return (draft || []).map(function (l) {
       const item = l && l.id ? getBookItem(l.id) : null;
-      const isFlat = !!(l && (l.flatRate || (item && isFlatRateItem(item))));
-      if (!isFlat || !item) {
+      const isCustom = !!(l && (l.customQuote || (item && isCustomQuoteItem(item))));
+      const isFlat = !!(l && (l.flatRate || (item && isFlatRateItem(item)))) && !isCustom;
+      if ((!isFlat && !isCustom) || !item) {
         const copy = Object.assign({}, l);
         delete copy.flatTotal;
         delete copy.flatRole;
         return copy;
       }
-      const p = flatRatePrices(item);
+      const p = isCustom
+        ? customQuotePrices(item, { partCost: l.partCost, refCost: l.refCost, refLbs: l.refLbs, laborHours: l.laborHours })
+        : flatRatePrices(item);
       const qty = l.qty || 1;
       let total = 0;
       let firstCount = 0;
@@ -1376,14 +1434,17 @@
       let role = "addon";
       if (firstCount && addCount) role = "mixed";
       else if (firstCount) role = "first";
+      const costTotal = (p.partCost || 0) + (p.refCostTotal || 0);
+      const sellTotal = (p.partSell || 0) + (p.refSell || 0);
       return Object.assign({}, l, {
-        flatRate: true,
+        flatRate: !isCustom,
+        customQuote: !!isCustom,
         label: item.name,
         amount: qty ? total / qty : p.addOn,
         flatTotal: total,
         flatRole: role,
-        cost: p.partCost,
-        partSell: p.partSell
+        cost: costTotal > 0 ? costTotal : null,
+        partSell: sellTotal
       });
     });
   }
@@ -1395,6 +1456,7 @@
       const add = (l.qty || 1) - 1;
       return "First repair + " + add + " add-on" + (add === 1 ? "" : "s");
     }
+    if (l.customQuote) return "Custom quote";
     return "Flat-rate repair";
   }
   function flatBreakdownHtml(item) {
@@ -1459,6 +1521,7 @@
   }
   function sellOf(item) {
     if (!item) return null;
+    if (isCustomQuoteItem(item)) return null;
     if (isFlatRateItem(item)) {
       const p = flatRatePrices(item);
       return p ? p.first : (item.sell != null && item.sell !== "" ? Number(item.sell) : null);
@@ -1496,6 +1559,13 @@
   }
   function applyBookMath(item, edited) {
     const copy = Object.assign({}, item);
+    if (isCustomQuoteItem(copy)) {
+      if (edited === "category") copy.kind = "custom_quote";
+      copy.sell = "";
+      copy.firstPrice = "";
+      copy.addOnPrice = "";
+      return copy;
+    }
     if (isFlatRateItem(copy)) {
       if (edited === "category") copy.kind = "flat_rate";
       if (copy.gpSource !== "custom" && copy.status !== "confirmed") return applyFlatPricing(copy);
@@ -1532,6 +1602,13 @@
   function applyProposedPricing(items) {
     return (items || []).map(function (it) {
       const copy = Object.assign({}, it);
+      if (isCustomQuoteItem(copy)) {
+        copy.sell = "";
+        copy.firstPrice = "";
+        copy.addOnPrice = "";
+        copy.pricingRule = "custom_quote_oem";
+        return copy;
+      }
       if (isFlatRateItem(copy)) return applyFlatPricing(copy);
       if (copy.sellLocked || copy.status === "confirmed" || copy.gpSource === "custom") return copy;
       if (!(Number(copy.cost) > 0)) return copy;
@@ -1577,7 +1654,7 @@
     let cost = 0, sell = 0, n = 0;
     (lines || []).forEach(function (l) {
       const book = (l.id && typeof getBookItem === "function") ? getBookItem(l.id) : null;
-      if (l.flatRate || (book && isFlatRateItem(book))) {
+      if (l.flatRate || l.customQuote || (book && (isFlatRateItem(book) || isCustomQuoteItem(book)))) {
         const p = book ? flatRatePrices(book) : null;
         const c = (l.cost != null && l.cost !== "") ? Number(l.cost) * (l.qty || 1) : (p && p.partCost != null ? p.partCost * (l.qty || 1) : null);
         const s = (l.partSell != null) ? Number(l.partSell) * (l.qty || 1) : (p ? p.partSell * (l.qty || 1) : null);
@@ -1610,9 +1687,14 @@
   function bookCategories() {
     const set = {};
     bookItems().forEach(function (it) { if (it.category) set[it.category] = true; });
+    const rank = function (c) {
+      if (c === "Flat-rate repairs") return 0;
+      if (c === "Custom quote") return 1;
+      return 2;
+    };
     return Object.keys(set).sort(function (a, b) {
-      if (a === "Flat-rate repairs") return -1;
-      if (b === "Flat-rate repairs") return 1;
+      const ra = rank(a), rb = rank(b);
+      if (ra !== rb) return ra - rb;
       return a.localeCompare(b);
     });
   }
@@ -1963,7 +2045,7 @@
   const INITIAL_JOBS = (window.RT_DATA && window.RT_DATA.jobs) ? window.RT_DATA.jobs : [];
   const PAST_JOBS = (window.RT_DATA && window.RT_DATA.moneyJobs) ? window.RT_DATA.moneyJobs : [];
   const SHOW_SAMPLE_BADGE = !!(window.RT_DATA && window.RT_DATA.showSampleBadge);
-  const PRICE_BOOK_NOTE = (window.RT_PRICEBOOK && window.RT_PRICEBOOK.note) || "Confirmed service rates are not marked up again. Costed items use 40% GP by default (35% floor). Refrigerant uses a 125% markup (sell = cost × 2.25). Draft flat-rate repairs use a first-repair price (diagnostic + labor + truck + part) and an add-on price (labor + part). Proposed sells need Steve’s OK.";
+  const PRICE_BOOK_NOTE = (window.RT_PRICEBOOK && window.RT_PRICEBOOK.note) || "Confirmed service rates are not marked up again. Costed items use 40% GP by default (35% floor). Refrigerant uses a 125% markup (sell = cost × 2.25). Draft flat-rate repairs use a first-repair price and an add-on price. OEM-part repairs are Custom quote templates with no fixed price. Proposed sells need Steve’s OK.";
   const MONEY_NOTE = (window.RT_DATA && window.RT_DATA.moneyNote) || "";
   const PAYMENT = (window.RT_DATA && window.RT_DATA.payment) ? window.RT_DATA.payment : {
     venmoHandle: "Steve-Seguine",
@@ -2103,6 +2185,7 @@
     priceBookCategory: "all",
     priceBookFilter: "all",
     priceDraft: null,
+    customQuoteDraft: null,
     unfiledCaptures: [],
     photoDraft: { data: "", caption: "" },
     memoDraft: { data: "", caption: "", recording: false, error: "" },
@@ -2767,6 +2850,12 @@
       if (k === "name") state.packCustomName = v;
       else state.packCustomAmount = v;
       renderKeepFocus(k === "name" ? "pack-custom-name" : "pack-custom-amount");
+    },
+    setCustomQuoteField: function (k, v) {
+      if (!state.customQuoteDraft) return;
+      state.customQuoteDraft[k] = v === "" ? "" : Number(v);
+      const ids = { partCost: "cq-partCost", refLbs: "cq-refLbs", refCost: "cq-refCost" };
+      renderKeepFocus(ids[k] || "cq-partCost");
     },
     setPaidDate: function (v) {
       if (!state.paidDraft) state.paidDraft = emptyPaidDraft();
@@ -3703,7 +3792,7 @@
     });
     const total = draftTotal(state.packDraft);
     function lineRow(l, i) {
-      return '<div class="row" style="margin-bottom:8px"><div style="min-width:0"><div style="font-weight:650;font-size:13px">' + esc(l.label) + '</div><div class="meta">' + (l.fromBook ? "From price book" : "Custom line") + (l.flatRate ? " · " + flatRoleLabel(l) : "") + (l.unit === "lb" ? " · per lb" : "") + "</div></div>" +
+      return '<div class="row" style="margin-bottom:8px"><div style="min-width:0"><div style="font-weight:650;font-size:13px">' + esc(l.label) + '</div><div class="meta">' + (l.fromBook ? "From price book" : "Custom line") + (l.flatRate || l.customQuote ? " · " + flatRoleLabel(l) : "") + (l.unit === "lb" ? " · per lb" : "") + "</div></div>" +
         '<div class="qty"><button ' + act("qty", i + "|-") + ">−</button><span style=\"min-width:16px;text-align:center;font-weight:700\">" + l.qty + "</span><button " + act("qty", i + "|+") + ">+</button></div>" +
         "<div style=\"font-weight:700;min-width:64px;text-align:right\">" + money(lineTotal(l)) + "</div></div>";
     }
@@ -3717,16 +3806,18 @@
       "</div>" +
       items.map(function (p) {
         const sell = sellOf(p);
-        const flat = isFlatRateItem(p) ? flatRatePrices(p) : null;
+        const custom = isCustomQuoteItem(p);
+        const flat = !custom && isFlatRateItem(p) ? flatRatePrices(p) : null;
         const needs = p.status === "needs_ok";
-        const canAdd = flat ? (flat.first != null) : (sell != null);
+        const canAdd = custom || (flat ? (flat.first != null) : (sell != null));
         return '<div class="book-item">' + (canAdd
           ? '<button ' + act("addItem", p.id) + ">"
           : '<button type="button" disabled>') +
-          '<div class="row"><div style="font-weight:750">' + esc(p.name) + '</div><div style="font-weight:750">' + (flat ? money(flat.first) : (sell != null ? money(sell) : "—")) + (flat ? "" : (p.unit ? "<span class=\"meta\">/" + p.unit + "</span>" : "")) + "</div></div>" +
+          '<div class="row"><div style="font-weight:750">' + esc(p.name) + '</div><div style="font-weight:750">' + (custom ? "Quote" : (flat ? money(flat.first) : (sell != null ? money(sell) : "—"))) + (flat || custom ? "" : (p.unit ? "<span class=\"meta\">/" + p.unit + "</span>" : "")) + "</div></div>" +
+          (custom ? '<div class="muted" style="margin-top:2px">Custom quote · ' + (p.laborHours || "—") + " hr template · enter OEM cost</div>" : "") +
           (flat ? '<div class="muted" style="margin-top:2px">First ' + money(flat.first) + " · Add-on " + money(flat.addOn) + "</div>" : "") +
-          (p.detail && !flat ? '<div class="muted" style="margin-top:2px">' + esc(p.detail) + "</div>" : "") +
-          '<div class="muted" style="margin-top:2px">' + esc(p.category || "") + (flat && p.partCostMissing ? " · Part cost missing" : (p.cost != null && p.cost !== "" ? " · Cost " + money(Number(p.cost)) : "")) + (!flat && p.gp != null && p.gp !== "" ? " · GP " + p.gp + "%" : "") + "</div>" +
+          (p.detail && !flat && !custom ? '<div class="muted" style="margin-top:2px">' + esc(p.detail) + "</div>" : "") +
+          '<div class="muted" style="margin-top:2px">' + esc(p.category || "") + (flat && p.partCostMissing ? " · Part cost missing" : (!custom && p.cost != null && p.cost !== "" ? " · Cost " + money(Number(p.cost)) : "")) + (!flat && !custom && p.gp != null && p.gp !== "" ? " · GP " + p.gp + "%" : "") + "</div>" +
           (needs ? '<div style="margin-top:6px">' + pill("Needs Steve’s OK", "#8A4B08", "#F6E2B8") + "</div>" : "") +
           (!canAdd ? '<div class="muted" style="margin-top:4px">Set a sell price in the Price book tab first</div>' : "") +
           "</button></div>";
@@ -3752,7 +3843,7 @@
         return '<div class="row" style="margin-top:6px;align-items:flex-start"><div>' + esc(draftLabel(l)) +
           '<div class="meta">' + (known ? "From price book" : "Not in the price book") + "</div>" +
           (known ? "" : '<button class="link-btn" ' + act("saveLineToBook", "draft|" + i) + ">Save to price book</button>") +
-          (l.flatRate ? '<div class="meta">' + esc(flatRoleLabel(l)) + "</div>" : "") +
+          (l.flatRate || l.customQuote ? '<div class="meta">' + esc(flatRoleLabel(l)) + "</div>" : "") +
           "</div><div>" + money(lineTotal(l)) + "</div></div>";
       }).join("") +
       '<div class="row" style="margin-top:12px;font-weight:750"><div>Total</div><div>' + money(total) + "</div></div></div>" +
@@ -3965,7 +4056,7 @@
     const needs = bookItems().filter(function (it) { return it.status === "needs_ok"; }).length;
     return topBar({ kicker: "ReliaTech Services", title: "Price book", badge: SHOW_SAMPLE_BADGE, settings: true }) +
       '<div class="content"><div class="pad">' +
-      '<div class="muted" style="margin-bottom:12px">Confirmed service rates are ready to use and are not marked up again. Costed items show a proposed sell at 40% GP (35% floor). Refrigerant uses a 125% markup (sell = cost × 2.25). Draft flat-rate repairs show a first-repair price (diagnostic + labor + truck + part) and an add-on price (labor + part) for more than one repair on the same estimate. Items stay marked Needs Steve’s OK until you approve them.</div>' +
+      '<div class="muted" style="margin-bottom:12px">Confirmed service rates are ready to use and are not marked up again. Costed items show a proposed sell at 40% GP (35% floor). Refrigerant uses a 125% markup (sell = cost × 2.25). Draft flat-rate repairs show a first-repair price and an add-on price. OEM-part repairs are Custom quote templates: labor hours and scope only, no fixed price, until the OEM cost is entered on an estimate. Items stay marked Needs Steve’s OK until you approve them.</div>' +
       '<div class="search">' + icon("search", 16) + '<input id="pb-q" type="search" placeholder="Search the price book" value="' + esc(state.priceBookQuery || "") + '" oninput="RT.setPriceBookQuery(this.value)"></div>' +
       '<div class="chips">' +
         '<button class="chip' + (filter === "all" && cat === "all" ? " on" : "") + '" ' + act("pbFilter", "all") + ">All</button>" +
@@ -3983,26 +4074,92 @@
     if (!items.length) return '<div class="stack"><div class="muted">No items match.</div></div>';
     const cat = state.priceBookCategory || "all";
     const flats = items.filter(isFlatRateItem);
-    const rest = items.filter(function (it) { return !isFlatRateItem(it); });
-    const showSections = cat === "all" && flats.length && rest.length && !(state.priceBookQuery || "").trim();
+    const quotes = items.filter(isCustomQuoteItem);
+    const rest = items.filter(function (it) { return !isFlatRateItem(it) && !isCustomQuoteItem(it); });
+    const showSections = cat === "all" && (flats.length || quotes.length) && rest.length && !(state.priceBookQuery || "").trim();
     if (!showSections) return '<div class="stack">' + items.map(priceBookCard).join("") + "</div>";
-    return '<div class="k-up" style="margin:4px 0 8px">Flat-rate repairs</div><div class="stack">' + flats.map(priceBookCard).join("") +
-      '</div><div class="k-up" style="margin:18px 0 8px">Rates, parts, and equipment</div><div class="stack">' + rest.map(priceBookCard).join("") + "</div>";
+    let html = "";
+    if (flats.length) html += '<div class="k-up" style="margin:4px 0 8px">Flat-rate repairs</div><div class="stack">' + flats.map(priceBookCard).join("") + "</div>";
+    if (quotes.length) html += '<div class="k-up" style="margin:18px 0 8px">Custom quote</div><div class="stack">' + quotes.map(priceBookCard).join("") + "</div>";
+    if (rest.length) html += '<div class="k-up" style="margin:18px 0 8px">Rates, parts, and equipment</div><div class="stack">' + rest.map(priceBookCard).join("") + "</div>";
+    return html;
   }
   function priceBookCard(it) {
     const sell = sellOf(it);
-    const flat = isFlatRateItem(it) ? flatRatePrices(it) : null;
+    const custom = isCustomQuoteItem(it);
+    const flat = !custom && isFlatRateItem(it) ? flatRatePrices(it) : null;
     const needs = it.status === "needs_ok";
     return '<button class="list-card book-row" ' + act("openBookItem", it.id) + '><div class="job-body" style="width:100%">' +
-      '<div class="row"><div class="job-name" style="margin-top:0">' + esc(it.name) + "</div><div style=\"font-weight:750\">" + (flat ? money(flat.first) : (sell != null ? money(sell) : "—")) + (flat || !it.unit ? "" : '<span class="meta">/' + esc(it.unit) + "</span>") + "</div></div>" +
+      '<div class="row"><div class="job-name" style="margin-top:0">' + esc(it.name) + "</div><div style=\"font-weight:750\">" + (custom ? "Quote" : (flat ? money(flat.first) : (sell != null ? money(sell) : "—"))) + (flat || custom || !it.unit ? "" : '<span class="meta">/' + esc(it.unit) + "</span>") + "</div></div>" +
+      (custom ? '<div class="muted">Custom quote · ' + (it.laborHours || "—") + " hr template · OEM cost at quote" + (it.needsRefrigerant ? " · refrigerant if needed" : "") + "</div>" :
       (flat ? '<div class="muted">First ' + money(flat.first) + " · Add-on " + money(flat.addOn) + (it.partCostMissing ? " · Part cost missing" : "") + (it.hoursSource === "estimate" ? " · Hours estimate" : "") + "</div>" :
       '<div class="muted">' + esc(it.category || "") + (it.sku ? " · " + esc(it.sku) : "") +
         (it.cost != null && it.cost !== "" ? " · Cost " + money(Number(it.cost)) : "") +
         (sell != null && Number(it.cost) > 0 && !it.sellLocked ? " · GP " + (Math.round((1 - Number(it.cost) / sell) * 1000) / 10) + "%" : (it.gp != null && it.gp !== "" ? " · GP " + it.gp + "%" : "")) +
         (isRefrigerantItem(it) && sell != null && Number(it.cost) > 0 ? " · " + markupFromSell(it.cost, sell) + "% markup" : "") +
-      "</div>") +
+      "</div>")) +
       (needs ? '<div style="margin-top:6px">' + pill("Needs Steve’s OK", "#8A4B08", "#F6E2B8") + "</div>" : "") +
       "</div></button>";
+  }
+  function customQuoteEditSheet(d, isNew, floorWarn) {
+    const rates = flatRateConstants();
+    const hours = Number(d.laborHours) || 0;
+    const laborSell = hours * rates.labor;
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">' + (isNew ? "Add custom quote" : "Custom quote") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      (d.status === "needs_ok" ? '<div class="warn-banner">Needs Steve’s OK. This is a template only — no fixed price. Review the scope and labor hours, then tap Approve or Approve all.</div>' : "") +
+      (d.hoursSource === "estimate" ? '<div class="warn-banner">Labor hours are an estimate. No published task time was found for this repair.</div>' : "") +
+      (floorWarn ? '<div class="warn-banner">' + esc(floorWarn) + "</div>" : "") +
+      '<label class="field"><div class="field-lab">Name</div><input id="pb-name" value="' + esc(d.name || "") + '" oninput="RT.setPriceDraft(\'name\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Category</div><input id="pb-category" value="' + esc(d.category || "Custom quote") + '" oninput="RT.setPriceDraft(\'category\', this.value)"></label>' +
+      '<div class="k-up" style="margin:8px 0 6px">Customer-facing scope</div>' +
+      '<div class="scope-block">' + esc(d.scope || "") + "</div>" +
+      '<label class="field"><div class="field-lab">Scope</div><textarea id="pb-scope" rows="10" oninput="RT.setPriceDraft(\'scope\', this.value)">' + esc(d.scope || "") + "</textarea></label>" +
+      '<label class="field"><div class="field-lab">Labor hours (template)</div><input id="pb-laborHours" inputmode="decimal" value="' + esc(d.laborHours === 0 || d.laborHours ? String(d.laborHours) : "") + '" oninput="RT.setPriceDraft(\'laborHours\', this.value)"></label>' +
+      '<div class="note steve-only" style="margin-top:10px"><div class="k-up">Steve only</div>' +
+        "<div>No fixed price. On an estimate, enter the OEM part cost" + (d.needsRefrigerant ? " and refrigerant if it is used" : "") + ".</div>" +
+        "<div>Labor " + hours + " hr × " + money(rates.labor) + " = " + money(laborSell) + "</div>" +
+        "<div>First repair also adds diagnostic " + money(rates.diagnostic) + " and truck " + money(rates.truck) + ".</div>" +
+        "<div>Part sell uses 40% GP (35% floor). Refrigerant, if entered, uses a 125% markup (cost × 2.25).</div>" +
+        (d.hoursNote ? '<div class="muted" style="margin-top:6px">' + esc(d.hoursNote) + "</div>" : "") +
+      "</div>" +
+      (d.source ? '<div class="note">Source: ' + esc(d.source) + (d.sourceFile ? " (" + esc(d.sourceFile) + ")" : "") + "</div>" : "") +
+      '<button class="btn teal" ' + act("saveBookItem") + ">" + (isNew ? "Add item" : "Save") + "</button>" +
+      (d.status === "needs_ok" && !isNew ? '<button class="btn accent" style="margin-top:8px" ' + act("approveBookItem") + ">Approve</button>" : "")
+    );
+  }
+  function customQuoteAddSheet() {
+    const d = state.customQuoteDraft; if (!d) return "";
+    const item = getBookItem(d.itemId);
+    if (!item) return "";
+    const already = (state.packDraft || []).some(function (l) { return l.flatRate || l.customQuote; });
+    const p = customQuotePrices(item, d);
+    const useFirst = !already;
+    const price = useFirst ? p.first : p.addOn;
+    const refOn = !!item.needsRefrigerant;
+    const ready = Number(d.partCost) > 0;
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Custom quote</div><button class="icon-btn ghost" ' + act("closeCustomQuote") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div style="font-weight:750;margin-bottom:6px">' + esc(item.name) + "</div>" +
+      '<div class="muted" style="margin-bottom:10px">' + (item.laborHours || "—") + " hr labor template. Enter the OEM part cost to build the price.</div>" +
+      (item.scope ? '<div class="scope-block" style="max-height:160px;overflow:auto">' + esc(item.scope) + "</div>" : "") +
+      '<label class="field"><div class="field-lab">OEM part cost</div><input id="cq-partCost" inputmode="decimal" value="' + esc(d.partCost === 0 || d.partCost ? String(d.partCost) : "") + '" oninput="RT.setCustomQuoteField(\'partCost\', this.value)"></label>' +
+      (p.hasPart ? '<div class="muted" style="margin:-6px 0 10px">Part sell ' + money(p.partSell) + " at 40% GP</div>" : "") +
+      (refOn
+        ? '<div class="k-up" style="margin:4px 0 6px">Refrigerant (if needed)</div>' +
+          '<label class="field"><div class="field-lab">Pounds</div><input id="cq-refLbs" inputmode="decimal" value="' + esc(d.refLbs === 0 || d.refLbs ? String(d.refLbs) : "") + '" oninput="RT.setCustomQuoteField(\'refLbs\', this.value)"></label>' +
+          '<label class="field"><div class="field-lab">Cost per lb</div><input id="cq-refCost" inputmode="decimal" value="' + esc(d.refCost === 0 || d.refCost ? String(d.refCost) : "") + '" oninput="RT.setCustomQuoteField(\'refCost\', this.value)"></label>' +
+          (p.refSell ? '<div class="muted" style="margin:-6px 0 10px">Refrigerant sell ' + money(p.refSell) + " (125% markup)</div>" : '<div class="muted" style="margin:-6px 0 10px">Leave blank if recovered refrigerant is reused and no new charge is added.</div>')
+        : "") +
+      '<div class="note steve-only"><div class="k-up">Steve only</div>' +
+        "<div>Labor " + p.hours + " hr × " + money(p.laborRate) + " = " + money(p.laborSell) + "</div>" +
+        (useFirst ? "<div>Diagnostic " + money(p.diagnostic) + " + truck " + money(p.truck) + " (first repair on this estimate)</div>" : "<div>Add-on: no diagnostic or truck (already on the first repair)</div>") +
+        (p.hasPart ? "<div>Part cost " + money(p.partCost) + " → sell " + money(p.partSell) + "</div>" : "<div>Enter the OEM part cost to finish the quote.</div>") +
+        (p.refSell ? "<div>Refrigerant " + p.refLbs + " lb × " + money(p.refCost) + " cost → sell " + money(p.refSell) + "</div>" : "") +
+        (ready ? '<div style="margin-top:6px;font-weight:700">' + (useFirst ? "First repair " : "Add-on ") + money(price) + "</div>" : "") +
+      "</div>" +
+      '<button class="btn accent" style="margin-top:12px" ' + act("confirmCustomQuote") + ">" + (ready ? "Add to estimate · " + money(price) : "Enter the OEM part cost") + "</button>"
+    );
   }
   function flatRateEditSheet(d, isNew, floorWarn) {
     const p = flatRatePrices(d) || { first: d.firstPrice, addOn: d.addOnPrice, hours: d.laborHours, laborSell: 0, partSell: 0, partCost: d.partCost, diagnostic: 150, truck: 65, laborRate: 85 };
@@ -4036,6 +4193,7 @@
     const locked = !!d.sellLocked;
     const floorWarn = gpBelowFloor(Object.assign({}, d, { sell: sell }));
     const ref = isRefrigerantItem(d);
+    if (isCustomQuoteItem(d)) return customQuoteEditSheet(d, isNew, floorWarn);
     if (isFlatRateItem(d)) return flatRateEditSheet(d, isNew, floorWarn);
     const sellLab = locked ? " (confirmed rate)" : (ref ? " · cost × " + (1 + bookSettings().refrigerantMinMarkup / 100).toFixed(2).replace(/\.00$/, "") + " (min " + bookSettings().refrigerantMinMarkup + "% markup / " + markupToGp(bookSettings().refrigerantMinMarkup) + "% GP)" : " · cost ÷ (1 − GP); default " + bookSettings().defaultGp + "%, floor " + bookSettings().minGp + "%");
     return backdrop(
@@ -4188,6 +4346,7 @@
     if (s === "send") return job ? sendSheet(job) : "";
     if (s === "paid") return job ? paidSheet(job) : "";
     if (s === "saved") return savedSheet();
+    if (s === "customQuoteAdd") return customQuoteAddSheet();
     if (s === "priceBook") return job ? priceBookSheet(job) : "";
     if (s === "estimatePreview") return job ? estimatePreviewSheet(job) : "";
     if (s === "fullSet") {
@@ -4658,11 +4817,16 @@
       if (i === -1) ids.push(arg); else ids.splice(i, 1);
       state.compareIds = ids; render(); return;
     }
-    if (name === "openPriceBook") { state.packTab = "all"; state.packQuery = ""; state.packTons = 3; state.packDraft = []; state.packCustomName = ""; state.packCustomAmount = ""; state.sheet = "priceBook"; render(); return; }
+    if (name === "openPriceBook") { state.packTab = "all"; state.packQuery = ""; state.packTons = 3; state.packDraft = []; state.packCustomName = ""; state.packCustomAmount = ""; state.customQuoteDraft = null; state.sheet = "priceBook"; render(); return; }
     if (name === "packTab") { state.packTab = arg; render(); return; }
     if (name === "packTons") { state.packTons = Number(arg); render(); return; }
     if (name === "addItem") {
       const p = getBookItem(arg); if (!p) return;
+      if (isCustomQuoteItem(p)) {
+        state.customQuoteDraft = { itemId: p.id, partCost: "", refLbs: "", refCost: "", laborHours: p.laborHours };
+        state.sheet = "customQuoteAdd";
+        render(); return;
+      }
       const flat = isFlatRateItem(p);
       const prices = flat ? flatRatePrices(p) : null;
       const sell = flat ? (prices ? prices.first : null) : sellOf(p);
@@ -4670,9 +4834,37 @@
       const existing = state.packDraft.find(function (l) { return l.id === p.id; });
       if (existing) existing.qty += 1;
       else state.packDraft = state.packDraft.concat([{ id: p.id, label: p.name, amount: sell, qty: 1, unit: p.unit || "ea", fromBook: true, flatRate: flat, cost: flat ? ((prices && prices.partCost) || null) : ((p.cost != null && p.cost !== "" && !p.sellLocked) ? Number(p.cost) : null) }]);
-      if (state.packDraft.some(function (l) { return l.flatRate || (getBookItem(l.id) && isFlatRateItem(getBookItem(l.id))); })) {
+      if (state.packDraft.some(function (l) { return isRepairLine(l); })) {
         state.packDraft = repriceFlatRateDraft(state.packDraft);
       }
+      render(); return;
+    }
+    if (name === "closeCustomQuote") {
+      state.customQuoteDraft = null;
+      state.sheet = "priceBook";
+      render(); return;
+    }
+    if (name === "confirmCustomQuote") {
+      const d = state.customQuoteDraft; if (!d) return;
+      const item = getBookItem(d.itemId); if (!item) return;
+      if (!(Number(d.partCost) > 0)) { showToast("Enter the OEM part cost"); return; }
+      const line = {
+        id: item.id,
+        label: item.name,
+        amount: 0,
+        qty: 1,
+        unit: "ea",
+        fromBook: true,
+        customQuote: true,
+        partCost: Number(d.partCost),
+        refCost: Number(d.refCost) > 0 ? Number(d.refCost) : "",
+        refLbs: Number(d.refLbs) > 0 ? Number(d.refLbs) : "",
+        laborHours: item.laborHours
+      };
+      state.packDraft = repriceFlatRateDraft((state.packDraft || []).concat([line]));
+      state.customQuoteDraft = null;
+      state.sheet = "priceBook";
+      showToast("Added custom quote");
       render(); return;
     }
     if (name === "addCustomLine") {
@@ -4696,7 +4888,7 @@
     if (name === "saveEstimate") {
       const job = getJob(state.openJobId); if (!job) return;
       const lines = state.packDraft;
-      job.lineItems = lines.map(function (l) { return { label: draftLabel(l) + (l.flatRate && flatRoleLabel(l) ? " (" + flatRoleLabel(l) + ")" : ""), amount: lineTotal(l), id: l.id, cost: lineCostOf({ id: l.id, label: l.label, amount: l.amount, qty: 1, cost: l.cost }), fromBook: !!l.fromBook, flatRate: !!l.flatRate, flatRole: l.flatRole || null }; });
+      job.lineItems = lines.map(function (l) { return { label: draftLabel(l) + ((l.flatRate || l.customQuote) && flatRoleLabel(l) ? " (" + flatRoleLabel(l) + ")" : ""), amount: lineTotal(l), id: l.id, cost: lineCostOf({ id: l.id, label: l.label, amount: l.amount, qty: 1, cost: l.cost }), fromBook: !!l.fromBook, flatRate: !!l.flatRate, customQuote: !!l.customQuote, flatRole: l.flatRole || null }; });
       job.total = draftTotal(lines);
       if (!job.estimateId) job.estimateId = job.id + "-E01";
       if (!Array.isArray(job.estimates)) job.estimates = [];
