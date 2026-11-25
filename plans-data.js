@@ -132,26 +132,6 @@ window.RT_PLANS = {
       "hcpName": "FYF Biannual preventative maintenance",
       "hcpStatus": "Expired 2025-11-02",
       "notes": "Steve confirmed 2026-11-24: she declined the $225 prepaid annual but wants the visits made. Two seasonal visits per year at $125 each, billed on completion, no prepay. No phone is on file. FYF biannual expired 2025-11-02. August 24, 2026 visit (job 55703, invoice #91) was paid $125. Steve said another visit is scheduled with no invoice sent yet; no scheduled date was found in the Housecall Pro export or her history. Job 55702 is unscheduled, $125 due, no invoice, created August 21, 2026 \u2014 two days before 55703. Flagged for Steve to confirm whether 55702 is the next visit or a leftover of the August job."
-    },
-    {
-      "id": "p-ssmith-commitment",
-      "customerId": "c40",
-      "siteAddress": "17971 Lucero Way, Tustin, CA 92780",
-      "type": "first_year_included",
-      "name": "Install commitment",
-      "status": "follow_up",
-      "price": 0,
-      "billingMode": "included",
-      "visitsPerYear": 2,
-      "dueMonths": [],
-      "startDate": "2024-09-25",
-      "renewalDate": "2025-12-07",
-      "coveredSystemsCount": 1,
-      "hcpName": "Biannual preventative maintenance following full system installation",
-      "hcpStatus": "Expired 2025-12-07",
-      "tag": "install_commitment",
-      "confirmWithSteve": true,
-      "notes": "Confirm with Steve. Payne 3-ton system installed September 25, 2024 (job 55622). The first-year / FYF plan expired December 7, 2025 with no recorded maintenance visits. These two visits are marked as an install commitment that was never fulfilled; confirm whether to honor them as included or offer the $225 prepaid annual instead."
     }
   ],
   "visits": [
@@ -353,44 +333,6 @@ window.RT_PLANS = {
       "notes": "Steve said another visit is scheduled and no invoice has been sent yet. No scheduled date appears in the Housecall Pro jobs or invoices export or in her history. Job 55702 is the only open Doreen job: status Needs scheduling, $125.00 due, no scheduled start, no invoice in the export, created August 21, 2026, two days before completed job 55703. Do not invent a date. Confirm with Steve whether 55702 is this next visit or a leftover of the August visit.",
       "bookingToken": "60e414bc82f216e3e1625a97b348e245",
       "dateUnknown": true
-    },
-    {
-      "id": "v-ssmith-1",
-      "planId": "p-ssmith-commitment",
-      "customerId": "c40",
-      "label": "Visit 1 of 2",
-      "dueWindowStart": "2025-03-01",
-      "dueWindowEnd": "2025-06-30",
-      "scheduledStart": null,
-      "scheduledEnd": null,
-      "status": "overdue",
-      "jobId": "25084",
-      "billing": "included",
-      "completedOn": null,
-      "tag": "install_commitment",
-      "confirmWithSteve": true,
-      "needsFollowUp": true,
-      "notes": "Install commitment \u2014 confirm with Steve. No maintenance visit was recorded during the first-year window.",
-      "bookingToken": "814850d24ce371f2c5346470d76668f1"
-    },
-    {
-      "id": "v-ssmith-2",
-      "planId": "p-ssmith-commitment",
-      "customerId": "c40",
-      "label": "Visit 2 of 2",
-      "dueWindowStart": "2025-09-01",
-      "dueWindowEnd": "2025-12-07",
-      "scheduledStart": null,
-      "scheduledEnd": null,
-      "status": "overdue",
-      "jobId": "25085",
-      "billing": "included",
-      "completedOn": null,
-      "tag": "install_commitment",
-      "confirmWithSteve": true,
-      "needsFollowUp": true,
-      "notes": "Install commitment \u2014 confirm with Steve. Companion visit; none were recorded before the plan expired.",
-      "bookingToken": "d7cc148bffe88755b2416d88e4c2b43c"
     }
   ],
   "planJobs": [
@@ -603,67 +545,25 @@ window.RT_PLANS = {
         }
       ],
       "planJob": true
-    },
-    {
-      "id": "25084",
-      "customerId": "c40",
-      "customer": "Steve Smith",
-      "address": "17971 Lucero Way",
-      "city": "Tustin",
-      "phone": "(714) 883-1045",
-      "problem": "Maintenance visit 1 of 2 \u2014 install commitment (confirm with Steve)",
-      "status": "new",
-      "lineItems": [
-        {
-          "label": "Maintenance \u2014 one system (confirm billing with Steve)",
-          "amount": 0,
-          "qty": 1
-        }
-      ],
-      "total": 0,
-      "dueAmount": 0,
-      "readingSets": [],
-      "timeline": [
-        {
-          "id": "t25084",
-          "kind": "system",
-          "time": "",
-          "title": "Confirm with Steve",
-          "body": "Install commitment. First-year plan expired with no recorded visits. Confirm whether this is still included."
-        }
-      ],
-      "planJob": true
-    },
-    {
-      "id": "25085",
-      "customerId": "c40",
-      "customer": "Steve Smith",
-      "address": "17971 Lucero Way",
-      "city": "Tustin",
-      "phone": "(714) 883-1045",
-      "problem": "Maintenance visit 2 of 2 \u2014 install commitment (confirm with Steve)",
-      "status": "new",
-      "lineItems": [
-        {
-          "label": "Maintenance \u2014 one system (confirm billing with Steve)",
-          "amount": 0,
-          "qty": 1
-        }
-      ],
-      "total": 0,
-      "dueAmount": 0,
-      "readingSets": [],
-      "timeline": [
-        {
-          "id": "t25085",
-          "kind": "system",
-          "time": "",
-          "title": "Confirm with Steve",
-          "body": "Companion visit to #25084. Confirm billing with Steve."
-        }
-      ],
-      "planJob": true
     }
   ],
-  "bookingBase": "https://tempmaster-1968.github.io/reliatech-app-mockup/book.html?v="
+  "bookingBase": "https://tempmaster-1968.github.io/reliatech-app-mockup/book.html?v=",
+  "voidedJobIds": [
+    "25084",
+    "25085"
+  ],
+  "reservedJobIds": [
+    "25083"
+  ],
+  "prospects": [
+    {
+      "id": "pr-ssmith",
+      "customerId": "c40",
+      "label": "Plan prospect: offer $225 prepaid annual",
+      "offer": "prepaid_annual",
+      "price": 225,
+      "visitsPerYear": 2,
+      "notes": "Steve confirmed 2026-11-24: Steve Smith has no maintenance plan. The first-year / FYF window after the September 25, 2024 Payne 3-ton install (job 55622) expired December 7, 2025 with no recorded maintenance visits. Offer the $225 prepaid annual (two seasonal visits a year); do not auto-enroll. Reserved job numbers 25084 and 25085 were voided and are not reused."
+    }
+  ]
 };

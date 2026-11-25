@@ -204,7 +204,9 @@
   function nextJobId(jobs) {
     const lists = (jobs || []).concat((state && state.moneyJobs) ? state.moneyJobs : []);
     const maxRt = lists.reduce(function (m, j) { return Math.max(m, reliaTechJobNum(j.id)); }, 25075);
-    return String(maxRt + 1);
+    const held = [].concat((PLAN_SEED && PLAN_SEED.voidedJobIds) || [], (PLAN_SEED && PLAN_SEED.reservedJobIds) || []);
+    const maxHeld = held.reduce(function (m, id) { return Math.max(m, reliaTechJobNum(id)); }, 0);
+    return String(Math.max(maxRt, maxHeld) + 1);
   }
   function draftTotal(lines) { return lines.reduce((s, l) => s + l.amount * l.qty, 0); }
   function draftLabel(l) { return l.unit === "lb" ? l.label + ", " + l.qty + " lb" : l.qty > 1 ? l.label + " × " + l.qty : l.label; }
@@ -1068,6 +1070,15 @@
     state.jobs = state.jobs.filter(function (j) {
       return j.id !== "25083" || !!j.scheduledStart;
     });
+    const dropPlanIds = { "p-ssmith-commitment": true };
+    const dropVisitIds = { "v-ssmith-1": true, "v-ssmith-2": true };
+    const dropJobIds = { "25084": true, "25085": true };
+    state.plans = (state.plans || []).filter(function (p) { return !dropPlanIds[p.id]; });
+    state.visits = (state.visits || []).filter(function (v) { return !dropVisitIds[v.id]; });
+    state.jobs = state.jobs.filter(function (j) {
+      if (!dropJobIds[j.id]) return true;
+      return !!(j.scheduledStart || (j.timeEntries && j.timeEntries.length));
+    });
   })();
   function persist() {
     try {
@@ -1124,6 +1135,48 @@
   function planById(id) { return (state.plans || []).find(function (p) { return p.id === id; }) || null; }
   function visitsForCustomer(cid) { return (state.visits || []).filter(function (v) { return v.customerId === cid; }); }
   function plansForCustomer(cid) { return (state.plans || []).filter(function (p) { return p.customerId === cid; }); }
+  function planProspects() {
+    const list = [];
+    const seen = {};
+    ((PLAN_SEED && PLAN_SEED.prospects) || []).forEach(function (pr) {
+      if (!pr || !pr.customerId || seen[pr.customerId]) return;
+      seen[pr.customerId] = true;
+      list.push(pr);
+    });
+    (state.plans || []).forEach(function (p) {
+      if (p.type !== "offer_prepaid_annual" || seen[p.customerId]) return;
+      seen[p.customerId] = true;
+      list.push({
+        id: "pr-plan-" + p.id,
+        customerId: p.customerId,
+        label: "Plan prospect: offer $225 prepaid annual",
+        offer: "prepaid_annual",
+        price: p.price || 225,
+        visitsPerYear: p.visitsPerYear || 2,
+        notes: p.notes || "",
+        planId: p.id
+      });
+    });
+    return list.sort(function (a, b) {
+      const ca = getCustomer(a.customerId), cb = getCustomer(b.customerId);
+      return String(ca ? ca.name : "").localeCompare(String(cb ? cb.name : ""));
+    });
+  }
+  function prospectsForCustomer(cid) {
+    return planProspects().filter(function (p) { return p.customerId === cid; });
+  }
+  function prospectCard(pr, opts) {
+    opts = opts || {};
+    const c = getCustomer(pr.customerId);
+    const title = pr.label || "Plan prospect: offer $225 prepaid annual";
+    return '<button class="plan-card prospect-card" ' + (opts.clickable === false ? "type=\"button\" style=\"cursor:default;text-align:left\"" : act("openCustomer", pr.customerId)) + ">" +
+      '<div class="plan-head"><div><div class="k-up">Plan prospect</div><div class="h2" style="margin-top:2px">' + esc(opts.showCustomer && c ? c.name : title) + "</div></div>" +
+      pill("$225", "#0C5C5C", "#E6F4F4") + "</div>" +
+      (opts.showCustomer && c ? '<div class="muted">' + esc(title) + "</div>" : "") +
+      '<div class="muted"' + (opts.showCustomer && c ? ' style="margin-top:4px"' : "") + ">" + esc([c && opts.showCustomer ? ((c.city || "") + (c.address ? " · " + c.address : "")) : "", pr.price ? money(pr.price) + " prepaid annual" : "", pr.visitsPerYear ? (pr.visitsPerYear + " visits / year") : ""].filter(Boolean).join(" · ")) + "</div>" +
+      (pr.notes && !opts.compact ? '<div class="muted" style="margin-top:8px">' + esc(pr.notes) + "</div>" : "") +
+      "</button>";
+  }
   function visitStatus(v) {
     if (!v) return "upcoming";
     if (v.status === "cancelled" || v.status === "canceled") return "cancelled";
@@ -1459,10 +1512,15 @@
     const due = boardPlanVisits();
     let dueHtml = "";
     if (!searching && mode === "board") {
+      const prospects = planProspects();
       dueHtml = '<div class="section-row"><div class="section" style="margin:0">Plan visits due</div>' +
         '<button class="link-btn" style="margin:0" ' + act("openPlans") + ">See all plan visits</button></div>";
       if (due.length) dueHtml += '<div class="due-list">' + due.map(dueVisitCard).join("") + "</div>";
       else dueHtml += '<div class="muted" style="margin:-4px 0 14px">Nothing overdue or due in the next 14 days. Older and later visits are on See all plan visits and on each customer page.</div>';
+      if (prospects.length) {
+        dueHtml += '<div class="section-row"><div class="section" style="margin:0">Plan prospects</div></div>' +
+          '<div class="due-list">' + prospects.map(function (pr) { return prospectCard(pr, { showCustomer: true, compact: true, clickable: true }); }).join("") + "</div>";
+      }
     }
     const unpaid = unpaidBalanceJobs();
     const chips = (mode === "all" && !searching)
@@ -1584,6 +1642,11 @@
       '<div class="content screen"><div class="pad">' +
       '<div class="muted" style="margin-bottom:12px">Due and overdue plan visits, plus visits that need follow-up. Scheduling here updates the customer’s visit list on this phone. Ask the assistant to put a confirmed time on your Google Calendar.</div>' +
       (due.length ? '<div class="due-list">' + due.map(dueVisitCard).join("") + "</div>" : '<div class="muted" style="margin-bottom:16px">Nothing is due right now.</div>') +
+      (function () {
+        const prospects = planProspects();
+        if (!prospects.length) return "";
+        return '<div class="section">Plan prospects</div>' + prospects.map(function (pr) { return prospectCard(pr, { showCustomer: true, compact: false, clickable: true }); }).join("");
+      })() +
       (upcoming.length ? '<div class="section">Scheduled and upcoming</div>' + upcoming.map(function (v) { return visitBlock(v, true); }).join("") : "") +
       "</div></div>";
   }
@@ -1785,6 +1848,7 @@
       (c.phone ? '<div class="teal" style="margin:6px 0 0">' + esc(c.phone) + "</div>" : "") +
       (c.email ? '<div class="muted" style="margin-top:4px">' + esc(c.email) + "</div>" : "") + "</div>" +
       '<button class="btn" style="margin-bottom:16px" ' + act("newJobFromCustomer", c.id) + ">New job · #" + nextId + "</button>" +
+      prospectsForCustomer(c.id).map(function (pr) { return prospectCard(pr, { showCustomer: false, compact: false, clickable: false }); }).join("") +
       plansForCustomer(c.id).map(function (p) { return planCard(p, c); }).join("") +
       '<div class="section-row"><div class="section" style="margin:0">Equipment</div></div>' +
       '<button class="dash" style="margin:10px 0 12px" ' + act("addEquipment", c.id) + ">Add equipment</button>" +

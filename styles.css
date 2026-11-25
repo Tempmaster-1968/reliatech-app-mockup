@@ -704,3 +704,13 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
 }
 .acting-inline { font-size: 12px; }
 .acting-inline strong { color: var(--text); }
+
+button.plan-card, button.prospect-card {
+  display: block;
+  width: 100%;
+  border: none;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
