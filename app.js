@@ -2246,6 +2246,77 @@
   function zelleMemo(job) {
     return "ReliaTech Invoice " + invoiceNumber(job);
   }
+  const PUBLIC_PAY_BASE = "https://tempmaster-1968.github.io/reliatech-app-mockup/";
+  function firstName(name) {
+    const t = String(name || "").replace(/,/g, " ").trim().split(/\s+/).filter(Boolean)[0];
+    return t || "there";
+  }
+  function invoiceParty(job) {
+    const bill = (typeof billToCustomer === "function") ? billToCustomer(job) : null;
+    const cust = job ? getCustomer(job.customerId) : null;
+    return {
+      name: (bill && bill.name) || (job && job.customer) || (cust && cust.name) || "",
+      phone: (bill && bill.phone) || (job && job.phone) || (cust && cust.phone) || "",
+      email: (bill && bill.email) || (job && job.email) || (cust && cust.email) || ""
+    };
+  }
+  function smsNumber(phone) {
+    const d = String(phone || "").replace(/\D/g, "");
+    if (d.length === 10) return "+1" + d;
+    if (d.length === 11 && d[0] === "1") return "+" + d;
+    if (d.length > 0) return "+" + d;
+    return "";
+  }
+  function payFileId(job) {
+    if (job && job.payId) return job.payId;
+    if (job && PAYMENT.payFiles && PAYMENT.payFiles[job.id]) return PAYMENT.payFiles[job.id];
+    const inv = invoiceNumber(job);
+    if (PAYMENT.payFiles && PAYMENT.payFiles[inv]) return PAYMENT.payFiles[inv];
+    return "";
+  }
+  function invoicePayload(job) {
+    const party = invoiceParty(job);
+    const inv = invoiceNumber(job);
+    const due = invoiceDue(job) || job.total || 0;
+    return {
+      invoiceId: inv,
+      customerName: party.name,
+      lineItems: (job.lineItems || []).map(function (l) {
+        return { label: l.label || l.name || "Item", amount: Number(l.amount) || 0 };
+      }),
+      amount: due,
+      stripeUrl: stripeLinkFor(job) || "",
+      memo: zelleMemo(job)
+    };
+  }
+  function encodePayPayload(payload) {
+    const json = JSON.stringify(payload);
+    return btoa(unescape(encodeURIComponent(json))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  }
+  function customerPayUrl(job) {
+    const base = PUBLIC_PAY_BASE + "pay.html";
+    const slug = payFileId(job);
+    if (slug) return base + "?inv=" + encodeURIComponent(slug);
+    return base + "?d=" + encodePayPayload(invoicePayload(job));
+  }
+  function invoiceMessage(job) {
+    const party = invoiceParty(job);
+    const due = invoiceDue(job) || job.total || 0;
+    return "Hi " + firstName(party.name) + ", here is your invoice " + invoiceNumber(job) +
+      " from ReliaTech Services for " + money(due) + ". You can view and pay here: " +
+      customerPayUrl(job) + ". Thank you! - Steve";
+  }
+  function smsHref(job) {
+    const num = smsNumber(invoiceParty(job).phone);
+    if (!num) return "";
+    return "sms:" + num + "&body=" + encodeURIComponent(invoiceMessage(job));
+  }
+  function mailtoHref(job) {
+    const email = invoiceParty(job).email || "";
+    const subject = "Invoice " + invoiceNumber(job) + " from ReliaTech Services";
+    return "mailto:" + (email ? encodeURIComponent(email) : "") +
+      "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(invoiceMessage(job));
+  }
   function emptyPaidDraft() {
     return { method: "Card/Stripe", date: todayYmd() };
   }
@@ -3011,6 +3082,7 @@
       (job.status === "done" || job.status === "approved" || job.status === "progress" ? '<button class="btn teal" ' + act("sheet", "invoice") + ">Make invoice</button>" : "") +
       (job.status === "invoiced" || job.status === "paid" || job.invoiceId ? '<button class="btn ghost" ' + act("sheet", "invoice") + ">View invoice</button>" : "") +
       (isPayable(job) ? '<button class="btn teal" ' + act("sheet", "pay") + ">Pay now</button>" : "") +
+      (job.invoiceId || job.status === "invoiced" || job.status === "paid" || isPayable(job) ? '<button class="btn" ' + act("sheet", "send") + ">Send invoice</button>" : "") +
       (isPayable(job) || job.status === "invoiced" ? '<button class="btn accent" ' + act("sheet", "paid") + ">Mark paid</button>" : "") +
       '<button class="btn ask" ' + act("sheet", "ask") + ">" + icon("chat", 18) + "<span>Ask ReliaTech</span></button>" +
       "</div></div></div>";
@@ -3459,6 +3531,7 @@
       "</div>" +
       (job.paidMethod ? '<div class="muted" style="margin-top:12px">Marked paid' + (job.paidDate ? " on " + esc(job.paidDate) : "") + " · " + esc(job.paidMethod) + (job.status === "paid" ? "" : "") + ".</div>" : "") +
       (existing && isPayable(job) ? '<button class="btn teal" ' + act("sheet", "pay") + ">Pay now</button>" : "") +
+      (existing ? '<button class="btn teal" ' + act("sheet", "send") + ">Send invoice</button>" : "") +
       (existing && (isPayable(job) || job.status === "invoiced") ? '<button class="btn accent" ' + act("sheet", "paid") + ">Mark paid</button>" : "") +
       (existing ? '<button class="btn' + (isPayable(job) ? " ghost" : "") + '" ' + act("closeSheet") + ">Done</button>" : '<button class="btn teal" ' + act("makeInvoice") + ">Create invoice</button>"));
   }
@@ -3508,6 +3581,31 @@
       }).join("") + "</div>" +
       '<label class="field"><div class="field-lab">Date</div><input id="paid-date" type="date" value="' + esc(d.date || todayYmd()) + '" oninput="RT.setPaidDate(this.value)"></label>' +
       '<button class="btn accent" ' + act("markPaid") + ">Mark paid</button>");
+  }
+
+  function sendSheet(job) {
+    const party = invoiceParty(job);
+    const inv = invoiceNumber(job);
+    const due = invoiceDue(job) || job.total || 0;
+    const link = customerPayUrl(job);
+    const msg = invoiceMessage(job);
+    const sms = smsHref(job);
+    const mail = mailtoHref(job);
+    const hasPhone = !!smsNumber(party.phone);
+    const hasEmail = !!(party.email && String(party.email).indexOf("@") !== -1);
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Send invoice</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="muted" style="margin-bottom:12px">Opens a prefilled text or email on this phone. Nothing is sent until you press Send.</div>' +
+      '<div class="k-up">Invoice ' + esc(inv) + " · " + money(due) + "</div>" +
+      '<div class="h2" style="margin:4px 0 10px">' + esc(party.name || "Customer") + "</div>" +
+      '<div class="panel" style="margin-bottom:14px;white-space:pre-wrap;font-size:14px;line-height:20px">' + esc(msg) + "</div>" +
+      (hasPhone
+        ? '<a class="btn teal" href="' + esc(sms) + '">Send text to ' + esc(party.phone) + "</a>"
+        : '<div class="muted" style="margin-bottom:10px">No cell number on this invoice. Add a phone on the customer, or copy the message.</div>') +
+      '<a class="btn' + (hasEmail ? " teal" : " ghost") + '" href="' + esc(mail) + '">' + (hasEmail ? "Send email to " + esc(party.email) : "Send email") + "</a>" +
+      '<button class="btn ghost" ' + act("copyPayLink") + ">Copy payment link</button>" +
+      '<button class="btn ghost" ' + act("copyInvoiceMsg") + ">Copy message</button>" +
+      '<div class="hint">Customer pay page: ' + esc(link) + "</div>");
   }
   function savedSheet() {
     return backdrop(
@@ -4087,6 +4185,7 @@
     if (s === "approval") return job ? approvalSheet(job) : "";
     if (s === "invoice") return job ? invoiceSheet(job) : "";
     if (s === "pay") return job ? paySheet(job) : "";
+    if (s === "send") return job ? sendSheet(job) : "";
     if (s === "paid") return job ? paidSheet(job) : "";
     if (s === "saved") return savedSheet();
     if (s === "priceBook") return job ? priceBookSheet(job) : "";
@@ -4290,6 +4389,18 @@
       const job = getJob(state.openJobId);
       if (!job) return;
       copyText(zelleMemo(job), "Memo copied");
+      return;
+    }
+    if (name === "copyPayLink") {
+      const job = getJob(state.openJobId);
+      if (!job) return;
+      copyText(customerPayUrl(job), "Payment link copied");
+      return;
+    }
+    if (name === "copyInvoiceMsg") {
+      const job = getJob(state.openJobId);
+      if (!job) return;
+      copyText(invoiceMessage(job), "Message copied");
       return;
     }
     if (name === "openNewCall") {

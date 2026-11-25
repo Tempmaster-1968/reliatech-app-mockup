@@ -11,13 +11,12 @@ This is the permanent address. Future updates are published to the same URL.
 
 ## Paying an invoice
 
-Open a job with a balance (or Money → Unpaid invoices) and tap **Pay now**. The payment screen offers:
+Open a job with a balance (or Money → Unpaid invoices) and tap **Pay now**. The payment screen offers card / Apple Pay, Venmo, and Zelle.
 
-- **Card / Apple Pay** — opens a Stripe Payment Link. Open invoices with a known balance have a link for that amount and invoice number. New invoices use a reusable ReliaTech Services payment link; the customer enters the invoice number and amount on the Stripe page. Creating a link does not charge a card.
-- **Venmo** — opens Venmo to @Steve-Seguine with the amount and invoice memo filled in.
-- **Zelle** — shows 562-487-8750 with copy buttons for the number and the memo. Zelle has no payment link.
+**Send invoice** is on the invoice (View invoice, or the job actions). It opens a prefilled text or email on Steve’s phone — nothing is sent until he presses Send. The message includes a customer payment page that shows only that invoice (`pay.html?inv=…`). Customers should use that link, not this app.
 
-**Mark paid** is on Steve’s side of the invoice. Choose a method (Card/Stripe, Venmo, Zelle, Cash, or Check) and a date. That marks the invoice paid in this app only; it does not take a payment and stays on this phone until the records are exported again.
+A $1 test invoice (TEST-01) for Nika Seguine is included so Steve can send and try a payment.
+
 
 ## Add to Home Screen (iPhone)
 

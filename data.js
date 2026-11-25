@@ -7,8 +7,8 @@ window.RT_DATA = {
   "outstanding": 980.5,
   "openEstimates": 865.0,
   "counts": {
-    "customers": 45,
-    "jobs": 101,
+    "customers": 46,
+    "jobs": 102,
     "invoices": 121,
     "estimates": 56,
     "priceBook": 55,
@@ -17,6 +17,15 @@ window.RT_DATA = {
     ]
   },
   "customers": [
+    {
+      "id": "c46",
+      "name": "Nika Seguine",
+      "address": "",
+      "city": "",
+      "phone": "(562) 279-4469",
+      "email": "",
+      "equipment": []
+    },
     {
       "id": "c1",
       "name": "Addie Calkin",
@@ -529,6 +538,37 @@ window.RT_DATA = {
   ],
   "jobs": [
     {
+      "id": "TEST",
+      "customerId": "c46",
+      "customer": "Nika Seguine",
+      "address": "",
+      "city": "",
+      "phone": "(562) 279-4469",
+      "problem": "Test payment",
+      "status": "invoiced",
+      "lineItems": [
+        {
+          "label": "Test payment",
+          "amount": 1.0
+        }
+      ],
+      "total": 1.0,
+      "dueAmount": 1.0,
+      "invoiceId": "TEST-01",
+      "payId": "TEST-01",
+      "stripePaymentUrl": "https://buy.stripe.com/bJe5kCeqKdrn0Td8Ry6Na04",
+      "readingSets": [],
+      "timeline": [
+        {
+          "id": "tTEST-created",
+          "kind": "system",
+          "time": "Nov 24, 2026",
+          "title": "Test invoice",
+          "body": "TEST-01 for $1.00 so Steve can send a customer payment link."
+        }
+      ]
+    },
+    {
       "id": "55702",
       "customerId": "c12",
       "customer": "Doreen Sanchez",
@@ -563,7 +603,8 @@ window.RT_DATA = {
       ],
       "dueAmount": 125.0,
       "stripePaymentUrl": "https://buy.stripe.com/bJeeVcdmG4UR6dxffW6Na01",
-      "invoiceId": "55702-01"
+      "invoiceId": "55702-01",
+      "payId": "55702-01"
     },
     {
       "id": "25069",
@@ -688,7 +729,8 @@ window.RT_DATA = {
       "invoiceId": "97",
       "estimateId": "25066",
       "schedule": "Sep 11, 2026, 4:00 PM",
-      "stripePaymentUrl": "https://buy.stripe.com/7sY3cu5Ue3QNeK3ebS6Na02"
+      "stripePaymentUrl": "https://buy.stripe.com/7sY3cu5Ue3QNeK3ebS6Na02",
+      "payId": "55707-balance"
     },
     {
       "id": "55700",
@@ -896,7 +938,8 @@ window.RT_DATA = {
       ],
       "dueAmount": 263.0,
       "stripePaymentUrl": "https://buy.stripe.com/7sY4gy96qcnjcBV2ta6Na00",
-      "invoiceId": "55674-01"
+      "invoiceId": "55674-01",
+      "payId": "55674-01"
     },
     {
       "id": "55719",
@@ -5604,7 +5647,14 @@ window.RT_DATA = {
     "links": {
       "55674": "https://buy.stripe.com/7sY4gy96qcnjcBV2ta6Na00",
       "55702": "https://buy.stripe.com/bJeeVcdmG4UR6dxffW6Na01",
-      "55707": "https://buy.stripe.com/7sY3cu5Ue3QNeK3ebS6Na02"
+      "55707": "https://buy.stripe.com/7sY3cu5Ue3QNeK3ebS6Na02",
+      "TEST": "https://buy.stripe.com/bJe5kCeqKdrn0Td8Ry6Na04"
+    },
+    "payFiles": {
+      "TEST": "TEST-01",
+      "55674": "55674-01",
+      "55702": "55702-01",
+      "55707": "55707-balance"
     }
   }
 };
