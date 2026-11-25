@@ -2322,14 +2322,13 @@
     const billLine = same
       ? (multi ? "Bills to the service address on each job" : (formatAddrLine(c.address, c.city) || "Bills to the service address"))
       : (formatAddrLine(c.billingAddress, c.billingCity) || "Enter a billing address");
+    const headerBits = (c.phone ? '<div class="teal">' + esc(c.phone) + "</div>" : "") +
+      (c.email ? '<div class="muted" style="margin-top:4px">' + esc(c.email) + "</div>" : "") +
+      (addrs.length === 1 ? '<div class="muted"' + (c.phone || c.email ? ' style="margin-top:6px"' : "") + '>' + esc(formatAddrLine(addrs[0].address, addrs[0].city) || "No service address yet") + "</div>" : "") +
+      (addrs.length === 0 ? '<div class="muted"' + (c.phone || c.email ? ' style="margin-top:6px"' : "") + '>Billing contact · no service address</div>' : "");
     let html = topBar({ back: "closeCustomer", title: c.name, badge: SHOW_SAMPLE_BADGE }) +
       '<div class="content screen"><div class="pad">' +
-      '<div class="panel" style="margin-bottom:14px">' +
-      (c.phone ? '<div class="teal">' + esc(c.phone) + "</div>" : "") +
-      (c.email ? '<div class="muted" style="margin-top:4px">' + esc(c.email) + "</div>" : "") +
-      (addrs.length === 1 ? '<div class="muted" style="margin-top:6px">' + esc(formatAddrLine(addrs[0].address, addrs[0].city) || "No service address yet") + "</div>" : "") +
-      (addrs.length === 0 ? '<div class="muted" style="margin-top:6px">Billing contact · no service address</div>' : "") +
-      "</div>" +
+      (headerBits ? '<div class="panel" style="margin-bottom:14px">' + headerBits + "</div>" : "") +
       '<div class="section">Billing</div>' +
       '<button class="dash' + (same ? " sel" : "") + '" style="margin-bottom:10px" ' + act("toggleBillingSame", c.id) + ">" +
         (same ? "Billing same as service address" : "Billing address is different") +
