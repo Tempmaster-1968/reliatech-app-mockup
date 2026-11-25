@@ -61,18 +61,6 @@
       "durationMinutes": 120,
       "windowStart": "2026-11-24",
       "windowEnd": "2026-12-31"
-    },
-    "814850d24ce371f2c5346470d76668f1": {
-      "label": "Maintenance visit",
-      "durationMinutes": 120,
-      "windowStart": "2026-11-24",
-      "windowEnd": "2026-12-31"
-    },
-    "d7cc148bffe88755b2416d88e4c2b43c": {
-      "label": "Maintenance visit",
-      "durationMinutes": 120,
-      "windowStart": "2027-04-15",
-      "windowEnd": "2027-05-31"
     }
   }
 }
