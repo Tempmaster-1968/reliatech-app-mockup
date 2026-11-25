@@ -714,3 +714,8 @@ button.plan-card, button.prospect-card {
   font: inherit;
   cursor: pointer;
 }
+
+.doc-blocks { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 12px; }
+.doc-block { background: var(--field); border-radius: 12px; padding: 10px 12px; }
+.doc-block .h2 { font-size: 15px; }
+.check-row { display: flex; align-items: flex-start; gap: 10px; }

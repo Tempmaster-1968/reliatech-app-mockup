@@ -288,7 +288,12 @@
     delete copy.equipment;
     return copy;
   }
-  function customerAssets(c) { return (c && c.assets) ? c.assets : []; }
+  function customerAssets(c) {
+    if (!c) return [];
+    const fromAddr = serviceAddresses(c).reduce(function (acc, a) { return acc.concat(a.assets || []); }, []);
+    if (fromAddr.length) return fromAddr;
+    return c.assets ? c.assets : [];
+  }
   function assetPreview(c) {
     const assets = customerAssets(c);
     if (assets.length) return assetTitle(assets[0]) + (assets.length > 1 ? " +" + (assets.length - 1) : "");
@@ -296,6 +301,418 @@
     return "";
   }
   function getCustomer(id) { return state.customers.find(function (c) { return c.id === id; }) || null; }
+
+  function emptyAddress(partial) {
+    return Object.assign({
+      id: "",
+      label: "",
+      address: "",
+      city: "",
+      onsiteName: "",
+      onsitePhone: "",
+      accessNotes: "",
+      assets: [],
+      mentions: [],
+      example: false
+    }, partial || {});
+  }
+  function serviceAddresses(c) { return (c && Array.isArray(c.addresses)) ? c.addresses : []; }
+  function primaryAddress(c) { return serviceAddresses(c)[0] || null; }
+  function syncCustomerPrimary(c) {
+    if (!c) return c;
+    const a = primaryAddress(c);
+    if (a) {
+      c.address = a.address || "";
+      c.city = a.city || "";
+    } else if (!serviceAddresses(c).length) {
+      /* billing-only contact may have no service address */
+    }
+    return c;
+  }
+  function nextAddressId(customerId, customers) {
+    const list = customers || (state && state.customers) || [];
+    const used = {};
+    list.forEach(function (c) {
+      serviceAddresses(c).forEach(function (a) { if (a && a.id) used[a.id] = true; });
+    });
+    let n = 1;
+    const prefix = "sa-" + (customerId || "x") + "-";
+    while (used[prefix + n]) n += 1;
+    return prefix + n;
+  }
+  function getAddressById(id, customers) {
+    if (!id) return null;
+    const list = customers || (state && state.customers) || [];
+    for (let i = 0; i < list.length; i++) {
+      const addrs = serviceAddresses(list[i]);
+      for (let k = 0; k < addrs.length; k++) {
+        if (addrs[k].id === id) return addrs[k];
+      }
+    }
+    return null;
+  }
+  function customerOfAddress(id, customers) {
+    if (!id) return null;
+    const list = customers || (state && state.customers) || [];
+    for (let i = 0; i < list.length; i++) {
+      if (serviceAddresses(list[i]).some(function (a) { return a.id === id; })) return list[i];
+    }
+    return null;
+  }
+  function ensureCustomerAddresses(c, customers) {
+    if (!c) return c;
+    if (c.billingSameAsService == null) c.billingSameAsService = true;
+    if (c.billingAddress == null) c.billingAddress = "";
+    if (c.billingCity == null) c.billingCity = "";
+    if (!Array.isArray(c.addresses)) c.addresses = [];
+    if (!c.addresses.length) {
+      const hasHome = !!(c.address || c.city || (c.assets && c.assets.length) || (c.mentions && c.mentions.length));
+      if (hasHome) {
+        c.addresses.push(emptyAddress({
+          id: nextAddressId(c.id, customers || [c]),
+          address: c.address || "",
+          city: c.city || "",
+          assets: Array.isArray(c.assets) ? c.assets.slice() : [],
+          mentions: Array.isArray(c.mentions) ? c.mentions.slice() : []
+        }));
+        c.assets = [];
+        c.mentions = [];
+      }
+    } else {
+      if ((c.assets && c.assets.length) || (c.mentions && c.mentions.length)) {
+        const first = c.addresses[0];
+        first.assets = (first.assets || []).concat(c.assets || []);
+        first.mentions = (first.mentions || []).concat(c.mentions || []);
+        c.assets = [];
+        c.mentions = [];
+      }
+      c.addresses.forEach(function (a) {
+        if (!a.id) a.id = nextAddressId(c.id, customers || [c]);
+        if (!Array.isArray(a.assets)) a.assets = [];
+        if (!Array.isArray(a.mentions)) a.mentions = [];
+      });
+    }
+    return syncCustomerPrimary(c);
+  }
+  function ensureJobParties(j, customers) {
+    if (!j) return j;
+    if (!Array.isArray(j.estimates)) j.estimates = [];
+    if (!j.billToCustomerId) j.billToCustomerId = j.customerId || "";
+    if (!j.customerRef) j.customerRef = j.customerRef || "";
+    if (!j.referredBy) j.referredBy = j.referredBy || "";
+    if (j.addressId && getAddressById(j.addressId, customers)) return j;
+    const c = (customers || (state && state.customers) || []).find(function (x) { return x.id === j.customerId; });
+    if (c) {
+      const addrs = serviceAddresses(c);
+      const match = addrs.find(function (a) {
+        return (a.address || "") === (j.address || "") && (a.city || "") === (j.city || "");
+      }) || addrs[0];
+      if (match) j.addressId = match.id;
+    }
+    return j;
+  }
+  function ensurePlanAddress(p, customers) {
+    if (!p) return p;
+    if (p.addressId && getAddressById(p.addressId, customers)) return p;
+    const c = (customers || (state && state.customers) || []).find(function (x) { return x.id === p.customerId; });
+    if (!c) return p;
+    const addrs = serviceAddresses(c);
+    if (!addrs.length) return p;
+    const site = String(p.siteAddress || "").toLowerCase();
+    const match = addrs.find(function (a) {
+      const street = String(a.address || "").toLowerCase();
+      return street && site.indexOf(street) !== -1;
+    }) || addrs[0];
+    p.addressId = match.id;
+    return p;
+  }
+  function ensureVisitAddress(v, customers, plans) {
+    if (!v) return v;
+    if (v.addressId && getAddressById(v.addressId, customers)) return v;
+    const plan = (plans || (state && state.plans) || []).find(function (p) { return p.id === v.planId; });
+    if (plan && plan.addressId) { v.addressId = plan.addressId; return v; }
+    const c = (customers || (state && state.customers) || []).find(function (x) { return x.id === v.customerId; });
+    const a = c ? primaryAddress(c) : null;
+    if (a) v.addressId = a.id;
+    return v;
+  }
+  function formatAddrLine(address, city) {
+    return [address, city].filter(function (x) { return x && String(x).trim(); }).join(", ");
+  }
+  function addressLine(a) {
+    if (!a) return "";
+    const line = formatAddrLine(a.address, a.city);
+    return a.label ? (a.label + " · " + line) : line;
+  }
+  function serviceAddressOf(job) {
+    if (!job) return null;
+    const found = getAddressById(job.addressId);
+    if (found) return found;
+    const c = getCustomer(job.customerId);
+    if (c) {
+      const match = serviceAddresses(c).find(function (a) {
+        return (a.address || "") === (job.address || "");
+      });
+      return match || primaryAddress(c);
+    }
+    if (job.address || job.city) return emptyAddress({ address: job.address || "", city: job.city || "" });
+    return null;
+  }
+  function billToCustomer(job) {
+    if (!job) return null;
+    return getCustomer(job.billToCustomerId) || getCustomer(job.customerId);
+  }
+  function billingInfo(customer, job) {
+    if (!customer) return { name: "", address: "", city: "", phone: "", email: "" };
+    if (customer.billingSameAsService === false && (customer.billingAddress || customer.billingCity)) {
+      return { name: customer.name, address: customer.billingAddress || "", city: customer.billingCity || "", phone: customer.phone || "", email: customer.email || "" };
+    }
+    const loc = job ? serviceAddressOf(job) : primaryAddress(customer);
+    return {
+      name: customer.name,
+      address: loc ? loc.address : (customer.address || ""),
+      city: loc ? loc.city : (customer.city || ""),
+      phone: customer.phone || "",
+      email: customer.email || ""
+    };
+  }
+  function jobsForAddress(addressId) {
+    if (!addressId) return [];
+    return state.jobs.concat(state.moneyJobs || []).filter(function (j) { return j.addressId === addressId; });
+  }
+  function jobsForCustomer(c) {
+    if (!c) return [];
+    const addrIds = {};
+    serviceAddresses(c).forEach(function (a) { if (a.id) addrIds[a.id] = true; });
+    return state.jobs.concat(state.moneyJobs || []).filter(function (j) {
+      return j.customerId === c.id || addrIds[j.addressId] || j.billToCustomerId === c.id;
+    });
+  }
+  function serviceJobsForCustomer(c) {
+    if (!c) return [];
+    const addrIds = {};
+    serviceAddresses(c).forEach(function (a) { if (a.id) addrIds[a.id] = true; });
+    return state.jobs.concat(state.moneyJobs || []).filter(function (j) {
+      return j.customerId === c.id || addrIds[j.addressId];
+    });
+  }
+  function billedOnlyJobs(c) {
+    if (!c) return [];
+    const addrIds = {};
+    serviceAddresses(c).forEach(function (a) { if (a.id) addrIds[a.id] = true; });
+    return state.jobs.concat(state.moneyJobs || []).filter(function (j) {
+      return j.billToCustomerId === c.id && j.customerId !== c.id && !addrIds[j.addressId];
+    });
+  }
+  function plansForAddress(addressId) {
+    return (state.plans || []).filter(function (p) { return p.addressId === addressId; });
+  }
+  function findAssetHome(customerId, assetId) {
+    const c = getCustomer(customerId);
+    if (!c || !assetId) return null;
+    const addrs = serviceAddresses(c);
+    for (let i = 0; i < addrs.length; i++) {
+      const asset = (addrs[i].assets || []).find(function (x) { return x.id === assetId; });
+      if (asset) return { customer: c, address: addrs[i], asset: asset };
+    }
+    const leftover = (c.assets || []).find(function (x) { return x.id === assetId; });
+    if (leftover) return { customer: c, address: primaryAddress(c), asset: leftover };
+    return null;
+  }
+  function nextEstimateId(job) {
+    let max = 0;
+    const ids = [(job && job.estimateId) || ""].concat(((job && job.estimates) || []).map(function (e) { return e.id; }));
+    ids.forEach(function (id) {
+      const m = String(id || "").match(/-E(\d+)$/);
+      if (m) max = Math.max(max, Number(m[1]));
+    });
+    return job.id + "-E" + String(max + 1).padStart(2, "0");
+  }
+  function archiveCurrentEstimate(job) {
+    if (!job || !job.estimateId) return;
+    if (!Array.isArray(job.estimates)) job.estimates = [];
+    const exists = job.estimates.some(function (e) { return e.id === job.estimateId && !e.superseded; });
+    if (!exists) {
+      const already = job.estimates.find(function (e) { return e.id === job.estimateId; });
+      if (already) already.superseded = true;
+      else {
+        job.estimates.push({
+          id: job.estimateId,
+          lineItems: JSON.parse(JSON.stringify(job.lineItems || [])),
+          total: job.total,
+          billToCustomerId: job.billToCustomerId || job.customerId,
+          createdAt: isoNow(),
+          superseded: true
+        });
+      }
+    } else {
+      job.estimates.forEach(function (e) { if (e.id === job.estimateId) e.superseded = true; });
+    }
+  }
+  function applyBillToChange(job, newBillToId) {
+    const oldC = billToCustomer(job);
+    const newC = getCustomer(newBillToId);
+    if (!job || !newC || (oldC && oldC.id === newC.id)) return false;
+    const oldName = oldC ? oldC.name : "—";
+    const when = formatDate(isoNow()) || "today";
+    if (job.estimateId) {
+      archiveCurrentEstimate(job);
+      const newId = nextEstimateId(job);
+      const rev = {
+        id: newId,
+        lineItems: JSON.parse(JSON.stringify(job.lineItems || [])),
+        total: job.total,
+        billToCustomerId: newC.id,
+        createdAt: isoNow(),
+        superseded: false
+      };
+      job.estimates.push(rev);
+      job.estimateId = newId;
+    }
+    job.billToCustomerId = newC.id;
+    const note = "Billing changed from " + oldName + " to " + newC.name + " on " + when;
+    job.timeline = [{ id: "bill" + Date.now(), kind: "system", time: "Just now", title: "Billing changed", body: note }].concat(job.timeline || []);
+    return true;
+  }
+  function prettyDateLong() {
+    const d = new Date();
+    const p = tzParts(d);
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return months[p.month - 1] + " " + p.day + ", " + p.year;
+  }
+  function docBlocksHtml(job, opts) {
+    opts = opts || {};
+    const payer = billToCustomer(job);
+    const bill = billingInfo(payer, job);
+    const loc = serviceAddressOf(job);
+    const svcCust = getCustomer(job.customerId);
+    const locLine = loc ? formatAddrLine(loc.address, loc.city) : formatAddrLine(job.address, job.city);
+    const onsite = loc && (loc.onsiteName || loc.onsitePhone)
+      ? ("On site: " + [loc.onsiteName, loc.onsitePhone].filter(Boolean).join(" · "))
+      : "";
+    const access = loc && loc.accessNotes ? ("Access: " + loc.accessNotes) : "";
+    const po = job.customerRef ? ("Ref / PO: " + job.customerRef) : "";
+    const referred = job.referredBy ? ("Referred by: " + job.referredBy) : "";
+    let html = '<div class="doc-blocks">';
+    html += '<div class="doc-block"><div class="k-up">Bill to</div>';
+    html += '<div class="h2" style="margin-top:2px">' + esc(bill.name || (payer && payer.name) || job.customer || "—") + "</div>";
+    html += '<div class="muted">' + esc(formatAddrLine(bill.address, bill.city) || "—") + "</div>";
+    if (bill.phone) html += '<div class="teal" style="margin-top:4px">' + esc(bill.phone) + "</div>";
+    if (po) html += '<div class="muted" style="margin-top:4px">' + esc(po) + "</div>";
+    html += "</div>";
+    html += '<div class="doc-block"><div class="k-up">Service location</div>';
+    if (svcCust && payer && svcCust.id !== payer.id) {
+      html += '<div class="h2" style="margin-top:2px">' + esc(svcCust.name) + "</div>";
+    }
+    html += '<div class="' + (svcCust && payer && svcCust.id !== payer.id ? "muted" : "h2") + '" style="margin-top:2px">' + esc(locLine || "—") + "</div>";
+    if (onsite) html += '<div class="muted" style="margin-top:4px">' + esc(onsite) + "</div>";
+    if (access && !opts.hideAccess) html += '<div class="muted" style="margin-top:4px">' + esc(access) + "</div>";
+    html += "</div></div>";
+    if (referred && opts.showReferred) html += '<div class="muted" style="margin-bottom:8px">' + esc(referred) + "</div>";
+    return html;
+  }
+  function emptyNewCall(extra) {
+    return Object.assign({
+      chips: [], detail: "", urgency: "today", customerId: "", isNew: false, fromCustomer: false,
+      newName: "", newPhone: "", newAddress: "", newCity: "Long Beach", newEmail: "", custQuery: "",
+      addressId: "", billToCustomerId: "", customerRef: "", referredBy: ""
+    }, extra || {});
+  }
+  function customerSearchHay(c) {
+    const parts = [c.name, c.address, c.city, c.phone, c.email, c.billingAddress, c.billingCity];
+    serviceAddresses(c).forEach(function (a) {
+      parts.push(a.address, a.city, a.label, a.onsiteName, a.onsitePhone, a.accessNotes);
+    });
+    return parts.filter(Boolean).join(" ");
+  }
+  function addressCard(a, c, opts) {
+    opts = opts || {};
+    const jobs = jobsForAddress(a.id);
+    const assets = a.assets || [];
+    const preview = assets.length ? assetTitle(assets[0]) + (assets.length > 1 ? " +" + (assets.length - 1) : "") : "";
+    const line = addressLine(a) || "Address not entered";
+    const onsite = [a.onsiteName, a.onsitePhone].filter(Boolean).join(" · ");
+    return '<button class="list-card" ' + act("openAddress", a.id) + '><div class="job-body" style="min-width:0">' +
+      (a.example ? '<div class="meta">Example only · removable</div>' : "") +
+      '<div class="job-name" style="margin-top:0">' + esc(line) + "</div>" +
+      (onsite ? '<div class="muted">' + esc(onsite) + "</div>" : "") +
+      '<div class="muted">' + (jobs.length ? (jobs.length + " job" + (jobs.length === 1 ? "" : "s")) : "No jobs yet") +
+      (preview ? " · " + esc(preview) : "") + "</div></div><div class=\"chev\">" + icon("chevron", 18) + "</div></button>";
+  }
+
+  function customerMentions(c) {
+    if (!c) return [];
+    const fromAddr = serviceAddresses(c).reduce(function (acc, a) {
+      return acc.concat(a.mentions || []);
+    }, []);
+    if (fromAddr.length) return fromAddr;
+    return c.mentions || [];
+  }
+
+  function addressPickerHtml(customer, selectedId, actName) {
+    const addrs = serviceAddresses(customer);
+    if (!customer || addrs.length <= 1) return "";
+    return '<div class="section">Service address</div><div class="stack" style="margin-bottom:12px">' + addrs.map(function (a) {
+      const on = selectedId === a.id;
+      return '<button class="list-card' + (on ? " sel" : "") + '" style="border:1.5px solid ' + (on ? TEAL : "transparent") + '" ' + act(actName || "pickAddress", a.id) + '><div class="job-body"><div class="job-name" style="margin-top:0">' + esc(addressLine(a) || "Address not entered") + "</div>" +
+        (a.onsiteName ? '<div class="muted">' + esc("On site: " + a.onsiteName) + "</div>" : "") +
+        (a.example ? '<div class="meta">Example only</div>' : "") +
+        "</div></button>";
+    }).join("") + "</div>";
+  }
+  function jobPartiesHeader(job) {
+    const loc = serviceAddressOf(job);
+    const svc = getCustomer(job.customerId);
+    const payer = billToCustomer(job);
+    const locLine = loc ? formatAddrLine(loc.address, loc.city) : formatAddrLine(job.address, job.city);
+    const onsite = loc && (loc.onsiteName || loc.onsitePhone) ? [loc.onsiteName, loc.onsitePhone].filter(Boolean).join(" · ") : "";
+    const bill = billingInfo(payer, job);
+    const openArg = loc && loc.id ? loc.id : job.customerId;
+    const openAct = loc && loc.id ? "openAddress" : "openCustomer";
+    let html = '<div class="linkish" ' + act(openAct, openArg) + ' style="cursor:pointer">' + icon("pin", 16) + "<span>" + esc((svc && svc.name) || job.customer || "") + (locLine ? " · " + esc(locLine) : "") + "</span></div>";
+    if (onsite) html += '<div class="muted" style="margin:4px 0 0">On site: ' + esc(onsite) + "</div>";
+    html += '<div class="panel" style="margin:12px 0 14px"><div class="k-up">Bill to</div><div class="h2" style="margin-top:2px">' + esc(bill.name || "—") + "</div>" +
+      '<div class="muted">' + esc(formatAddrLine(bill.address, bill.city) || "—") + "</div>" +
+      (job.customerRef ? '<div class="muted" style="margin-top:4px">Ref / PO: ' + esc(job.customerRef) + "</div>" : "") +
+      (job.referredBy ? '<div class="muted" style="margin-top:4px">Referred by: ' + esc(job.referredBy) + "</div>" : "") +
+      '<button class="link-btn" style="margin-top:8px" ' + act("openBillTo") + ">Change Bill to</button></div>";
+    html += '<label class="field"><div class="field-lab">Customer ref / PO (optional)</div><input id="job-ref" value="' + esc(job.customerRef || "") + '" oninput="RT.setJobField(\'customerRef\', this.value)"></label>';
+    html += '<label class="field"><div class="field-lab">Referred by (optional)</div><input id="job-referred" placeholder="e.g. Rocky Gentner" value="' + esc(job.referredBy || "") + '" oninput="RT.setJobField(\'referredBy\', this.value)"></label>';
+    return html;
+  }
+  function estimateHistoryHtml(job) {
+    const list = (job.estimates || []).slice().sort(function (a, b) { return String(a.id).localeCompare(String(b.id)); });
+    if (!list.length) return "";
+    return '<div class="section">Estimates</div><div class="stack" style="margin-bottom:14px">' + list.map(function (e) {
+      const payer = getCustomer(e.billToCustomerId);
+      const current = e.id === job.estimateId && !e.superseded;
+      return '<button class="list-card" ' + act("viewEstimate", e.id) + '><div class="job-body"><div class="row"><div class="h2" style="margin:0">' + esc(e.id) + "</div>" +
+        (current ? pill("Current", "#0C5C5C", "#E6F4F4") : pill("Earlier", "#5C5C5C", "var(--field)")) + "</div>" +
+        '<div class="muted">Bill to ' + esc(payer ? payer.name : "—") + (e.total != null ? " · " + money(e.total) : "") + "</div></div></button>";
+    }).join("") + "</div>";
+  }
+  function viewEstimateSheet(job) {
+    const id = state.viewEstimateId || job.estimateId;
+    const rec = ((job.estimates || []).find(function (e) { return e.id === id; })) || {
+      id: job.estimateId, lineItems: job.lineItems || [], total: job.total, billToCustomerId: job.billToCustomerId
+    };
+    const snap = Object.assign({}, job, {
+      estimateId: rec.id,
+      lineItems: rec.lineItems || [],
+      total: rec.total,
+      billToCustomerId: rec.billToCustomerId || job.billToCustomerId
+    });
+    const earlier = rec.superseded ? '<div class="muted" style="margin-bottom:8px">Earlier estimate · kept for reference. Current is ' + esc(job.estimateId || rec.id) + ".</div>" : "";
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Estimate ' + esc(rec.id || "") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      earlier +
+      '<div class="doc"><div class="k-up">ReliaTech Services</div>' +
+      docBlocksHtml(snap, { showReferred: true }) +
+      (rec.lineItems || []).map(function (l) { return '<div class="row" style="margin-top:6px"><div>' + esc(l.label) + "</div><div>" + money(l.amount) + "</div></div>"; }).join("") +
+      '<div class="row" style="margin-top:12px;font-weight:750"><div>Total</div><div>' + money(rec.total || 0) + "</div></div></div>" +
+      '<button class="btn" style="margin-top:12px" ' + act("closeSheet") + ">Done</button>");
+  }
+
 
   const ICONS = {
     jobs: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 5V4h8v1M8 10h8M8 14h5"/>',
@@ -717,9 +1134,16 @@
     if (!np) return false;
     return !!(np.make || np.model || np.serial || np.refrigerant || np.filterSize || np.photo);
   }
-  function saveNameplateToCustomer(customer, np) {
+  function saveNameplateToCustomer(customer, np, addressId) {
     if (!customer || !nameplateFilled(np)) return false;
-    if (!customer.assets) customer.assets = [];
+    ensureCustomerAddresses(customer, state.customers);
+    let loc = addressId ? getAddressById(addressId) : null;
+    if (!loc) loc = primaryAddress(customer);
+    if (!loc) {
+      loc = emptyAddress({ id: nextAddressId(customer.id), address: customer.address || "", city: customer.city || "" });
+      customer.addresses = [loc];
+    }
+    if (!loc.assets) loc.assets = [];
     const asset = emptyAsset();
     asset.type = np.type || "furnace";
     asset.make = (np.make || "").trim();
@@ -728,7 +1152,7 @@
     asset.refrigerant = (np.refrigerant || "").trim();
     asset.filterSize = (np.filterSize || "").trim();
     asset.photo = np.photo || "";
-    customer.assets.push(asset);
+    loc.assets.push(asset);
     return true;
   }
 
@@ -957,6 +1381,10 @@
           city: n.city != null ? n.city : base.city,
           phone: n.phone != null ? n.phone : base.phone,
           email: n.email != null ? n.email : base.email,
+          billingSameAsService: n.billingSameAsService != null ? n.billingSameAsService : base.billingSameAsService,
+          billingAddress: n.billingAddress != null ? n.billingAddress : base.billingAddress,
+          billingCity: n.billingCity != null ? n.billingCity : base.billingCity,
+          addresses: (n.addresses && n.addresses.length) ? n.addresses : (base.addresses || []),
           assets: n.assets || [],
           mentions: (n.mentions && n.mentions.length) ? n.mentions : base.mentions
         });
@@ -1017,7 +1445,7 @@
     customers: mergeCustomers(_initialCustomers, _saved && _saved.customers),
     moneyJobs: PAST_JOBS.map((j) => JSON.parse(JSON.stringify(j))),
     newCallStep: 1,
-    newCall: { chips: [], detail: "", urgency: "today", customerId: "", isNew: false, fromCustomer: false, newName: "", newPhone: "", newAddress: "", newCity: "Long Beach", newEmail: "", custQuery: "" },
+    newCall: emptyNewCall(),
     readingDraft: { mode: "cooling", label: "Arrival", values: {}, fromScreenshot: false },
     assetDraft: emptyAsset(),
     assetEditingId: null,
@@ -1042,7 +1470,16 @@
     showCompleted: !!(!_saved ? false : _saved.showCompleted),
     screen: null,
     scheduleVisitId: null,
-    scheduleDraft: { date: "", time: "" }
+    scheduleDraft: { date: "", time: "" },
+    openAddressId: null,
+    addressDraft: null,
+    addressEditingId: null,
+    addressCustomerId: null,
+    moveAddressId: null,
+    moveQuery: "",
+    billToDraft: null,
+    assetAddressId: null,
+    viewEstimateId: null
   };
   state.techRecords = normalizeTechRecords(state.techs, _saved && _saved.techRecords);
   state.techs = techNamesFrom(state.techRecords);
@@ -1080,6 +1517,13 @@
       return !!(j.scheduledStart || (j.timeEntries && j.timeEntries.length));
     });
   })();
+  (function migrateServiceAccounts() {
+    state.customers = state.customers.map(function (c) { return ensureCustomerAddresses(c, state.customers); });
+    state.jobs = state.jobs.map(function (j) { return ensureJobParties(j, state.customers); });
+    state.moneyJobs = (state.moneyJobs || []).map(function (j) { return ensureJobParties(j, state.customers); });
+    (state.plans || []).forEach(function (p) { ensurePlanAddress(p, state.customers); });
+    (state.visits || []).forEach(function (v) { ensureVisitAddress(v, state.customers, state.plans); });
+  })();
   function persist() {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify({
@@ -1110,6 +1554,7 @@
     state.sheet = null;
     state.compareIds = [];
     state.voiceConfirm = null;
+    state.viewEstimateId = null;
     if (state.voice) state.voice.listening = false;
     if (recognition) { try { recognition.abort(); } catch (e) {} }
     render();
@@ -1450,7 +1895,31 @@
     setTimeEdit: function (k, v) { state.timeEdit[k] = v; },
     setVoiceText: function (v) { state.voice.text = v; },
     setSetting: function (k, v) { state.settings[k] = v; renderKeepFocus("st-" + k); },
-    setSched: function (k, v) { state.scheduleDraft[k] = v; }
+    setSched: function (k, v) { state.scheduleDraft[k] = v; },
+    setBilling: function (k, v) {
+      const c = getCustomer(state.openCustomerId);
+      if (!c) return;
+      c[k] = v;
+      renderKeepFocus(k === "billingAddress" ? "bill-address" : "bill-city");
+    },
+    setAddressField: function (k, v) {
+      if (!state.addressDraft) state.addressDraft = emptyAddress();
+      state.addressDraft[k] = v;
+      renderKeepFocus("ad-" + k);
+    },
+    setMoveQuery: function (v) { state.moveQuery = v; renderKeepFocus("mv-q"); },
+    setBillToField: function (k, v) {
+      if (!state.billToDraft) state.billToDraft = { query: "", isNew: false, newName: "", newPhone: "", newEmail: "", newAddress: "", newCity: "Long Beach" };
+      state.billToDraft[k] = v;
+      const id = k === "query" ? "bt-q" : "bt-" + k;
+      renderKeepFocus(id);
+    },
+    setJobField: function (k, v) {
+      const job = getJob(state.openJobId);
+      if (!job) return;
+      job[k] = v;
+      renderKeepFocus(k === "customerRef" ? "job-ref" : "job-referred");
+    }
   };
 
   function renderKeepFocus(id) {
@@ -1733,9 +2202,9 @@
     const iconFor = { call: "phone", note: "note", photo: "photo", reading: "reading", system: "chat" };
     return topBar({ back: "closeJob", title: "Job " + job.id, badge: SHOW_SAMPLE_BADGE }) +
       '<div class="content screen"><div class="pad">' +
-      '<div class="linkish" ' + act("openCustomer", job.customerId) + ' style="cursor:pointer">' + icon("pin", 16) + "<span>" + esc(job.customer) + " · " + esc(job.address) + ", " + esc(job.city) + "</span></div>" +
+      jobPartiesHeader(job) +
       '<div class="h1">' + esc(job.problem) + "</div>" +
-      '<div class="teal">' + esc(job.phone) + "</div>" +
+      (job.phone ? '<div class="teal">' + esc(job.phone) + "</div>" : "") +
       '<div style="margin-bottom:16px">' + pill(st.label, col.text, col.bg) + (job.schedule ? '<span class="muted" style="margin-left:8px;font-size:12px">' + esc(job.schedule) + "</span>" : "") + "</div>" +
       jobEquipmentSection(job) +
       timeSection(job) +
@@ -1749,6 +2218,7 @@
       '<div class="section">Timeline</div><div class="timeline">' + job.timeline.map(function (item) {
         return '<div class="t-item"><div class="t-ico">' + icon(iconFor[item.kind] || "note", 16) + "</div><div style=\"min-width:0\"><div class=\"meta\">" + esc(item.time) + "</div><div style=\"font-weight:700;font-size:14px;margin:2px 0\">" + esc(item.title) + "</div><div class=\"muted\">" + esc(item.body) + "</div></div></div>";
       }).join("") + "</div>" +
+      estimateHistoryHtml(job) +
       '<div class="actions">' +
       '<button class="btn" ' + act("openPriceBook") + ">Build estimate</button>" +
       (job.estimateId ? '<button class="btn ghost" ' + act("sheet", "approval") + ">Send for approval · " + job.estimateId + "</button>" : "") +
@@ -1797,12 +2267,14 @@
 
   function jobEquipmentSection(job) {
     const c = getCustomer(job.customerId);
-    const assets = c ? customerAssets(c) : [];
+    const loc = serviceAddressOf(job);
+    const assets = loc ? (loc.assets || []) : (c ? customerAssets(c) : []);
     let html = '<div class="section-row"><div class="section" style="margin:0">Equipment at this home</div>';
-    if (c) html += '<button class="link-btn" style="margin:0" ' + act("openCustomer", c.id) + ">Customer profile</button>";
+    if (loc && loc.id) html += '<button class="link-btn" style="margin:0" ' + act("openAddress", loc.id) + ">Service address</button>";
+    else if (c) html += '<button class="link-btn" style="margin:0" ' + act("openCustomer", c.id) + ">Customer profile</button>";
     html += "</div>";
     if (!assets.length) {
-      html += '<div class="muted" style="margin:8px 0 16px">No equipment on this customer profile yet.</div>';
+      html += '<div class="muted" style="margin:8px 0 16px">No equipment on this service address yet.</div>';
       return html;
     }
     html += '<div class="stack" style="margin:8px 0 16px">' + assets.map(function (a) {
@@ -1823,7 +2295,7 @@
   function customersList() {
     const q = state.query.trim().toLowerCase();
     const list = state.customers.filter(function (c) {
-      return !q || [c.name, c.address, c.city, c.phone].join(" ").toLowerCase().indexOf(q) !== -1;
+      return !q || customerSearchHay(c).toLowerCase().indexOf(q) !== -1;
     });
     return topBar({ kicker: "ReliaTech Services", title: "Customers", badge: SHOW_SAMPLE_BADGE, settings: true }) +
       '<div class="content"><div class="pad">' +
@@ -1832,36 +2304,102 @@
         const preview = assetPreview(c);
         return '<button class="list-card" ' + act("openCustomer", c.id) + '><div class="job-body" style="display:flex;gap:12px;align-items:flex-start">' +
           '<div class="avatar">' + esc(initials(c.name)) + "</div><div style=\"min-width:0\"><div class=\"job-name\" style=\"margin-top:0\">" + esc(c.name) + "</div>" +
-          '<div class="muted">' + esc(c.address) + ", " + esc(c.city) + "</div><div class=\"muted\">" + esc(c.phone) + "</div>" +
+          '<div class="muted">' + esc((serviceAddresses(c).length > 1) ? (serviceAddresses(c).length + " service addresses") : (formatAddrLine(c.address, c.city) || "No service address")) + "</div>" +
+          (c.phone ? '<div class="muted">' + esc(c.phone) + "</div>" : "") +
           (preview ? '<div class="meta" style="margin-top:4px">' + esc(preview) + "</div>" : "") +
           "</div></div><div class=\"chev\">" + icon("chevron", 18) + "</div></button>";
       }).join("") + "</div></div></div>" + tabBar();
   }
   function customerDetail(c) {
-    const jobs = state.jobs.concat(state.moneyJobs).filter(function (j) { return j.customerId === c.id; });
+    const addrs = serviceAddresses(c);
+    const multi = addrs.length > 1;
+    const jobs = serviceJobsForCustomer(c);
+    const billed = billedOnlyJobs(c);
     const assets = customerAssets(c);
-    const mentions = c.mentions || [];
+    const mentions = customerMentions(c);
     const nextId = nextJobId(state.jobs);
-    return topBar({ back: "closeCustomer", title: c.name, badge: SHOW_SAMPLE_BADGE }) +
+    const same = c.billingSameAsService !== false;
+    const billLine = same
+      ? (multi ? "Bills to the service address on each job" : (formatAddrLine(c.address, c.city) || "Bills to the service address"))
+      : (formatAddrLine(c.billingAddress, c.billingCity) || "Enter a billing address");
+    let html = topBar({ back: "closeCustomer", title: c.name, badge: SHOW_SAMPLE_BADGE }) +
       '<div class="content screen"><div class="pad">' +
-      '<div class="panel" style="margin-bottom:14px"><div class="muted">' + esc(c.address) + (c.city ? ", " + esc(c.city) : "") + "</div>" +
-      (c.phone ? '<div class="teal" style="margin:6px 0 0">' + esc(c.phone) + "</div>" : "") +
-      (c.email ? '<div class="muted" style="margin-top:4px">' + esc(c.email) + "</div>" : "") + "</div>" +
+      '<div class="panel" style="margin-bottom:14px">' +
+      (c.phone ? '<div class="teal">' + esc(c.phone) + "</div>" : "") +
+      (c.email ? '<div class="muted" style="margin-top:4px">' + esc(c.email) + "</div>" : "") +
+      (addrs.length === 1 ? '<div class="muted" style="margin-top:6px">' + esc(formatAddrLine(addrs[0].address, addrs[0].city) || "No service address yet") + "</div>" : "") +
+      (addrs.length === 0 ? '<div class="muted" style="margin-top:6px">Billing contact · no service address</div>' : "") +
+      "</div>" +
+      '<div class="section">Billing</div>' +
+      '<button class="dash' + (same ? " sel" : "") + '" style="margin-bottom:10px" ' + act("toggleBillingSame", c.id) + ">" +
+        (same ? "Billing same as service address" : "Billing address is different") +
+      "</button>" +
+      (same ? '<div class="muted" style="margin:-4px 0 14px">' + esc(billLine) + "</div>" :
+        '<label class="field"><div class="field-lab">Billing address</div><input id="bill-address" value="' + esc(c.billingAddress || "") + '" oninput="RT.setBilling(\'billingAddress\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">City</div><input id="bill-city" value="' + esc(c.billingCity || "") + '" oninput="RT.setBilling(\'billingCity\', this.value)"></label>') +
+      '<div class="section-row"><div class="section" style="margin:0">Service addresses</div></div>' +
+      (addrs.length ? '<div class="stack" style="margin:10px 0 8px">' + addrs.map(function (a) { return addressCard(a, c); }).join("") + "</div>" :
+        '<div class="muted" style="margin:10px 0">No service address yet. Add one for the house you work on.</div>') +
+      '<button class="dash" style="margin:0 0 16px" ' + act("addAddress", c.id) + ">Add service address</button>" +
       '<button class="btn" style="margin-bottom:16px" ' + act("newJobFromCustomer", c.id) + ">New job · #" + nextId + "</button>" +
       prospectsForCustomer(c.id).map(function (pr) { return prospectCard(pr, { showCustomer: false, compact: false, clickable: false }); }).join("") +
-      plansForCustomer(c.id).map(function (p) { return planCard(p, c); }).join("") +
+      plansForCustomer(c.id).map(function (p) { return planCard(p, c); }).join("");
+    if (!multi) {
+      const only = addrs[0];
+      html += '<div class="section-row"><div class="section" style="margin:0">Equipment</div></div>' +
+        '<button class="dash" style="margin:10px 0 12px" ' + act("addEquipment", c.id + (only ? "|" + only.id : "")) + ">Add equipment</button>" +
+        (assets.length ? '<div class="stack" style="margin-bottom:16px">' + assets.map(function (a) { return assetCard(a, c.id, false); }).join("") + "</div>" :
+          '<div class="muted" style="margin-bottom:16px">No equipment recorded yet. Add the furnace, coil, and condenser from the nameplate when you are on site.</div>') +
+        (mentions.length ? '<div class="section">Mentioned in job history</div><div class="muted" style="margin:-4px 0 10px">These came from Housecall Pro job or estimate descriptions. They are not full equipment records.</div>' + mentions.map(function (e) {
+          return '<div class="panel" style="margin-bottom:10px"><div class="h2">' + esc(e.name) + "</div><div class=\"muted\" style=\"margin-top:4px\">" + esc(e.detail) + "</div></div>";
+        }).join("") : "");
+    } else {
+      html += '<div class="muted" style="margin-bottom:16px">Equipment is kept on each service address.</div>';
+    }
+    html += '<div class="section">Jobs</div><div class="stack">' + (jobs.length ? jobs.map(function (j) {
+        if (state.jobs.some(function (x) { return x.id === j.id; })) return jobCard(j);
+        const col = sc(j.status);
+        return '<div class="job-card" style="cursor:default"><div class="stripe" style="background:' + col.bar + '"></div><div class="job-body"><div class="row"><div class="meta">#' + j.id + "</div>" + pill(STATUS[j.status].label, col.text, col.bg) + "</div><div class=\"job-prob\" style=\"margin-top:6px\">" + esc(j.problem) + "</div><div class=\"row\"><div class=\"addr\">" + (j.invoiceId || "") + "</div><div class=\"amt\">" + money(j.total) + "</div></div></div></div>";
+      }).join("") : '<div class="muted">No jobs for this customer yet.</div>') + "</div>";
+    if (billed.length) {
+      html += '<div class="section">Billed to this customer</div><div class="muted" style="margin:-4px 0 10px">These jobs are at another service address, with this customer as Bill to.</div><div class="stack">' +
+        billed.map(function (j) { return state.jobs.some(function (x) { return x.id === j.id; }) ? jobCard(j) : ""; }).join("") + "</div>";
+    }
+    html += "</div></div>";
+    return html;
+  }
+  function addressDetail(a, c) {
+    if (!a || !c) return "";
+    const jobs = jobsForAddress(a.id);
+    const assets = a.assets || [];
+    const mentions = a.mentions || [];
+    const nextId = nextJobId(state.jobs);
+    const plans = plansForAddress(a.id);
+    const line = formatAddrLine(a.address, a.city) || "Address not entered";
+    return topBar({ back: "closeAddress", title: a.label || "Service address", badge: SHOW_SAMPLE_BADGE }) +
+      '<div class="content screen"><div class="pad">' +
+      (a.example ? '<div class="warn-banner" style="margin-bottom:12px">Example only · removable. This is not a real job site.</div>' : "") +
+      '<div class="panel" style="margin-bottom:14px"><div class="h2">' + esc(line) + "</div>" +
+      (a.label ? '<div class="muted" style="margin-top:4px">' + esc(a.label) + "</div>" : "") +
+      (a.onsiteName || a.onsitePhone ? '<div class="muted" style="margin-top:6px">On site: ' + esc([a.onsiteName, a.onsitePhone].filter(Boolean).join(" · ")) + "</div>" : "") +
+      (a.accessNotes ? '<div class="muted" style="margin-top:6px">Access: ' + esc(a.accessNotes) + "</div>" : "") +
+      '<div class="muted" style="margin-top:8px">Customer · ' + esc(c.name) + "</div></div>" +
+      '<button class="btn" style="margin-bottom:10px" ' + act("newJobFromAddress", a.id) + ">New job · #" + nextId + "</button>" +
+      '<button class="btn ghost" style="margin-bottom:10px" ' + act("editAddress", a.id) + ">Edit address and on-site contact</button>" +
+      '<button class="link-btn" style="margin:0 0 16px" ' + act("moveAddress", a.id) + ">Move this address to another customer</button>" +
+      plans.map(function (p) { return planCard(p, c); }).join("") +
       '<div class="section-row"><div class="section" style="margin:0">Equipment</div></div>' +
-      '<button class="dash" style="margin:10px 0 12px" ' + act("addEquipment", c.id) + ">Add equipment</button>" +
-      (assets.length ? '<div class="stack" style="margin-bottom:16px">' + assets.map(function (a) { return assetCard(a, c.id, false); }).join("") + "</div>" :
-        '<div class="muted" style="margin-bottom:16px">No equipment recorded yet. Add the furnace, coil, and condenser from the nameplate when you are on site.</div>') +
-      (mentions.length ? '<div class="section">Mentioned in job history</div><div class="muted" style="margin:-4px 0 10px">These came from Housecall Pro job or estimate descriptions. They are not full equipment records.</div>' + mentions.map(function (e) {
+      '<button class="dash" style="margin:10px 0 12px" ' + act("addEquipment", c.id + "|" + a.id) + ">Add equipment</button>" +
+      (assets.length ? '<div class="stack" style="margin-bottom:16px">' + assets.map(function (x) { return assetCard(x, c.id, false); }).join("") + "</div>" :
+        '<div class="muted" style="margin-bottom:16px">No equipment recorded at this address yet.</div>') +
+      (mentions.length ? '<div class="section">Mentioned in job history</div>' + mentions.map(function (e) {
         return '<div class="panel" style="margin-bottom:10px"><div class="h2">' + esc(e.name) + "</div><div class=\"muted\" style=\"margin-top:4px\">" + esc(e.detail) + "</div></div>";
       }).join("") : "") +
       '<div class="section">Jobs</div><div class="stack">' + (jobs.length ? jobs.map(function (j) {
         if (state.jobs.some(function (x) { return x.id === j.id; })) return jobCard(j);
         const col = sc(j.status);
-        return '<div class="job-card" style="cursor:default"><div class="stripe" style="background:' + col.bar + '"></div><div class="job-body"><div class="row"><div class="meta">#' + j.id + "</div>" + pill(STATUS[j.status].label, col.text, col.bg) + "</div><div class=\"job-prob\" style=\"margin-top:6px\">" + esc(j.problem) + "</div><div class=\"row\"><div class=\"addr\">" + (j.invoiceId || "") + "</div><div class=\"amt\">" + money(j.total) + "</div></div></div></div>";
-      }).join("") : '<div class="muted">No jobs for this customer yet.</div>') + "</div></div></div>";
+        return '<div class="job-card" style="cursor:default"><div class="stripe" style="background:' + col.bar + '"></div><div class="job-body"><div class="row"><div class="meta">#' + j.id + "</div>" + pill(STATUS[j.status].label, col.text, col.bg) + "</div><div class=\"job-prob\" style=\"margin-top:6px\">" + esc(j.problem) + "</div></div></div>";
+      }).join("") : '<div class="muted">No jobs at this address yet.</div>') + "</div></div></div>";
   }
 
   function moneyScreen() {
@@ -1925,8 +2463,10 @@
     if (step === 1) {
       const lockedCust = fromCust ? getCustomer(nc.customerId) : null;
       const locked = lockedCust
-        ? '<div class="panel" style="margin-bottom:12px;padding:12px"><div class="k-up">Customer</div><div class="h2">' + esc(lockedCust.name) + '</div><div class="muted">' + esc(lockedCust.address) + (lockedCust.city ? ", " + esc(lockedCust.city) : "") + "</div>" +
-          (lockedCust.phone ? '<div class="teal" style="margin:4px 0 0">' + esc(lockedCust.phone) + "</div>" : "") + "</div>"
+        ? '<div class="panel" style="margin-bottom:12px;padding:12px"><div class="k-up">Customer</div><div class="h2">' + esc(lockedCust.name) + '</div>' +
+          (serviceAddresses(lockedCust).length <= 1 ? '<div class="muted">' + esc(formatAddrLine(lockedCust.address, lockedCust.city) || "") + "</div>" : "") +
+          (lockedCust.phone ? '<div class="teal" style="margin:4px 0 0">' + esc(lockedCust.phone) + "</div>" : "") + "</div>" +
+          addressPickerHtml(lockedCust, nc.addressId, "pickAddress")
         : "";
       return backdrop(head + locked +
         '<div class="muted" style="margin-bottom:10px">What\'s going on? Pick one or more, then add a little detail.</div>' +
@@ -1945,7 +2485,7 @@
     if (step === 2) {
       const q = (nc.custQuery || "").trim().toLowerCase();
       const matches = state.customers.filter(function (c) {
-        return !q || [c.name, c.address, c.city, c.phone].join(" ").toLowerCase().indexOf(q) !== -1;
+        return !q || customerSearchHay(c).toLowerCase().indexOf(q) !== -1;
       });
       const none = q && !matches.length && !nc.isNew;
       let body;
@@ -1968,6 +2508,7 @@
               '<div class="job-body"><div class="job-name" style="margin-top:0">' + esc(c.name) + "</div><div class=\"muted\">" + esc(c.address) + ", " + esc(c.city) + "</div><div class=\"muted\">" + esc(c.phone) + "</div>" +
               (preview ? '<div class="meta" style="margin-top:4px">' + esc(preview) + "</div>" : "") + "</div></button>";
           }).join("") + "</div>" +
+          (nc.customerId ? addressPickerHtml(state.customers.find(function (x) { return x.id === nc.customerId; }), nc.addressId, "pickAddress") : "") +
           (nc.customerId ? '<div style="height:12px"></div><button class="btn" ' + act("ncNext") + ">Next · Confirm</button>" : "");
       }
       return backdrop(head + body);
@@ -1975,15 +2516,19 @@
     const report = reportText(nc.chips, nc.detail, nc.urgency);
     let custName, custAddr, custPhone;
     if (nc.isNew) {
-      custName = nc.newName; custAddr = nc.newAddress + ", " + nc.newCity; custPhone = nc.newPhone;
+      custName = nc.newName; custAddr = formatAddrLine(nc.newAddress, nc.newCity); custPhone = nc.newPhone;
     } else {
       const c = state.customers.find(function (x) { return x.id === nc.customerId; });
-      custName = c ? c.name : "—"; custAddr = c ? c.address + ", " + c.city : "—"; custPhone = c ? c.phone : "—";
+      const loc = (nc.addressId && getAddressById(nc.addressId)) || (c ? primaryAddress(c) : null);
+      custName = c ? c.name : "—";
+      custAddr = loc ? addressLine(loc) : (c ? formatAddrLine(c.address, c.city) : "—");
+      custPhone = (loc && loc.onsitePhone) || (c ? c.phone : "—") || "—";
     }
     let equipmentHtml = "";
     if (!nc.isNew && nc.customerId) {
       const cust = getCustomer(nc.customerId);
-      const assets = cust ? customerAssets(cust) : [];
+      const loc = (nc.addressId && getAddressById(nc.addressId)) || (cust ? primaryAddress(cust) : null);
+      const assets = loc ? (loc.assets || []) : (cust ? customerAssets(cust) : []);
       if (assets.length) {
         equipmentHtml = '<div class="section">Equipment on file</div><div class="stack" style="margin-bottom:12px">' + assets.map(function (a) {
           return '<div class="panel" style="padding:12px"><div class="eq-type">' + esc(equipmentTypeLabel(a)) + (a.sample ? " · Example only" : "") + "</div>" +
@@ -2091,7 +2636,7 @@
   function approvalSheet(job) {
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Send for approval</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      '<div class="muted" style="margin-bottom:12px">Estimate ' + esc(job.estimateId || (job.id + "-E01")) + " for " + money(job.total) + " would go to " + esc(job.customer) + " for approval. This mockup doesn’t send anything.</div>" +
+      '<div class="muted" style="margin-bottom:12px">Estimate ' + esc(job.estimateId || (job.id + "-E01")) + " for " + money(job.total) + " would go to " + esc((billToCustomer(job) && billToCustomer(job).name) || job.customer) + " for approval. This mockup doesn’t send anything.</div>" +
       '<button class="btn" ' + act("closeSheet") + ">Got it</button>");
   }
   function invoiceSheet(job) {
@@ -2102,7 +2647,8 @@
     const openLeft = anyOpenEntry(job);
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">' + (existing ? "Invoice" : "Make invoice") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      '<div class="doc"><div class="k-up">Invoice ' + esc(job.invoiceId || (job.id + "-01")) + "</div><div class=\"h2\" style=\"margin:6px 0\">" + esc(job.customer) + "</div>" +
+      '<div class="doc"><div class="k-up">Invoice ' + esc(job.invoiceId || (job.id + "-01")) + "</div>" +
+      docBlocksHtml(job, { showReferred: true }) +
       (job.lineItems || []).map(function (l) { return '<div class="row" style="margin-top:6px"><div>' + esc(l.label) + "</div><div>" + money(l.amount) + "</div></div>"; }).join("") +
       '<div class="row" style="margin-top:10px;font-weight:750"><div>Total</div><div>' + money(job.total) + "</div></div>" +
       '<div class="section-row" style="margin-top:16px"><div class="k-up" style="margin:0">Time on site</div></div>' +
@@ -2245,8 +2791,8 @@
     const estId = job.estimateId || (job.id + "-E01");
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Estimate ' + esc(estId) + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      '<div class="doc"><div class="k-up">ReliaTech Services · sample</div><div class="h2" style="margin:6px 0">' + esc(job.customer) + "</div>" +
-      '<div class="muted" style="margin-bottom:10px">' + esc(job.address) + ", " + esc(job.city) + "</div>" +
+      '<div class="doc"><div class="k-up">ReliaTech Services</div>' +
+      docBlocksHtml(job, { showReferred: true }) +
       lines.map(function (l) { return '<div class="row" style="margin-top:6px"><div>' + esc(draftLabel(l)) + '<div class="meta">From price book</div></div><div>' + money(l.amount * l.qty) + "</div></div>"; }).join("") +
       '<div class="row" style="margin-top:12px;font-weight:750"><div>Total</div><div>' + money(total) + "</div></div></div>" +
       '<div class="note">' + PRICE_BOOK_NOTE + ' This preview stays on the phone and is not sent.</div>' +
@@ -2360,11 +2906,77 @@
   }
 
 
+  function addressSheet() {
+    const d = state.addressDraft || emptyAddress();
+    const editing = !!state.addressEditingId;
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">' + (editing ? "Edit service address" : "Add service address") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<label class="field"><div class="field-lab">Street address</div><input id="ad-address" value="' + esc(d.address || "") + '" oninput="RT.setAddressField(\'address\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">City</div><input id="ad-city" value="' + esc(d.city || "") + '" oninput="RT.setAddressField(\'city\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Label (optional)</div><input id="ad-label" placeholder="e.g. Unit B or listing on Elm" value="' + esc(d.label || "") + '" oninput="RT.setAddressField(\'label\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">On-site contact name</div><input id="ad-onsiteName" placeholder="Tenant, homeowner, or seller" value="' + esc(d.onsiteName || "") + '" oninput="RT.setAddressField(\'onsiteName\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">On-site phone</div><input id="ad-onsitePhone" type="tel" value="' + esc(d.onsitePhone || "") + '" oninput="RT.setAddressField(\'onsitePhone\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Access, gate, or lockbox notes</div><textarea id="ad-accessNotes" rows="3" oninput="RT.setAddressField(\'accessNotes\', this.value)">' + esc(d.accessNotes || "") + "</textarea></label>" +
+      '<button class="dash' + (d.example ? " sel" : "") + '" style="margin-bottom:14px" ' + act("toggleAddressExample") + ">" +
+        (d.example ? "Marked as example only · removable" : "Mark as example data (optional)") +
+      "</button>" +
+      '<button class="btn teal" ' + act("saveAddress") + ">" + (editing ? "Save address" : "Add address") + "</button>"
+    );
+  }
+  function moveAddressSheet() {
+    const a = getAddressById(state.moveAddressId);
+    const from = customerOfAddress(state.moveAddressId);
+    const q = (state.moveQuery || "").trim().toLowerCase();
+    const matches = state.customers.filter(function (c) {
+      if (from && c.id === from.id) return false;
+      return !q || customerSearchHay(c).toLowerCase().indexOf(q) !== -1;
+    });
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Move service address</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      (a && from ? '<div class="muted" style="margin-bottom:10px">Move ' + esc(addressLine(a) || "this address") + " from " + esc(from.name) + " to another customer. Equipment and job history stay with the house.</div>" : "") +
+      '<div class="search">' + icon("search", 16) + '<input id="mv-q" type="search" placeholder="Search customers" value="' + esc(state.moveQuery || "") + '" oninput="RT.setMoveQuery(this.value)"></div>' +
+      '<div class="stack">' + matches.map(function (c) {
+        return '<button class="list-card" ' + act("confirmMoveAddress", c.id) + '><div class="job-body"><div class="job-name" style="margin-top:0">' + esc(c.name) + "</div><div class=\"muted\">" + esc(formatAddrLine(c.address, c.city) || "Billing contact") + "</div></div></button>";
+      }).join("") + "</div>"
+    );
+  }
+  function billToSheet(job) {
+    const d = state.billToDraft || { query: "", isNew: false, newName: "", newPhone: "", newEmail: "", newAddress: "", newCity: "" };
+    const current = billToCustomer(job);
+    const q = (d.query || "").trim().toLowerCase();
+    const matches = state.customers.filter(function (c) {
+      return !q || customerSearchHay(c).toLowerCase().indexOf(q) !== -1;
+    });
+    const head = '<div class="sheet-head"><div class="sheet-title">Bill to</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      (current ? '<div class="muted" style="margin-bottom:10px">Currently ' + esc(current.name) + ". Changing this after an estimate exists saves a revised estimate under the same job number, like E01 to E02.</div>" : "");
+    if (d.isNew) {
+      return backdrop(head +
+        '<button class="link-btn" style="margin-bottom:10px" ' + act("billToBackList") + ">← Back to customer list</button>" +
+        '<label class="field"><div class="field-lab">Name</div><input id="bt-newName" value="' + esc(d.newName || "") + '" oninput="RT.setBillToField(\'newName\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Phone</div><input id="bt-newPhone" type="tel" value="' + esc(d.newPhone || "") + '" oninput="RT.setBillToField(\'newPhone\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Email (optional)</div><input id="bt-newEmail" type="email" value="' + esc(d.newEmail || "") + '" oninput="RT.setBillToField(\'newEmail\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">Billing address</div><input id="bt-newAddress" value="' + esc(d.newAddress || "") + '" oninput="RT.setBillToField(\'newAddress\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">City</div><input id="bt-newCity" value="' + esc(d.newCity || "") + '" oninput="RT.setBillToField(\'newCity\', this.value)"></label>' +
+        '<button class="btn teal"' + ((d.newName || "").trim() ? "" : " disabled") + ' ' + act("addBillToContact") + ">Add billing contact and use</button>");
+    }
+    return backdrop(head +
+      '<div class="search">' + icon("search", 16) + '<input id="bt-q" type="search" placeholder="Search name, address, or phone" value="' + esc(d.query || "") + '" oninput="RT.setBillToField(\'query\', this.value)"></div>' +
+      '<button class="dash" style="margin-bottom:12px" ' + act("billToNew") + ">Add a new billing contact</button>" +
+      '<div class="stack">' + matches.map(function (c) {
+        const on = current && current.id === c.id;
+        return '<button class="list-card' + (on ? " sel" : "") + '" ' + act("pickBillTo", c.id) + '><div class="job-body"><div class="job-name" style="margin-top:0">' + esc(c.name) + "</div><div class=\"muted\">" + esc(formatAddrLine(c.address, c.city) || formatAddrLine(c.billingAddress, c.billingCity) || "No address") + "</div></div></button>";
+      }).join("") + "</div>");
+  }
+
   function sheetHtml() {
     const s = state.sheet;
     if (!s) return "";
     if (s === "newCall") return newCallSheet();
     if (s === "equipment") return equipmentSheet();
+    if (s === "address") return addressSheet();
+    if (s === "moveAddress") return moveAddressSheet();
+    if (s === "billTo") { const j = getJob(state.openJobId); return j ? billToSheet(j) : ""; }
+    if (s === "viewEstimate") { const j = getJob(state.openJobId); return j ? viewEstimateSheet(j) : ""; }
     const job = getJob(state.openJobId);
     if (s === "note") return noteSheet();
     if (s === "timeEdit") return job ? timeEditSheet(job) : "";
@@ -2413,6 +3025,11 @@
     if (state.screen === "settings") return settingsScreen();
     if (state.screen === "plans") return plansScreen();
     if (state.screen === "timeCorrections") return timeCorrectionsScreen();
+    if (state.openAddressId) {
+      const a = getAddressById(state.openAddressId);
+      const c = customerOfAddress(state.openAddressId) || getCustomer(state.openCustomerId);
+      if (a && c) return addressDetail(a, c);
+    }
     if (state.openCustomerId) {
       const c = state.customers.find(function (x) { return x.id === state.openCustomerId; });
       if (c) return customerDetail(c);
@@ -2437,12 +3054,22 @@
   }
 
   function handle(name, arg) {
-    if (name === "tab") { state.tab = arg; state.openJobId = null; state.openCustomerId = null; state.screen = null; state.query = ""; render(); return; }
+    if (name === "tab") { state.tab = arg; state.openJobId = null; state.openCustomerId = null; state.openAddressId = null; state.screen = null; state.query = ""; render(); return; }
     if (name === "filter") { state.filter = arg; render(); return; }
-    if (name === "openJob") { state.openJobId = arg; state.openCustomerId = null; render(); return; }
+    if (name === "openJob") { state.openJobId = arg; state.openCustomerId = null; state.openAddressId = null; render(); return; }
     if (name === "closeJob") { state.openJobId = null; render(); return; }
-    if (name === "openCustomer") { state.openCustomerId = arg; render(); return; }
-    if (name === "closeCustomer") { state.openCustomerId = null; render(); return; }
+    if (name === "openCustomer") { state.openCustomerId = arg; state.openAddressId = null; state.openJobId = null; render(); return; }
+    if (name === "closeCustomer") { state.openCustomerId = null; state.openAddressId = null; render(); return; }
+    if (name === "openAddress") {
+      const a = getAddressById(arg);
+      const c = customerOfAddress(arg);
+      if (!a || !c) return;
+      state.openCustomerId = c.id;
+      state.openAddressId = a.id;
+      state.openJobId = null;
+      render(); return;
+    }
+    if (name === "closeAddress") { state.openAddressId = null; render(); return; }
     if (name === "closeSheet") { closeSheet(); return; }
     if (name === "openPlans") { state.screen = "plans"; state.openJobId = null; state.openCustomerId = null; render(); return; }
     if (name === "closePlans") { state.screen = null; state.tab = "jobs"; render(); return; }
@@ -2550,21 +3177,41 @@
     }
     if (name === "openNewCall") {
       state.sheet = "newCall"; state.newCallStep = 1;
-      state.newCall = { chips: [], detail: "", urgency: "today", customerId: "", isNew: false, fromCustomer: false, newName: "", newPhone: "", newAddress: "", newCity: "Long Beach", newEmail: "", custQuery: "" };
+      state.newCall = emptyNewCall();
       render(); return;
     }
     if (name === "newJobFromCustomer") {
       const c = getCustomer(arg);
       if (!c) return;
+      const addrs = serviceAddresses(c);
       state.openCustomerId = c.id;
       state.sheet = "newCall";
       state.newCallStep = 1;
-      state.newCall = { chips: [], detail: "", urgency: "today", customerId: c.id, isNew: false, fromCustomer: true, newName: "", newPhone: "", newAddress: "", newCity: "Long Beach", newEmail: "", custQuery: c.name };
+      state.newCall = emptyNewCall({ customerId: c.id, fromCustomer: true, custQuery: c.name, addressId: addrs.length === 1 ? addrs[0].id : "", billToCustomerId: c.id });
       render(); return;
     }
+    if (name === "newJobFromAddress") {
+      const a = getAddressById(arg);
+      const c = customerOfAddress(arg);
+      if (!a || !c) return;
+      state.openCustomerId = c.id;
+      state.openAddressId = a.id;
+      state.sheet = "newCall";
+      state.newCallStep = 1;
+      state.newCall = emptyNewCall({ customerId: c.id, fromCustomer: true, custQuery: c.name, addressId: a.id, billToCustomerId: c.id });
+      render(); return;
+    }
+    if (name === "pickAddress") { state.newCall.addressId = arg; render(); return; }
     if (name === "addEquipment") {
-      state.openCustomerId = arg || state.openCustomerId;
-      state.assetCustomerId = state.openCustomerId;
+      const parts = String(arg || "").split("|");
+      const cid = parts[0] || state.openCustomerId;
+      const aid = parts[1] || state.openAddressId || "";
+      const c = getCustomer(cid);
+      if (!c) return;
+      const loc = aid ? getAddressById(aid) : (serviceAddresses(c).length === 1 ? primaryAddress(c) : primaryAddress(c));
+      state.openCustomerId = c.id;
+      state.assetCustomerId = c.id;
+      state.assetAddressId = loc ? loc.id : "";
       state.assetDraft = emptyAsset();
       state.assetEditingId = null;
       state.sheet = "equipment";
@@ -2574,12 +3221,12 @@
       const parts = String(arg || "").split("|");
       const cid = parts[0];
       const aid = parts.slice(1).join("|");
-      const c = getCustomer(cid);
-      const a = c && (c.assets || []).find(function (x) { return x.id === aid; });
-      if (!c || !a) return;
-      state.assetCustomerId = cid;
-      state.assetDraft = JSON.parse(JSON.stringify(a));
-      state.assetEditingId = a.id;
+      const home = findAssetHome(cid, aid);
+      if (!home) return;
+      state.assetCustomerId = home.customer.id;
+      state.assetAddressId = home.address ? home.address.id : "";
+      state.assetDraft = JSON.parse(JSON.stringify(home.asset));
+      state.assetEditingId = home.asset.id;
       state.sheet = "equipment";
       render(); return;
     }
@@ -2599,13 +3246,25 @@
       if (!c) return;
       const draft = JSON.parse(JSON.stringify(state.assetDraft));
       if (!draft.id) draft.id = "a" + Date.now();
-      if (!c.assets) c.assets = [];
+      let loc = state.assetAddressId ? getAddressById(state.assetAddressId) : null;
+      if (!loc) loc = primaryAddress(c);
+      if (!loc) {
+        ensureCustomerAddresses(c, state.customers);
+        if (!serviceAddresses(c).length) {
+          c.addresses.push(emptyAddress({ id: nextAddressId(c.id), address: c.address || "", city: c.city || "" }));
+        }
+        loc = primaryAddress(c);
+      }
+      if (!loc.assets) loc.assets = [];
       if (state.assetEditingId) {
-        const i = c.assets.findIndex(function (x) { return x.id === state.assetEditingId; });
-        if (i >= 0) c.assets[i] = draft;
-        else c.assets.push(draft);
+        let found = false;
+        serviceAddresses(c).forEach(function (a) {
+          const i = (a.assets || []).findIndex(function (x) { return x.id === state.assetEditingId; });
+          if (i >= 0) { a.assets[i] = draft; found = true; }
+        });
+        if (!found) loc.assets.push(draft);
       } else {
-        c.assets.push(draft);
+        loc.assets.push(draft);
       }
       state.sheet = null;
       showToast(draft.sample ? "Example equipment saved on this phone only" : "Equipment saved on this phone only");
@@ -2614,6 +3273,9 @@
     if (name === "removeEquipment") {
       const c = getCustomer(state.assetCustomerId || state.openCustomerId);
       if (!c || !state.assetEditingId) return;
+      serviceAddresses(c).forEach(function (a) {
+        a.assets = (a.assets || []).filter(function (x) { return x.id !== state.assetEditingId; });
+      });
       c.assets = (c.assets || []).filter(function (x) { return x.id !== state.assetEditingId; });
       state.sheet = null;
       showToast("Equipment removed");
@@ -2627,28 +3289,60 @@
     }
     if (name === "urgency") { state.newCall.urgency = arg; render(); return; }
     if (name === "ncNext") {
-      if (state.newCallStep === 1) state.newCallStep = state.newCall.fromCustomer ? 3 : 2;
-      else if (state.newCallStep === 2) state.newCallStep = 3;
+      function lockAddress() {
+        const nc = state.newCall;
+        if (nc.isNew) return true;
+        const c = getCustomer(nc.customerId);
+        const addrs = serviceAddresses(c);
+        if (addrs.length === 1) nc.addressId = addrs[0].id;
+        if (addrs.length > 1 && !nc.addressId) { showToast("Pick a service address"); return false; }
+        return true;
+      }
+      if (state.newCallStep === 1) {
+        if (state.newCall.fromCustomer && !lockAddress()) { render(); return; }
+        state.newCallStep = state.newCall.fromCustomer ? 3 : 2;
+      } else if (state.newCallStep === 2) {
+        if (!lockAddress()) { render(); return; }
+        state.newCallStep = 3;
+      }
       render(); return;
     }
     if (name === "ncNewCust") { state.newCall.isNew = true; state.newCall.customerId = ""; render(); return; }
     if (name === "ncBackList") { state.newCall.isNew = false; render(); return; }
     if (name === "ncAddQuery") { state.newCall.isNew = true; state.newCall.newName = state.newCall.custQuery.trim(); render(); return; }
-    if (name === "pickCust") { state.newCall.customerId = arg; state.newCall.isNew = false; render(); return; }
+    if (name === "pickCust") {
+      state.newCall.customerId = arg;
+      state.newCall.isNew = false;
+      const c = getCustomer(arg);
+      const addrs = serviceAddresses(c);
+      state.newCall.addressId = addrs.length === 1 ? addrs[0].id : (addrs.some(function (a) { return a.id === state.newCall.addressId; }) ? state.newCall.addressId : "");
+      state.newCall.billToCustomerId = arg;
+      render(); return;
+    }
     if (name === "createJob") {
       const nc = state.newCall;
       const id = nextJobId(state.jobs);
-      let customerId = nc.customerId, customer, address, city, phone;
+      let customerId = nc.customerId, customer, address, city, phone, addressId = nc.addressId || "", billToCustomerId = nc.billToCustomerId || "";
       if (nc.isNew) {
         customerId = nextCustomerId();
         customer = nc.newName.trim(); address = nc.newAddress.trim(); city = nc.newCity.trim() || "Long Beach"; phone = nc.newPhone.trim();
-        state.customers = [{ id: customerId, name: customer, address: address, city: city, phone: phone, email: (nc.newEmail || "").trim(), assets: [], mentions: [] }].concat(state.customers);
+        const fresh = { id: customerId, name: customer, address: address, city: city, phone: phone, email: (nc.newEmail || "").trim(), billingSameAsService: true, billingAddress: "", billingCity: "", addresses: [], assets: [], mentions: [] };
+        addressId = nextAddressId(customerId, [fresh].concat(state.customers));
+        fresh.addresses = [emptyAddress({ id: addressId, address: address, city: city })];
+        state.customers = [fresh].concat(state.customers);
+        billToCustomerId = customerId;
       } else {
         const c = state.customers.find(function (x) { return x.id === customerId; });
-        customer = c.name; address = c.address; city = c.city; phone = c.phone;
+        if (!c) return;
+        ensureCustomerAddresses(c, state.customers);
+        const loc = (addressId && getAddressById(addressId)) || primaryAddress(c);
+        if (!loc) { showToast("Add a service address first"); return; }
+        addressId = loc.id;
+        customer = c.name; address = loc.address; city = loc.city; phone = loc.onsitePhone || c.phone;
+        if (!billToCustomerId) billToCustomerId = c.id;
       }
       const problem = reportText(nc.chips, nc.detail, nc.urgency);
-      const job = { id: id, customerId: customerId, customer: customer, address: address, city: city, phone: phone, problem: problem, status: "new", lineItems: [{ label: "Diagnostic", amount: 150 }], total: 150, readingSets: [], timeline: [t("t" + id, "call", "Just now", "Call", problem)] };
+      const job = { id: id, customerId: customerId, customer: customer, address: address, city: city, phone: phone, problem: problem, status: "new", lineItems: [{ label: "Diagnostic", amount: 150 }], total: 150, readingSets: [], timeline: [t("t" + id, "call", "Just now", "Call", problem)], addressId: addressId, billToCustomerId: billToCustomerId, customerRef: nc.customerRef || "", referredBy: nc.referredBy || "", estimates: [] };
       state.jobs = [job].concat(state.jobs);
       state.sheet = null;
       state.openCustomerId = null;
@@ -2689,7 +3383,8 @@
       job.timeline = [{ id: "n" + Date.now(), kind: "note", time: "Just now", title: title, body: body }].concat(job.timeline);
       let extra = "";
       const c = getCustomer(job.customerId);
-      if (saveNameplateToCustomer(c, d.nameplate)) extra = " Nameplate saved to the customer’s equipment profile.";
+      const jobAddr = getJob(state.openJobId);
+      if (saveNameplateToCustomer(c, d.nameplate, jobAddr && jobAddr.addressId)) extra = " Nameplate saved to the service address equipment profile.";
       state.noteDraft = emptyNoteDraft("visit");
       state.sheet = "saved";
       showToast(title + " saved on this phone only." + extra);
@@ -2754,7 +3449,12 @@
       const lines = state.packDraft;
       job.lineItems = lines.map(function (l) { return { label: draftLabel(l), amount: l.amount * l.qty }; });
       job.total = draftTotal(lines);
-      job.estimateId = job.estimateId || (job.id + "-E01");
+      if (!job.estimateId) job.estimateId = job.id + "-E01";
+      if (!Array.isArray(job.estimates)) job.estimates = [];
+      const rec = job.estimates.find(function (e) { return e.id === job.estimateId && !e.superseded; });
+      const payload = { id: job.estimateId, lineItems: JSON.parse(JSON.stringify(job.lineItems)), total: job.total, billToCustomerId: job.billToCustomerId || job.customerId, createdAt: isoNow(), superseded: false };
+      if (rec) Object.assign(rec, payload);
+      else job.estimates.push(payload);
       if (job.status === "new" || job.status === "diagnosis") job.status = "estimate";
       job.timeline = [{ id: "e" + Date.now(), kind: "system", time: "Just now", title: "Estimate saved", body: "Estimate " + job.estimateId + " for " + money(job.total) + " saved from the price book." }].concat(job.timeline);
       state.sheet = null;
@@ -2887,7 +3587,161 @@
       state.openCustomerId = cust.id;
       state.sheet = "newCall";
       state.newCallStep = 1;
-      state.newCall = { chips: [], detail: c.work || "", urgency: "today", customerId: cust.id, isNew: false, fromCustomer: true, newName: "", newPhone: "", newAddress: "", newCity: "Long Beach", newEmail: "", custQuery: cust.name };
+      const vAddrs = serviceAddresses(cust);
+      state.newCall = emptyNewCall({ chips: [], detail: c.work || "", customerId: cust.id, fromCustomer: true, custQuery: cust.name, addressId: vAddrs.length === 1 ? vAddrs[0].id : "", billToCustomerId: cust.id });
+      render(); return;
+    }
+    if (name === "toggleBillingSame") {
+      const c = getCustomer(arg || state.openCustomerId);
+      if (!c) return;
+      c.billingSameAsService = c.billingSameAsService === false;
+      if (c.billingSameAsService) { /* checked: hide separate billing address */ }
+      else if (!c.billingAddress && primaryAddress(c)) {
+        /* leave billing fields blank so Steve fills the owner or office address */
+      }
+      render(); return;
+    }
+    if (name === "addAddress") {
+      const c = getCustomer(arg || state.openCustomerId);
+      if (!c) return;
+      state.addressCustomerId = c.id;
+      state.addressEditingId = null;
+      state.addressDraft = emptyAddress({ city: "Long Beach" });
+      state.sheet = "address";
+      render(); return;
+    }
+    if (name === "editAddress") {
+      const a = getAddressById(arg);
+      const c = customerOfAddress(arg);
+      if (!a || !c) return;
+      state.addressCustomerId = c.id;
+      state.addressEditingId = a.id;
+      state.addressDraft = JSON.parse(JSON.stringify(a));
+      state.sheet = "address";
+      render(); return;
+    }
+    if (name === "toggleAddressExample") {
+      if (!state.addressDraft) state.addressDraft = emptyAddress();
+      state.addressDraft.example = !state.addressDraft.example;
+      render(); return;
+    }
+    if (name === "saveAddress") {
+      const c = getCustomer(state.addressCustomerId || state.openCustomerId);
+      if (!c) return;
+      ensureCustomerAddresses(c, state.customers);
+      const draft = JSON.parse(JSON.stringify(state.addressDraft || emptyAddress()));
+      if (!(draft.address || "").trim() && !(draft.city || "").trim()) { showToast("Enter a street or city"); return; }
+      if (!draft.id) draft.id = nextAddressId(c.id);
+      if (!Array.isArray(draft.assets)) draft.assets = [];
+      if (!Array.isArray(draft.mentions)) draft.mentions = [];
+      if (state.addressEditingId) {
+        const i = serviceAddresses(c).findIndex(function (x) { return x.id === state.addressEditingId; });
+        if (i >= 0) {
+          draft.assets = c.addresses[i].assets || [];
+          draft.mentions = c.addresses[i].mentions || [];
+          c.addresses[i] = draft;
+        } else c.addresses.push(draft);
+      } else {
+        c.addresses.push(draft);
+      }
+      syncCustomerPrimary(c);
+      state.sheet = null;
+      state.openAddressId = draft.id;
+      state.openCustomerId = c.id;
+      showToast(draft.example ? "Example address saved on this phone only" : "Service address saved");
+      return;
+    }
+    if (name === "moveAddress") {
+      state.moveAddressId = arg;
+      state.moveQuery = "";
+      state.sheet = "moveAddress";
+      render(); return;
+    }
+    if (name === "confirmMoveAddress") {
+      const a = getAddressById(state.moveAddressId);
+      const from = customerOfAddress(state.moveAddressId);
+      const to = getCustomer(arg);
+      if (!a || !from || !to || from.id === to.id) return;
+      from.addresses = serviceAddresses(from).filter(function (x) { return x.id !== a.id; });
+      syncCustomerPrimary(from);
+      ensureCustomerAddresses(to, state.customers);
+      to.addresses = serviceAddresses(to).concat([a]);
+      syncCustomerPrimary(to);
+      state.jobs.concat(state.moneyJobs || []).forEach(function (j) {
+        if (j.addressId === a.id) {
+          j.customerId = to.id;
+          j.customer = to.name;
+          j.address = a.address;
+          j.city = a.city;
+        }
+      });
+      (state.plans || []).forEach(function (p) {
+        if (p.addressId === a.id) p.customerId = to.id;
+      });
+      (state.visits || []).forEach(function (v) {
+        if (v.addressId === a.id) v.customerId = to.id;
+      });
+      state.openCustomerId = to.id;
+      state.openAddressId = a.id;
+      state.sheet = null;
+      showToast("Address moved to " + to.name + ". Equipment and job history went with it.");
+      return;
+    }
+    if (name === "openBillTo") {
+      const job = getJob(state.openJobId);
+      if (!job) return;
+      state.billToDraft = { query: "", isNew: false, newName: "", newPhone: "", newEmail: "", newAddress: "", newCity: "Long Beach" };
+      state.sheet = "billTo";
+      render(); return;
+    }
+    if (name === "billToNew") {
+      if (!state.billToDraft) state.billToDraft = { query: "", isNew: true, newName: "", newPhone: "", newEmail: "", newAddress: "", newCity: "Long Beach" };
+      state.billToDraft.isNew = true;
+      render(); return;
+    }
+    if (name === "billToBackList") {
+      if (state.billToDraft) state.billToDraft.isNew = false;
+      render(); return;
+    }
+    if (name === "pickBillTo") {
+      const job = getJob(state.openJobId);
+      const neu = getCustomer(arg);
+      if (!job || !neu) return;
+      const changed = applyBillToChange(job, neu.id);
+      state.sheet = null;
+      if (changed) showToast(job.estimateId && String(job.estimateId).indexOf("-E") !== -1 ? ("Bill to updated · estimate " + job.estimateId + " saved") : "Bill to updated");
+      else showToast("Bill to is already " + neu.name);
+      return;
+    }
+    if (name === "addBillToContact") {
+      const d = state.billToDraft || {};
+      const name = (d.newName || "").trim();
+      if (!name) { showToast("Enter a name"); return; }
+      const id = nextCustomerId();
+      const contact = {
+        id: id,
+        name: name,
+        phone: (d.newPhone || "").trim(),
+        email: (d.newEmail || "").trim(),
+        address: "",
+        city: "",
+        billingSameAsService: false,
+        billingAddress: (d.newAddress || "").trim(),
+        billingCity: (d.newCity || "").trim(),
+        addresses: [],
+        assets: [],
+        mentions: []
+      };
+      state.customers = [contact].concat(state.customers);
+      const job = getJob(state.openJobId);
+      if (job) applyBillToChange(job, id);
+      state.sheet = null;
+      showToast("Billing contact added · " + name);
+      return;
+    }
+    if (name === "viewEstimate") {
+      state.viewEstimateId = arg;
+      state.sheet = "viewEstimate";
       render(); return;
     }
     if (name === "captureNeedJob") { state._pendingCapture = arg; state.sheet = "pickJob"; render(); return; }
@@ -3004,8 +3858,17 @@
       return;
     }
     if (h.indexOf("customer/") === 0) {
-      const id = h.slice(9);
-      if (getCustomer(id)) { state.openCustomerId = id; state.openJobId = null; state.screen = null; }
+      const rest = h.slice(9);
+      const addrIdx = rest.indexOf("/address/");
+      if (addrIdx !== -1) {
+        const cid = rest.slice(0, addrIdx);
+        const aid = rest.slice(addrIdx + 9);
+        if (getCustomer(cid) && getAddressById(aid)) {
+          state.openCustomerId = cid; state.openAddressId = aid; state.openJobId = null; state.screen = null;
+        }
+      } else if (getCustomer(rest)) {
+        state.openCustomerId = rest; state.openAddressId = null; state.openJobId = null; state.screen = null;
+      }
     }
   }
   function syncHash() {
@@ -3013,6 +3876,7 @@
     if (state.screen === "settings") want = "settings";
     else if (state.screen === "plans") want = "plans";
     else if (state.screen === "timeCorrections") want = "time-corrections";
+    else if (state.openAddressId && state.openCustomerId) want = "customer/" + state.openCustomerId + "/address/" + state.openAddressId;
     else if (state.openCustomerId) want = "customer/" + state.openCustomerId;
     else if (state.openJobId) want = "job/" + state.openJobId;
     const next = want ? ("#" + want) : (location.pathname + (location.search || "") + (location.hash && !want ? "" : ""));
