@@ -728,6 +728,7 @@
           "</div><div>" + money(l.amount) + "</div></div>";
       }).join("") +
       '<div class="row" style="margin-top:12px;font-weight:750"><div>Total</div><div>' + money(rec.total || 0) + "</div></div></div>" +
+      (rec.lineItems || []).filter(function (l) { return l.builder; }).map(function (l) { return '<div class="meta" style="margin-top:8px;font-weight:700">' + esc(l.label) + "</div>" + builderInternalHtml(l.builder); }).join("") +
       estimateGpHtml((rec.lineItems || []).map(function (l) { return { label: l.label, amount: l.amount, qty: 1, id: l.id, cost: l.cost, fromBook: !!l.fromBook }; })) +
       ((job.estimates || []).indexOf(rec) !== -1 ? estimateExtrasHtml(job, rec) : "") +
       '<button class="btn" style="margin-top:12px" ' + act("closeSheet") + ">Done</button>");
@@ -2778,7 +2779,8 @@
         ["installDate", "Install date", "date", ""], ["manufactureDate", "Manufacture date", "date", ""],
         ["capacity", "Tonnage or BTU", "text", "e.g. 3 ton or 80,000 BTU"], ["refrigerant", "Refrigerant", "text", "e.g. R-410A"],
         ["filterSize", "Filter size", "text", "e.g. 16x25x1"], ["warranty", "Warranty", "text", "Parts, labor, or remaining term"],
-        ["lastServiced", "Last serviced", "text", "e.g. 10/31/2026"]
+        ["lastServiced", "Last serviced", "text", "e.g. 10/31/2026"],
+        ["factoryCharge", "Factory refrigerant charge (nameplate)", "text", "e.g. 5 lb 4 oz"]
       ];
       body = (thumb ? '<button class="eq-hero" ' + act("assetTab", "photos") + '><img src="' + esc(thumb) + '" alt="Thumbnail"></button>' : "") +
         '<label class="field"><div class="field-lab">Type</div><select id="eq-type" onchange="RT.setAssetType(this.value)">' +
@@ -2988,6 +2990,160 @@
       downloadBackup(list);
       if (list.length) showToast("Backup includes " + list.length + " photo" + (list.length > 1 ? "s" : "") + " (" + Math.max(1, mb) + " MB)");
     }).catch(function () { downloadBackup([]); showToast("Photos couldn’t be read; backup saved without them"); });
+  }
+
+  /* ——— Phase 2 · Custom repair builder ———
+     Rates from /workspace/reliatech-setup/pricing.md: service labor $85/hr sell, truck $65,
+     diagnostic $150 (initial call), price book GP 40% (35% floor), refrigerant 125% markup (cost × 2.25),
+     filter drier $65 sell, refrigerant provisions $185. Purchase tax 10.25% is an assumption (pricing.md: "Long Beach assumed, confirm").
+     Labor cost $55/hr is pricing.md's planning placeholder, used only for Steve's internal margin view. */
+  const RB = { labor: 85, laborCost: 55, truck: 65, diag: 150, gp: 40, minGp: 35, tax: 10.25, refMarkup: 2.25, drierSell: 65, provisions: 185, ozPerFt: 0.6, stdFt: 15 };
+  const RB_TYPES = [
+    { id: "blower", label: "Blower motor / ECM replacement", hours: 4, refrig: false },
+    { id: "board", label: "Control board replacement", hours: 2, refrig: false },
+    { id: "txv", label: "TXV replacement", hours: 8, refrig: true },
+    { id: "compressor", label: "Compressor replacement", hours: 8, refrig: true },
+    { id: "coil", label: "Evaporator coil replacement", hours: "", refrig: true },
+    { id: "leak", label: "Refrigerant leak repair", hours: "", refrig: true },
+    { id: "other", label: "Other / manual", hours: "", refrig: false }
+  ];
+  function rbType(id) { return RB_TYPES.find(function (t) { return t.id === id; }) || RB_TYPES[RB_TYPES.length - 1]; }
+  function rbNum(v) { const n = parseFloat(String(v == null ? "" : v).replace(/[^0-9.\-]/g, "")); return isFinite(n) ? n : 0; }
+  function rbRoundSell(x) { return x < 20 ? Math.round(x * 2) / 2 : Math.round(x); }
+  function chargeLbFrom(s) {
+    const t = String(s || "").toLowerCase();
+    if (!t.trim()) return 0;
+    const lb = t.match(/(\d+(?:\.\d+)?)\s*(lb|lbs|#)/), oz = t.match(/(\d+(?:\.\d+)?)\s*oz/);
+    if (lb || oz) return (lb ? parseFloat(lb[1]) : 0) + (oz ? parseFloat(oz[1]) / 16 : 0);
+    return rbNum(t);
+  }
+  function rbJobAssets(job) { const a = jobServiceAddress(job); return (a && a.assets) || []; }
+  function emptyRbDraft(job) {
+    const assets = rbJobAssets(job);
+    const out = assets.find(function (x) { return ["condenser", "heatpump", "package", "minisplit_out"].indexOf(x.type) !== -1; }) || assets[0] || null;
+    const survey = (job && job.siteSurvey) || {};
+    const d = { type: "blower", label: "", partName: "", partModel: "", partCost: "", hours: 4, initialCall: !(job && job.status && ["progress", "approved", "done"].indexOf(job.status) !== -1), truck: true, gp: RB.gp, tax: RB.tax,
+      assetId: out ? out.id : "", drierOn: false, drierCost: "", provOn: true, refCostLb: "", lineSetFt: survey.lineSetFt || "", ozPerFt: RB.ozPerFt, lbsOverride: "" };
+    return d;
+  }
+  function rbCalc(d, job) {
+    const T = rbType(d.type);
+    const tax = rbNum(d.tax) / 100, gp = Math.min(0.9, Math.max(0, rbNum(d.gp) / 100));
+    const assets = rbJobAssets(job);
+    const asset = assets.find(function (x) { return x.id === d.assetId; }) || null;
+    const partCost = rbNum(d.partCost), partCostTaxed = partCost * (1 + tax);
+    const partSell = partCost > 0 ? rbRoundSell(partCostTaxed / (1 - gp)) : 0;
+    const hours = rbNum(d.hours);
+    const laborSell = hours * RB.labor, laborCost = hours * RB.laborCost;
+    let drierSell = 0, drierCost = 0, refSell = 0, refCost = 0, lbs = 0, chargeLb = 0, extraLb = 0, sellPerLb = 0, provSell = 0;
+    const flags = [];
+    if (T.refrig || d.drierOn) {
+      if (rbNum(d.drierCost) > 0) { drierCost = rbNum(d.drierCost) * (1 + tax); drierSell = rbRoundSell(drierCost / (1 - gp)); }
+      else { drierSell = RB.drierSell; flags.push("Filter drier at $65 sell (pricing.md); cost not entered"); }
+    }
+    if (T.refrig) {
+      chargeLb = chargeLbFrom(asset && (asset.factoryCharge || ""));
+      const ft = rbNum(d.lineSetFt);
+      extraLb = ft > RB.stdFt ? (ft - RB.stdFt) * rbNum(d.ozPerFt) / 16 : 0;
+      lbs = d.lbsOverride !== "" && d.lbsOverride != null ? rbNum(d.lbsOverride) : Math.round((chargeLb + extraLb) * 100) / 100;
+      const cpl = rbNum(d.refCostLb);
+      sellPerLb = cpl > 0 ? Math.round(cpl * RB.refMarkup) : 0;
+      refSell = Math.round(lbs * sellPerLb * 100) / 100; refCost = lbs * cpl;
+      if (!chargeLb && d.lbsOverride === "") flags.push("No factory charge on the equipment record; enter lbs");
+      if (lbs > 0 && !(cpl > 0)) flags.push("Enter refrigerant cost per lb");
+      if (d.provOn !== false) provSell = RB.provisions;
+    }
+    const diag = d.initialCall ? RB.diag : 0, truck = d.truck ? RB.truck : 0;
+    const total = Math.round((partSell + drierSell + refSell + provSell + laborSell + diag + truck) * 100) / 100;
+    const cost = Math.round((partCostTaxed + drierCost + refCost + laborCost) * 100) / 100;
+    const gpPct = total > 0 ? (total - cost) / total * 100 : 0;
+    if (!(partCost > 0) && d.type !== "leak") flags.push("Part cost not entered");
+    if (!(hours > 0)) flags.push("Enter labor hours");
+    flags.push("Purchase tax " + rbNum(d.tax) + "% is an assumption (pricing.md: confirm)");
+    flags.push("Internal labor cost uses the $55/hr planning placeholder");
+    return { T: T, asset: asset, partCost: partCost, partCostTaxed: partCostTaxed, partSell: partSell, hours: hours, laborSell: laborSell, laborCost: laborCost,
+      drierSell: drierSell, drierCost: drierCost, chargeLb: chargeLb, extraLb: extraLb, lbs: lbs, sellPerLb: sellPerLb, refSell: refSell, refCost: refCost, provSell: provSell,
+      diag: diag, truck: truck, total: total, cost: cost, gpPct: gpPct, flags: flags };
+  }
+  function rbParts(d, c) {
+    const parts = [];
+    if (d.partName || c.partCost > 0) parts.push({ name: (d.partName || c.T.label.replace(/ replacement$/i, "")) + (d.partModel ? "" : " (model TBD, confirm from nameplate)"), partNo: d.partModel || "", qty: 1, cost: c.partCost || null, note: "From the repair builder" });
+    if (c.drierSell) parts.push({ name: "Filter drier 3/8\" 16 cu in", partNo: "", qty: 1, cost: rbNum(d.drierCost) || null, note: "Auto-added for a refrigerant repair" });
+    if (c.lbs > 0) parts.push({ name: "Refrigerant" + (c.asset && c.asset.refrigerant ? " " + c.asset.refrigerant : ""), partNo: "", qty: c.lbs, cost: rbNum(d.refCostLb) || null, note: "lb (" + c.chargeLb + " lb charge + " + (Math.round(c.extraLb * 100) / 100) + " lb line set)" });
+    return parts;
+  }
+  function rbBreakdownRows(b) {
+    const rows = [["Part (cost " + money(b.partCost) + " + tax = " + money(b.partCostTaxed) + ")", b.partSell, b.partCostTaxed]];
+    if (b.drierSell) rows.push(["Filter drier", b.drierSell, b.drierCost]);
+    if (b.lbs > 0) rows.push(["Refrigerant " + b.lbs + " lb × " + money(b.sellPerLb) + "/lb (125% markup)", b.refSell, b.refCost]);
+    if (b.provSell) rows.push(["Refrigerant provisions (recovery, evacuation, charging)", b.provSell, 0]);
+    rows.push(["Labor " + b.hours + " hr × $85", b.laborSell, b.laborCost]);
+    if (b.diag) rows.push(["Diagnostic (initial call)", b.diag, 0]);
+    if (b.truck) rows.push(["Truck", b.truck, 0]);
+    return rows;
+  }
+  function builderInternalHtml(b) {
+    if (!b) return "";
+    const rows = (b.rows || []);
+    return '<div class="note steve-only" style="margin-top:8px"><div class="k-up">Steve only · cost / margin</div>' +
+      rows.map(function (r) { return '<div class="row" style="font-size:12px"><div style="min-width:0">' + esc(r[0]) + "</div><div>" + money(r[1]) + (r[2] ? ' <span class="meta">(' + money(r[2]) + ")</span>" : "") + "</div></div>"; }).join("") +
+      '<div class="row" style="font-weight:750;margin-top:4px"><div>Customer price</div><div>' + money(b.total) + "</div></div>" +
+      '<div class="row" style="font-size:12px"><div>Internal cost · GP</div><div>' + money(b.cost) + " · " + (Math.round(b.gpPct * 10) / 10) + "%</div></div>" +
+      (b.gpPct < RB.minGp ? '<div class="warn-banner" style="margin-top:6px">Below the 35% GP floor.</div>' : "") +
+      ((b.flags || []).length ? '<div class="meta" style="margin-top:4px">' + b.flags.map(esc).join(" · ") + "</div>" : "") +
+      (b.survey ? surveySummaryHtml(b.survey) : "") + "</div>";
+  }
+  function surveySummaryHtml(s) { return typeof siteSurveyText === "function" ? '<div class="meta" style="margin-top:6px;white-space:pre-wrap">Site survey: ' + esc(siteSurveyText(s)) + "</div>" : ""; }
+  function repairBuilderSheet(job) {
+    const d = state.rbDraft; if (!d) return "";
+    const c = rbCalc(d, job);
+    const assets = rbJobAssets(job);
+    function inp(k, lab, ph, mode) { return '<label class="field"><div class="field-lab">' + lab + '</div><input id="rb-' + k + '" ' + (mode ? 'inputmode="' + mode + '" ' : "") + 'value="' + esc(d[k] == null ? "" : d[k]) + '" placeholder="' + esc(ph || "") + '" oninput="RT.setRb(\'' + k + '\', this.value)"></label>'; }
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Custom repair builder</div><button class="icon-btn ghost" ' + act("rbClose") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<label class="field"><div class="field-lab">Repair type</div><select id="rb-type" onchange="RT.setRbType(this.value)">' + RB_TYPES.map(function (t) { return '<option value="' + t.id + '"' + (t.id === d.type ? " selected" : "") + ">" + esc(t.label) + (t.hours ? " · " + t.hours + " hr" : "") + "</option>"; }).join("") + "</select></label>" +
+      inp("label", "Line name (customer sees this)", c.T.label) +
+      inp("partName", "Part name", "e.g. ECM blower motor") + inp("partModel", "Part model", "From the nameplate or supplier") +
+      inp("partCost", "Part cost (pre-tax)", "e.g. 270.17", "decimal") +
+      inp("hours", "Labor hours" + (c.T.hours ? " (suggested " + c.T.hours + ")" : " (enter)"), "", "decimal") +
+      '<div class="chips"><button class="chip' + (d.initialCall ? " on" : "") + '" ' + act("rbToggle", "initialCall") + ">Initial call · $150 diagnostic</button>" +
+      '<button class="chip' + (d.truck ? " on" : "") + '" ' + act("rbToggle", "truck") + ">Truck · $65</button>" +
+      (c.T.refrig ? "" : '<button class="chip' + (d.drierOn ? " on" : "") + '" ' + act("rbToggle", "drierOn") + ">Filter drier</button>") + "</div>" +
+      (c.T.refrig || d.drierOn ? '<div class="section">Filter drier' + (c.T.refrig ? " (auto-added)" : "") + "</div>" + inp("drierCost", "Drier cost (optional; blank = $65 sell from pricing.md)", "", "decimal") : "") +
+      (c.T.refrig ? '<div class="section">Refrigerant</div>' +
+        (assets.length ? '<label class="field"><div class="field-lab">Unit (nameplate charge)</div><select id="rb-asset" onchange="RT.setRb(\'assetId\', this.value, true)">' + assets.map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === d.assetId ? " selected" : "") + ">" + esc(assetShortName(x) + (x.factoryCharge ? " · " + x.factoryCharge : " · no charge on file")) + "</option>"; }).join("") + "</select></label>" : '<div class="muted" style="margin-bottom:8px">No equipment at this address. Enter lbs below.</div>') +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' + inp("lineSetFt", "Line set length (ft)", "15 = factory charge", "decimal") + inp("ozPerFt", "Oz per ft over 15 ft", "0.6", "decimal") + "</div>" +
+        '<div class="meta" style="margin:-4px 0 8px">Charge ' + (Math.round(c.chargeLb * 100) / 100) + " lb + line set " + (Math.round(c.extraLb * 100) / 100) + " lb. 0.6 oz/ft is typical guidance for a 3/8\" liquid line; check the condenser’s install guide.</div>" +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' + inp("lbsOverride", "Lbs (override)", String(c.lbs || ""), "decimal") + inp("refCostLb", "Refrigerant cost per lb", "e.g. 50 for R-22", "decimal") + "</div>" +
+        '<div class="chips"><button class="chip' + (d.provOn !== false ? " on" : "") + '" ' + act("rbToggle", "provOn") + ">Refrigerant provisions · $185</button></div>" : "") +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' + inp("gp", "Parts GP %", "40", "decimal") + inp("tax", "Purchase tax % (assumed)", "10.25", "decimal") + "</div>" +
+      '<div class="doc"><div class="k-up">Customer sees</div><div class="row" style="font-weight:750;margin-top:6px"><div>' + esc(d.label || c.T.label) + "</div><div>" + money(c.total) + "</div></div></div>" +
+      builderInternalHtml({ rows: rbBreakdownRows(c), total: c.total, cost: c.cost, gpPct: c.gpPct, flags: c.flags }) +
+      '<button class="btn" style="margin-top:12px" ' + act("rbAdd") + ">Add to estimate · " + money(c.total) + "</button>"
+    );
+  }
+  const RT_RB = {
+    setRb: function (k, v, rerender) { if (!state.rbDraft) return; state.rbDraft[k] = v; if (k === "label") state.rbDraft.labelTouched = true; if (rerender) render(); else renderKeepFocus("rb-" + k); },
+    setRbType: function (v) { const d = state.rbDraft; if (!d) return; const T = rbType(v); d.type = v; d.hours = T.hours; if (!d.labelTouched) d.label = ""; render(); }
+  };
+  function handleRepairBuilder(name, arg) {
+    const job = getJob(state.openJobId);
+    if (name === "rbOpen") { if (!job) return true; state.rbDraft = emptyRbDraft(job); state.sheet = "repairBuilder"; render(); return true; }
+    if (name === "rbClose") { state.rbDraft = null; state.sheet = "priceBook"; render(); return true; }
+    if (name === "rbToggle") { const d = state.rbDraft; if (d) { d[arg] = arg === "provOn" ? (d.provOn === false) : !d[arg]; } render(); return true; }
+    if (name === "rbAdd") {
+      const d = state.rbDraft; if (!job || !d) return true;
+      const c = rbCalc(d, job);
+      if (!(c.hours > 0)) { showToast("Enter labor hours"); return true; }
+      if (!(c.total > 0)) { showToast("Nothing to price yet"); return true; }
+      const rows = rbBreakdownRows(c);
+      const line = { id: "rb-" + Date.now(), label: (d.label || c.T.label).trim(), amount: c.total, qty: 1, unit: "", fromBook: false, cost: c.cost, parts: rbParts(d, c),
+        builder: { kind: "repair", type: d.type, rows: rows, total: c.total, cost: c.cost, gpPct: c.gpPct, flags: c.flags, inputs: JSON.parse(JSON.stringify(d)) } };
+      state.packDraft = (state.packDraft || []).concat([line]);
+      state.rbDraft = null; state.sheet = "priceBook";
+      showToast("Added · " + money(c.total)); return true;
+    }
+    return false;
   }
 
   function snapshotState() {
@@ -5786,6 +5942,8 @@
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Price book</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
       '<div class="muted" style="margin-bottom:10px">' + PRICE_BOOK_NOTE + "</div>" +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px"><button class="btn teal" style="margin:0" ' + act("rbOpen") + ">Custom repair builder</button>" +
+      (typeof rpOpenButton === "function" ? rpOpenButton() : "") + "</div>" +
       (state.packDraft.length ? '<div class="cart"><div class="k-up">This estimate</div>' + state.packDraft.map(lineRow).join("") + '<div class="row" style="font-weight:750;margin-top:6px"><div>Total</div><div>' + money(total) + "</div></div>" + estimateGpHtml(state.packDraft) + "</div>" : "") +
       '<div class="search">' + icon("search", 16) + '<input id="pack-q" type="search" placeholder="Search the price book" value="' + esc(state.packQuery) + '" oninput="RT.setPackQ(this.value)"></div>' +
       '<div class="chips"><button class="chip' + (tab === "all" ? " on" : "") + '" ' + act("packTab", "all") + ">All</button>" +
@@ -5834,6 +5992,7 @@
           "</div><div>" + money(lineTotal(l)) + "</div></div>";
       }).join("") +
       '<div class="row" style="margin-top:12px;font-weight:750"><div>Total</div><div>' + money(total) + "</div></div></div>" +
+      lines.filter(function (l) { return l.builder; }).map(function (l) { return '<div class="meta" style="margin-top:8px;font-weight:700">' + esc(l.label) + "</div>" + builderInternalHtml(l.builder); }).join("") +
       estimateGpHtml(lines) +
       '<div class="note">' + PRICE_BOOK_NOTE + " This preview stays on the phone and is not sent.</div>" +
       '<button class="btn" style="margin-top:12px" ' + act("saveEstimate") + ">Save estimate to job</button>");
@@ -6056,7 +6215,6 @@
       "</div>" +
       '<div class="row" style="gap:8px;margin:4px 0 14px;flex-wrap:wrap">' +
         '<button class="btn" style="flex:1;margin:0" ' + act("openNewBookItem") + ">Add item</button>" +
-        (needs && isAdminTech(actingAs()) ? '<button class="btn accent" style="flex:1;margin:0" ' + act("approveAllBookItems") + ">Approve all · " + needs + "</button>" : "") +
       "</div>" +
       priceBookStack(items) + "</div></div>" +
       tabBar();
@@ -6098,7 +6256,7 @@
     const laborSell = hours * rates.labor;
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">' + (isNew ? "Add custom quote" : "Custom quote") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      (d.status === "needs_ok" ? '<div class="warn-banner">Needs Steve’s OK. This is a template only — no fixed price. Review the scope and labor hours, then tap Approve or Approve all.</div>' : "") +
+      (d.status === "needs_ok" ? '<div class="warn-banner">Needs Steve’s OK. This is a template only — no fixed price. Review the scope and labor hours, then tap Approve.</div>' : "") +
       (d.hoursSource === "estimate" ? '<div class="warn-banner">Labor hours are an estimate. No published task time was found for this repair.</div>' : "") +
       (floorWarn ? '<div class="warn-banner">' + esc(floorWarn) + "</div>" : "") +
       '<label class="field"><div class="field-lab">Name</div><input id="pb-name" value="' + esc(d.name || "") + '" oninput="RT.setPriceDraft(\'name\', this.value)"></label>' +
@@ -6156,7 +6314,7 @@
     const p = flatRatePrices(d) || { first: d.firstPrice, addOn: d.addOnPrice, hours: d.laborHours, laborSell: 0, partSell: 0, partCost: d.partCost, diagnostic: 150, truck: 65, laborRate: 85 };
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">' + (isNew ? "Add flat-rate repair" : "Flat-rate repair") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      (d.status === "needs_ok" ? '<div class="warn-banner">Needs Steve’s OK. Draft first-repair and add-on prices are shown. Review them, then tap Approve or Approve all.</div>' : "") +
+      (d.status === "needs_ok" ? '<div class="warn-banner">Needs Steve’s OK. Draft first-repair and add-on prices are shown. Review them, then tap Approve.</div>' : "") +
       (d.partCostMissing ? '<div class="warn-banner">Part cost missing. The prices below are labor' + (isNew ? "" : ", diagnostic, and truck") + " only until a recorded cost is entered.</div>" : "") +
       (d.hoursSource === "estimate" ? '<div class="warn-banner">Labor hours are an estimate. No published task time was found for this repair.</div>' : "") +
       (floorWarn ? '<div class="warn-banner">' + esc(floorWarn) + "</div>" : "") +
@@ -6189,7 +6347,7 @@
     const sellLab = locked ? " (confirmed rate)" : (ref ? " · cost × " + (1 + bookSettings().refrigerantMinMarkup / 100).toFixed(2).replace(/\.00$/, "") + " (min " + bookSettings().refrigerantMinMarkup + "% markup / " + markupToGp(bookSettings().refrigerantMinMarkup) + "% GP)" : " · cost ÷ (1 − GP); default " + bookSettings().defaultGp + "%, floor " + bookSettings().minGp + "%");
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">' + (isNew ? "Add price book item" : "Edit item") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
-      (d.status === "needs_ok" ? '<div class="warn-banner">Needs Steve’s OK. Proposed sell is shown. Review it, then tap Approve or Approve all.</div>' : "") +
+      (d.status === "needs_ok" ? '<div class="warn-banner">Needs Steve’s OK. Proposed sell is shown. Review it, then tap Approve.</div>' : "") +
       (floorWarn ? '<div class="warn-banner">' + esc(floorWarn) + "</div>" : "") +
       '<label class="field"><div class="field-lab">Name</div><input id="pb-name" value="' + esc(d.name || "") + '" oninput="RT.setPriceDraft(\'name\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Category</div><input id="pb-category" value="' + esc(d.category || "") + '" oninput="RT.setPriceDraft(\'category\', this.value)"></label>' +
@@ -6361,6 +6519,7 @@
     if (!s) return "";
     if (s === "newCall") return newCallSheet();
     if (s === "equipment") return equipmentSheetV2();
+    if (s === "repairBuilder") { const j = getJob(state.openJobId); return j ? repairBuilderSheet(j) : ""; }
     if (s === "unitWork") { const j = getJob(state.openJobId); return j ? unitWorkSheet(j) : ""; }
     if (s === "address") return addressSheet();
     if (s === "moveAddress") return moveAddressSheet();
@@ -6474,6 +6633,7 @@
   }
 
   function handle(name, arg) {
+    if (handleRepairBuilder(name, arg)) return;
     if (handleEquipV2(name, arg)) return;
     if (handlePrePhase2(name, arg)) return;
     if (handlePhase1(name, arg)) return;
@@ -6954,7 +7114,7 @@
     if (name === "saveEstimate") {
       const job = getJob(state.openJobId); if (!job) return;
       const lines = state.packDraft;
-      job.lineItems = lines.map(function (l) { return { label: draftLabel(l) + ((l.flatRate || l.customQuote) && flatRoleLabel(l) ? " (" + flatRoleLabel(l) + ")" : ""), amount: lineTotal(l), id: l.id, cost: lineCostOf({ id: l.id, label: l.label, amount: l.amount, qty: 1, cost: l.cost }), fromBook: !!l.fromBook, flatRate: !!l.flatRate, customQuote: !!l.customQuote, flatRole: l.flatRole || null, parts: partsForLine(l) }; });
+      job.lineItems = lines.map(function (l) { return { label: draftLabel(l) + ((l.flatRate || l.customQuote) && flatRoleLabel(l) ? " (" + flatRoleLabel(l) + ")" : ""), amount: lineTotal(l), id: l.id, cost: lineCostOf({ id: l.id, label: l.label, amount: l.amount, qty: 1, cost: l.cost }), fromBook: !!l.fromBook, flatRate: !!l.flatRate, customQuote: !!l.customQuote, flatRole: l.flatRole || null, parts: partsForLine(l), builder: l.builder || undefined }; });
       job.total = draftTotal(lines);
       if (!job.estimateId) job.estimateId = job.id + "-E01";
       if (!Array.isArray(job.estimates)) job.estimates = [];
@@ -7845,6 +8005,7 @@
     }
   }
   Object.assign(window.RT, RT_EQUIP);
+  Object.assign(window.RT, RT_RB);
   const _handleV1 = handle;
   handle = function (n, a) { _handleV1(n, a); postHandleEquipV2(n); if (n === "saveNote") migrateLegacyPhotos().then(function (k) { if (k) render(); }).catch(function () {}); };
   const _render0 = render;
