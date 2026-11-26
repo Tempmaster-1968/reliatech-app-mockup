@@ -303,7 +303,6 @@
   function assetPreview(c) {
     const assets = customerAssets(c);
     if (assets.length) return assetTitle(assets[0]) + (assets.length > 1 ? " +" + (assets.length - 1) : "");
-    if (c.mentions && c.mentions[0]) return c.mentions[0].name;
     return "";
   }
   function getCustomer(id) { return state.customers.find(function (c) { return c.id === id; }) || null; }
@@ -722,6 +721,7 @@
       }).join("") +
       '<div class="row" style="margin-top:12px;font-weight:750"><div>Total</div><div>' + money(rec.total || 0) + "</div></div></div>" +
       estimateGpHtml((rec.lineItems || []).map(function (l) { return { label: l.label, amount: l.amount, qty: 1, id: l.id, cost: l.cost, fromBook: !!l.fromBook }; })) +
+      ((job.estimates || []).indexOf(rec) !== -1 ? estimateExtrasHtml(job, rec) : "") +
       '<button class="btn" style="margin-top:12px" ' + act("closeSheet") + ">Done</button>");
   }
 
@@ -2394,6 +2394,22 @@
       (j.estimates || []).forEach(function (e) { if (e && e.id === "55720-E01") fill(e.lineItems); });
     });
   })();
+  (function migrateLewisScopeSeed() {
+    const PDF = "https://drive.google.com/file/d/1BtvhWlcZEFAk3o5WmG5Tnb3bNubUpnSL/view";
+    const SCOPE = "Option 1 · Wi-Fi Thermostat Upgrade · $485.50\n- Furnish and install a Venstar T2000 Explorer Mini Wi-Fi programmable thermostat with a large wallplate.\n- Turn off power to the thermostat.\n- Remove the existing thermostat.\n- Install the wallplate and new thermostat and reconnect the wiring.\n- Configure the thermostat for the system.\n- Program the schedule and complete Wi-Fi and app setup.\n- Test heating, cooling, and fan operation.\n- Walk the homeowner through operation.\n\nOption 2 · Furnace Control Board Replacement · $792.00\n- Replace the control board on the Carrier furnace, model 58SU0B080M211220.\n- Turn off power and apply lockout/tagout.\n- Remove the existing control board.\n- Install the replacement board and reconnect the wiring.\n- Configure the board to match the furnace nameplate and verify the settings.\n- Restore power and test heating, cooling, and blower operation.\n- Verify the display and check for fault codes.\n- Remove old parts and clean up the work area.\nNote: Final airflow setup and balancing will require completion of the ductwork.\n\nBundle discount if both are approved: -$65.00\nBoth options together: $1,212.50\nIssued November 25, 2026 · Expires December 25, 2026";
+    (state.jobs || []).forEach(function (j) {
+      if (!j || j.id !== "55720") return;
+      if (j.estimateId === "55720-E01" && !(j.estimates || []).some(function (e) { return e && e.id === "55720-E01"; })) {
+        j.estimates = (j.estimates || []).concat([{ id: "55720-E01", lineItems: JSON.parse(JSON.stringify(j.lineItems || [])), total: j.total, billToCustomerId: j.billToCustomerId, createdAt: "2026-11-25T22:00:00Z" }]);
+      }
+      (j.estimates || []).forEach(function (e) {
+        if (!e || e.id !== "55720-E01") return;
+        if (!e.pdfUrl) e.pdfUrl = PDF;
+        if (!e.expires) e.expires = "2026-12-25";
+        if (!Array.isArray(e.scopeVersions) || !e.scopeVersions.length) e.scopeVersions = [{ v: 1, text: SCOPE, status: "Final", at: "2026-11-25T22:00:00Z", source: "Estimate PDF 55720-E01" }];
+      });
+    });
+  })();
   (function migrateDedupeTechs() {
     try { if (typeof dedupeTechs === "function") dedupeTechs(); } catch (e) {}
   })();
@@ -3104,6 +3120,19 @@
     });
     return out;
   }
+  function partsPullAllowed(job) {
+    return !!job.approvedEstimateId || ["approved", "progress", "done"].indexOf(job.status) !== -1;
+  }
+  function approvedScopeHtml(job) {
+    let h = "";
+    if (job.linkedFromJobId) h += '<div class="note" style="margin:0 0 12px">Linked to job #' + esc(job.linkedFromJobId) + (job.linkedEstimateId ? " · approved estimate " + esc(job.linkedEstimateId) : "") + ' <button class="link-btn tap" ' + act("openLinkedJob", job.linkedFromJobId) + ">Open</button></div>";
+    if ((job.linkedJobIds || []).length) h += '<div class="note" style="margin:0 0 12px">Approved work moved to ' + job.linkedJobIds.map(function (id) { return '<button class="link-btn tap" ' + act("openLinkedJob", id) + ">job #" + esc(id) + "</button>"; }).join(", ") + "</div>";
+    if (!job.approvedEstimateId) return h;
+    h += '<div class="section-row"><div class="section" style="margin:0">Approved scope</div><div class="meta">' + esc(job.approvedEstimateId) + (job.scopeVersion ? " · v" + job.scopeVersion : "") + "</div></div>";
+    h += job.scope ? '<div class="doc" style="white-space:pre-wrap;font-size:13px;line-height:19px">' + esc(job.scope) + "</div>" : '<div class="muted" style="margin-bottom:10px">No scope text on the approved estimate.</div>';
+    if (job.pdfUrl) h += '<a class="btn ghost" style="display:flex;text-decoration:none;margin-bottom:16px" href="' + esc(job.pdfUrl) + '" target="_blank" rel="noopener">Open estimate PDF</a>';
+    return h;
+  }
   function partsSection(job) {
     const parts = jobParts(job);
     const need = parts.filter(function (x) { return x.status === "needed"; }).length;
@@ -3118,7 +3147,7 @@
     }).join("") : '<div class="muted">No parts listed yet. Add them by hand or pull them from the estimate.</div>') + "</div>";
     html += '<div class="quick" style="grid-template-columns:1fr 1fr;margin-bottom:8px">' +
       '<button class="dash" ' + act("addPart") + ">+ Add part</button>" +
-      '<button class="dash" ' + act("partsFromEstimate") + ">Pull from estimate</button></div>" +
+      (partsPullAllowed(job) ? '<button class="dash" ' + act("partsFromEstimate") + ">Pull from estimate</button>" : '<div class="meta" style="align-self:center">Estimate parts move here when it’s approved.</div>') + "</div>" +
       (need ? '<button class="btn ghost" style="margin-bottom:16px" ' + act("openPo") + ">Draft PO email · " + esc(nextPoNumber(job)) + "</button>" : '<div style="margin-bottom:16px"></div>');
     return html;
   }
@@ -3463,6 +3492,363 @@
     });
     return h + '<div style="margin-bottom:16px"></div>';
   }
+  /* ——— Pre-Phase 2: estimate approval, scope versions, PDF, Ask ReliaTech handoff ——— */
+  function approvalHash(str) {
+    let h = 0x811c9dc5;
+    const s = String(str || "");
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let out = "";
+    for (let i = 0; i < 5; i++) { out += chars[h % chars.length]; h = Math.floor(h / chars.length); }
+    return out;
+  }
+  function approvalNameKey(n) { return String(n || "").toLowerCase().replace(/[^a-z]/g, ""); }
+  function approvalCode(estId, optNums, name) {
+    const opts = optNums.slice().sort(function (a, b) { return a - b; }).join("-");
+    return estId + "." + opts + "." + approvalHash(estId + "|" + opts + "|" + approvalNameKey(name));
+  }
+  function currentEstimateRec(job, id) {
+    const want = id || job.estimateId;
+    return (job.estimates || []).find(function (e) { return e.id === want; }) || null;
+  }
+  function estimateOptions(rec) {
+    let n = 0;
+    return (rec && rec.lineItems || []).map(function (l, i) {
+      if (!(Number(l.amount) > 0)) return null;
+      n++;
+      return { n: n, idx: i, label: String(l.label || "Option " + n), amount: Number(l.amount) || 0, parts: Array.isArray(l.parts) ? l.parts : partsForLine(l) };
+    }).filter(Boolean);
+  }
+  function estimateDiscounts(rec) {
+    return (rec && rec.lineItems || []).filter(function (l) { return Number(l.amount) < 0; });
+  }
+  function approvedTotal(rec, optNums) {
+    const opts = estimateOptions(rec);
+    const picked = opts.filter(function (o) { return optNums.indexOf(o.n) !== -1; });
+    let t = picked.reduce(function (s, o) { return s + o.amount; }, 0);
+    const all = picked.length === opts.length && opts.length > 1;
+    estimateDiscounts(rec).forEach(function (d) {
+      const conditional = /if (both|all)/i.test(d.label || "");
+      if (!conditional || all) t += Number(d.amount) || 0;
+    });
+    return Math.round(t * 100) / 100;
+  }
+  function latestScope(rec, finalOnly) {
+    const v = (rec && rec.scopeVersions) || [];
+    for (let i = v.length - 1; i >= 0; i--) if (!finalOnly || v[i].status === "Final") return v[i];
+    return null;
+  }
+  function estimateIsOnOtherVisit(job) {
+    return !!(job.invoiceId || jobTimeEntries(job).length || ["progress", "done", "invoiced", "paid"].indexOf(job.status) !== -1);
+  }
+  function customerApprovalUrl(job, rec) {
+    const sc = latestScope(rec, true) || latestScope(rec, false);
+    const payload = {
+      e: rec.id, j: job.id, c: (billToCustomer(job) || {}).name || job.customer,
+      a: [job.address, job.city].filter(Boolean).join(", "),
+      o: estimateOptions(rec).map(function (o) { return [o.n, o.label, o.amount]; }),
+      d: estimateDiscounts(rec).map(function (l) { return [l.label, Number(l.amount)]; }),
+      s: sc ? sc.text : "",
+      p: rec.pdfUrl || "",
+      t: (state.settings && state.settings.stevePhone) || "(562) 487-8750",
+      m: (state.settings && state.settings.steveEmail) || "steveseguine51@gmail.com",
+      x: rec.expires || ""
+    };
+    return PUBLIC_PAY_BASE + "approve.html#d=" + encodePayPayload(payload);
+  }
+  function approvalLinkMessage(job, rec) {
+    return "Hi " + firstName(job.customer) + ", here is ReliaTech estimate " + rec.id + " for " + (job.address || "your home") + ". Review the options and approve here: " + customerApprovalUrl(job, rec) + " — Steve, ReliaTech Services";
+  }
+  function estimateExtrasHtml(job, rec) {
+    if (!rec || rec.superseded) return "";
+    const ap = rec.approval;
+    const opts = estimateOptions(rec);
+    let h = '<div class="section">Approval</div>';
+    if (ap) {
+      const names = opts.filter(function (o) { return ap.options.indexOf(o.n) !== -1; }).map(function (o) { return "Option " + o.n + " · " + o.label; });
+      h += '<div class="panel" style="margin-bottom:10px;border-left:4px solid #2F8F4E"><div class="h2" style="margin:0 0 4px">Approved · ' + money(ap.total || 0) + "</div>" +
+        '<div class="muted">' + esc(names.join("; ")) + "</div>" +
+        '<div class="meta" style="margin-top:6px">By ' + esc(ap.by || "—") + " · " + esc(ap.method || "") + " · " + esc(formatPrettyDateTime(ap.at)) + (ap.code ? " · code " + esc(ap.code) + (ap.codeVerified ? " ✓" : " (not verified)") : "") + "</div>" +
+        (ap.result && ap.result.mode === "linked" ? '<div class="meta">Work moved to new linked job #' + esc(ap.result.jobId) + "</div>" : "") +
+        "</div>" +
+        (ap.result && ap.result.mode === "linked" ? '<button class="btn ghost" style="margin-bottom:8px" ' + act("openLinkedJob", ap.result.jobId) + ">Open job #" + esc(ap.result.jobId) + "</button>" : "") +
+        '<button class="link-btn tap" style="margin:0 0 10px" ' + act("undoApproval", rec.id) + ">Undo approval</button>";
+    } else {
+      h += '<div class="muted" style="margin:-4px 0 8px">Awaiting approval. Scope, PDF link, and parts move to the job only after approval.</div>' +
+        '<button class="btn teal" style="margin-bottom:8px" ' + act("openApproveEst", rec.id) + ">Approve…</button>" +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">' +
+        '<button class="dash" ' + act("copyApprovalLink", rec.id) + ">Copy customer approval link</button>" +
+        '<button class="dash" ' + act("shareApprovalLink", rec.id) + ">Text / share link…</button></div>" +
+        '<div class="note" style="margin:-4px 0 12px">Nothing is sent by the app. The link opens a page where the customer picks options, types their name, and texts or emails you an approval code. Paste that message into Approve… › Customer link to record it.</div>';
+    }
+    h += '<div class="section">Estimate PDF</div>';
+    h += rec.pdfUrl ? '<a class="btn ghost" style="display:flex;text-decoration:none;margin-bottom:12px" href="' + esc(rec.pdfUrl) + '" target="_blank" rel="noopener">Open PDF</a>'
+      : '<div class="muted" style="margin:-4px 0 12px">No PDF yet. Mark a scope version Final, then Print / Save PDF.</div>';
+    const versions = rec.scopeVersions || [];
+    const cur = versions[versions.length - 1];
+    h += '<div class="section-row"><div class="section" style="margin:0">Scope</div>' + (cur ? '<div class="meta">v' + cur.v + " · " + esc(cur.status) + "</div>" : "") + "</div>";
+    h += cur ? '<div class="doc" style="white-space:pre-wrap;font-size:13px;line-height:19px">' + esc(cur.text) + "</div>" : '<div class="muted" style="margin:-4px 0 8px">No scope drafted yet.</div>';
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">' +
+      '<button class="dash" ' + act("editScope", rec.id) + ">" + (cur ? "Edit (new version)" : "Write scope") + "</button>" +
+      '<button class="dash" ' + act("refineScope", rec.id) + ">Send to ReliaTech to refine</button></div>" +
+      (cur && cur.status !== "Final" ? '<button class="dash" style="margin-bottom:8px" ' + act("finalizeScope", rec.id) + ">Mark v" + cur.v + " Final</button>" : "") +
+      (latestScope(rec, true) ? '<button class="dash" style="margin-bottom:8px" ' + act("printEstimate", rec.id) + ">Print / Save PDF from v" + latestScope(rec, true).v + " (Final)</button>" : '<div class="note" style="margin:0 0 8px">A PDF can only be made from a version marked Final.</div>') +
+      (versions.length > 1 ? '<div class="meta" style="margin-bottom:12px">History: ' + versions.map(function (v) { return "v" + v.v + " " + v.status + " (" + formatDate(v.at) + ")"; }).join(" · ") + "</div>" : "");
+    const withParts = opts.filter(function (o) { return o.parts && o.parts.length; });
+    if (withParts.length) {
+      h += '<div class="section">Parts on this estimate</div><div class="muted" style="margin:-4px 0 8px">These move to the job’s parts list when the option is approved.</div>' +
+        withParts.map(function (o) {
+          return '<div class="panel" style="margin-bottom:8px"><div class="meta" style="margin-bottom:4px">Option ' + o.n + " · " + esc(o.label) + "</div>" +
+            o.parts.map(function (p) { return '<div class="row" style="font-size:13px"><div>' + esc((Number(p.qty) || 1) + " × " + p.name + (p.partNo ? " (" + p.partNo + ")" : "")) + "</div><div>" + (p.cost != null && p.cost !== "" ? money(Number(p.cost)) + (p.costUnverified ? "*" : "") : "") + "</div></div>"; }).join("") + "</div>";
+        }).join("");
+    }
+    return h;
+  }
+  function approveEstSheet(job) {
+    const d = state.approveDraft; if (!d) return "";
+    const rec = currentEstimateRec(job, d.estId); if (!rec) return "";
+    const opts = estimateOptions(rec);
+    const methods = ["In person", "Phone", "Text", "Customer link"];
+    const tot = approvedTotal(rec, d.options);
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Approve ' + esc(rec.id) + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="field-lab">How was it approved?</div><div class="chips" style="margin-bottom:12px">' + methods.map(function (m) {
+        return '<button class="chip' + (d.method === m ? " on" : "") + '" ' + act("approveMethod", m) + ">" + m + "</button>";
+      }).join("") + "</div>" +
+      (d.method === "Customer link" ? '<label class="field"><div class="field-lab">Paste the customer’s approval text or code</div><textarea id="ap-code" rows="3" placeholder="e.g. 55720-E01.1-2.K7Q2X" oninput="RT.setApproveField(\'paste\', this.value)">' + esc(d.paste || "") + "</textarea></label>" +
+        '<button class="dash" style="margin-bottom:12px" ' + act("readApprovalCode") + ">Read code</button>" +
+        (d.codeMsg ? '<div class="note" style="margin:-6px 0 12px">' + esc(d.codeMsg) + "</div>" : "") : "") +
+      '<div class="field-lab">Options approved</div><div class="stack" style="margin-bottom:12px">' + opts.map(function (o) {
+        const on = d.options.indexOf(o.n) !== -1;
+        return '<button class="dash' + (on ? " sel" : "") + '" ' + act("approveToggleOpt", String(o.n)) + ">" + (on ? "✓ " : "") + "Option " + o.n + " · " + esc(o.label) + " · " + money(o.amount) + "</button>";
+      }).join("") + "</div>" +
+      '<label class="field"><div class="field-lab">Approved by</div><input id="ap-by" autocomplete="off" value="' + esc(d.by || "") + '" oninput="RT.setApproveField(\'by\', this.value)"></label>' +
+      '<div class="h2" style="margin:4px 0 12px">Approved total ' + money(tot) + "</div>" +
+      '<div class="note" style="margin:-6px 0 12px">' + (estimateIsOnOtherVisit(job) ? "This estimate was written on a visit that already has work or an invoice, so approval creates a new linked job (#" + esc(nextJobId(state.jobs)) + ")." : "Approval turns job #" + esc(job.id) + " into the approved job.") + " Scope, PDF link, and parts for the approved options move to the job.</div>" +
+      '<button class="btn teal" ' + act("confirmApproveEst") + ">Confirm approval</button>"
+    );
+  }
+  function scopeEditSheet(job) {
+    const d = state.scopeDraft; if (!d) return "";
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Scope · ' + esc(d.estId) + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="muted" style="margin-bottom:8px">Saving makes a new Draft version. Earlier versions are kept.</div>' +
+      '<label class="field"><textarea id="sc-text" rows="14" oninput="RT.setScopeText(this.value)">' + esc(d.text || "") + "</textarea></label>" +
+      '<button class="btn teal" ' + act("saveScope") + ">Save as new Draft version</button>" +
+      '<button class="btn ghost" style="margin-top:8px" ' + act("refineScope", d.estId) + ">Send to ReliaTech to refine</button>"
+    );
+  }
+  function jobContextText(job) {
+    const c = getCustomer(job.customerId);
+    const lines = ["ReliaTech job #" + job.id + " · " + (job.customer || ""), "Address: " + [job.address, job.city].filter(Boolean).join(", "), "Status: " + ((STATUS[job.status] || {}).label || job.status), "Problem: " + (job.problem || "")];
+    const addr = job.addressId ? getAddressById(job.addressId) : (c ? primaryAddress(c) : null);
+    const assets = (addr && addr.assets) || [];
+    if (assets.length) lines.push("Equipment: " + assets.map(function (a) { return [equipmentTypeLabel(a), a.make, a.model, a.location].filter(Boolean).join(" "); }).join("; "));
+    const sets = job.readingSets || [];
+    if (sets.length) lines.push("Latest readings: " + (sets[sets.length - 1].label || "") + " (" + Object.keys(sets[sets.length - 1].values || {}).length + " values in the app)");
+    if (job.estimateId) lines.push("Estimate: " + job.estimateId + " · " + money(job.total || 0));
+    if (jobParts(job).length) lines.push("Parts: " + jobParts(job).map(function (p) { return (p.qty || 1) + "× " + p.name + " [" + p.status + "]"; }).join("; "));
+    if (job.scope) lines.push("Approved scope:\n" + job.scope);
+    return lines.join("\n");
+  }
+  function shareOrCopy(text, okMsg) {
+    if (navigator.share && /iPhone|iPad|Android/i.test(navigator.userAgent)) {
+      navigator.share({ text: text }).catch(function () { copyText(text, okMsg); });
+      return;
+    }
+    copyText(text, okMsg);
+  }
+  function askSheetHandoff(job) {
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Ask ReliaTech</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="note" style="margin:0 0 10px">The app can’t message your ReliaTech assistant directly yet. Type your question, tap Copy, then paste it into your ReliaTech chat. The job details are included.</div>' +
+      '<label class="field"><div class="field-lab">Your question</div><textarea id="ask-q" rows="4" placeholder="e.g. Board shows code 33, what should I check?" oninput="RT.setAskText(this.value)">' + esc(state.askText || "") + "</textarea></label>" +
+      '<div class="field-lab">Job details that go with it</div><div class="doc" style="white-space:pre-wrap;font-size:12px;line-height:17px">' + esc(jobContextText(job)) + "</div>" +
+      '<button class="btn teal" ' + act("askCopy") + ">Copy for ReliaTech chat</button>" +
+      '<button class="btn ghost" style="margin-top:8px" ' + act("askShare") + ">Share…</button>"
+    );
+  }
+  function printEstimateHtml(job, rec, sc) {
+    const party = billToCustomer(job) || {};
+    const opts = estimateOptions(rec);
+    const rows = opts.map(function (o) { return "<tr><td>Option " + o.n + " · " + esc(o.label) + '</td><td style="text-align:right">' + money(o.amount) + "</td></tr>"; }).join("") +
+      estimateDiscounts(rec).map(function (l) { return "<tr><td>" + esc(l.label) + '</td><td style="text-align:right">' + money(Number(l.amount)) + "</td></tr>"; }).join("");
+    return "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>ReliaTech Estimate " + esc(rec.id) + "</title>" +
+      "<style>body{font-family:-apple-system,Helvetica,Arial,sans-serif;color:#111;margin:32px;font-size:13px}h1{color:#0B3A4F;margin:0}table{width:100%;border-collapse:collapse;margin:16px 0}td{border-bottom:1px solid #ddd;padding:8px 4px}.scope{white-space:pre-wrap;line-height:1.5}.k{color:#666;font-size:11px;text-transform:uppercase;letter-spacing:.5px}</style></head><body>" +
+      "<h1>ReliaTech Services</h1><div class='k'>Estimate " + esc(rec.id) + " · scope v" + sc.v + " (Final)</div>" +
+      "<p><b>Prepared for</b><br>" + esc(party.name || job.customer) + "<br>" + esc([job.address, job.city].filter(Boolean).join(", ")) + "</p>" +
+      "<table>" + rows + "</table><div class='k'>Scope of work</div><div class='scope'>" + esc(sc.text) + "</div>" +
+      "<p style='margin-top:24px'>Approved by: ______________________ &nbsp; Date: __________</p>" +
+      "<script>setTimeout(function(){window.print()},400)<\/script></body></html>";
+  }
+  function applyEstimateApproval(job, rec, d) {
+    const opts = estimateOptions(rec).filter(function (o) { return d.options.indexOf(o.n) !== -1; });
+    const total = approvedTotal(rec, d.options);
+    const sc = latestScope(rec, true) || latestScope(rec, false);
+    const linked = estimateIsOnOtherVisit(job);
+    let target = job;
+    const result = { mode: linked ? "linked" : "converted", jobId: job.id, prev: null, addedPartIds: [] };
+    if (linked) {
+      const nid = nextJobId(state.jobs);
+      target = {
+        id: nid, customerId: job.customerId, customer: job.customer, address: job.address, city: job.city, phone: job.phone,
+        addressId: job.addressId, billToCustomerId: rec.billToCustomerId || job.billToCustomerId, problem: opts.map(function (o) { return o.label; }).join(" + ") || job.problem,
+        status: "approved", lineItems: [], total: 0, readingSets: [], timeline: [], estimates: [], linkedFromJobId: job.id, linkedEstimateId: rec.id, customerRef: "", referredBy: ""
+      };
+      state.jobs = [target].concat(state.jobs);
+      job.linkedJobIds = (job.linkedJobIds || []).concat([nid]);
+      result.jobId = nid;
+    } else {
+      result.prev = { status: job.status, lineItems: JSON.parse(JSON.stringify(job.lineItems || [])), total: job.total, scope: job.scope || null, pdfUrl: job.pdfUrl || null };
+    }
+    const approvedLines = (rec.lineItems || []).filter(function (l, i) {
+      if (opts.some(function (o) { return o.idx === i; })) return true;
+      if (Number(l.amount) < 0) { const all = opts.length === estimateOptions(rec).length && opts.length > 1; return !/if (both|all)/i.test(l.label || "") || all; }
+      return false;
+    });
+    target.lineItems = JSON.parse(JSON.stringify(approvedLines));
+    target.total = total;
+    target.status = "approved";
+    target.approvedEstimateId = rec.id;
+    target.scope = sc ? sc.text : "";
+    target.scopeVersion = sc ? sc.v : null;
+    target.pdfUrl = rec.pdfUrl || "";
+    const list = jobParts(target).slice();
+    opts.forEach(function (o) {
+      (o.parts || []).forEach(function (p, k) {
+        if (list.some(function (x) { return normalizeName(x.name) === normalizeName(p.name) || (p.partNo && x.partNo && normalizeName(x.partNo) === normalizeName(p.partNo)); })) return;
+        const id = "pt" + Date.now() + "-" + o.n + "-" + k;
+        list.push({ id: id, name: p.name, partNo: p.partNo || "", qty: p.qty || 1, cost: p.cost != null && p.cost !== "" ? Number(p.cost) : null, costUnverified: !!p.costUnverified, note: p.note || "", branchId: "", status: "needed", po: "", fromEstimate: true });
+        result.addedPartIds.push(id);
+      });
+    });
+    target.parts = list;
+    target.timeline = [t("tapp" + Date.now(), "system", "Just now", "Estimate " + rec.id + " approved", opts.map(function (o) { return "Option " + o.n + " " + o.label; }).join("; ") + " · " + money(total) + " · " + d.method + " · " + (d.by || ""))].concat(target.timeline || []);
+    if (linked) job.timeline = [t("tlink" + Date.now(), "system", "Just now", "Approved work moved to #" + target.id, "Estimate " + rec.id + " approved. New linked job #" + target.id + ".")].concat(job.timeline || []);
+    rec.approval = { options: d.options.slice(), by: d.by || "", method: d.method, at: isoNow(), code: d.code || "", codeVerified: !!d.codeVerified, total: total, result: result };
+    return target;
+  }
+  function undoEstimateApproval(job, rec) {
+    const ap = rec.approval; if (!ap) return "Not approved";
+    const r = ap.result || {};
+    if (r.mode === "linked") {
+      const lj = getJob(r.jobId);
+      if (lj && (jobTimeEntries(lj).length || lj.invoiceId || jobParts(lj).some(function (p) { return p.status !== "needed"; }))) return "Job #" + r.jobId + " already has time, an invoice, or ordered parts. Undo on that job by hand.";
+      state.jobs = state.jobs.filter(function (x) { return x.id !== r.jobId; });
+      job.linkedJobIds = (job.linkedJobIds || []).filter(function (x) { return x !== r.jobId; });
+    } else {
+      if (jobTimeEntries(job).length || job.invoiceId) return "This job already has time or an invoice. Undo by hand.";
+      if (r.prev) { job.status = r.prev.status; job.lineItems = r.prev.lineItems; job.total = r.prev.total; job.scope = r.prev.scope || undefined; job.pdfUrl = r.prev.pdfUrl || undefined; }
+      job.parts = jobParts(job).filter(function (p) { return (r.addedPartIds || []).indexOf(p.id) === -1 || p.status !== "needed"; });
+      delete job.approvedEstimateId; delete job.scopeVersion;
+    }
+    job.timeline = [t("tundo" + Date.now(), "system", "Just now", "Approval of " + rec.id + " undone", "Recorded approval removed.")].concat(job.timeline || []);
+    delete rec.approval;
+    return "";
+  }
+  function readApprovalPaste(rec, d) {
+    const txt = String(d.paste || "");
+    const m = txt.match(/(\d{5}-E\d{2})\.([\d-]+)\.([A-Z2-9]{5})/);
+    if (!m) { d.codeMsg = "No approval code found. It looks like 55720-E01.1-2.K7Q2X."; return; }
+    if (m[1] !== rec.id) { d.codeMsg = "That code is for " + m[1] + ", not " + rec.id + "."; return; }
+    const nums = m[2].split("-").map(Number).filter(function (n) { return n > 0; });
+    const nm = (txt.match(/Name:\s*(.+)/i) || [])[1] || d.by || "";
+    d.options = nums; d.code = m[0]; if (nm) d.by = nm.trim();
+    d.codeVerified = approvalCode(rec.id, nums, d.by) === m[0];
+    d.codeMsg = d.codeVerified ? "Code checks out for " + d.by + ": options " + nums.join(" and ") + "." : "Options read (" + nums.join(", ") + "), but the code doesn’t match the name “" + (d.by || "") + "”. Check the name, or record it anyway as not verified.";
+  }
+  Object.assign(window.RT, {
+    setApproveField: function (k, v) { if (state.approveDraft) state.approveDraft[k] = v; },
+    setScopeText: function (v) { if (state.scopeDraft) state.scopeDraft.text = v; },
+    setAskText: function (v) { state.askText = v; }
+  });
+  function handlePrePhase2(name, arg) {
+    const job = getJob(state.openJobId);
+    if (name === "openApproveEst") {
+      const rec = job && currentEstimateRec(job, arg); if (!rec) return true;
+      state.approveDraft = { estId: rec.id, method: "In person", options: estimateOptions(rec).map(function (o) { return o.n; }), by: (billToCustomer(job) || {}).name || job.customer, paste: "", code: "", codeVerified: false, codeMsg: "" };
+      state.sheet = "approveEst"; render(); return true;
+    }
+    if (name === "approveMethod") { if (state.approveDraft) state.approveDraft.method = arg; render(); return true; }
+    if (name === "approveToggleOpt") {
+      const d = state.approveDraft; if (!d) return true; const n = Number(arg);
+      d.options = d.options.indexOf(n) === -1 ? d.options.concat([n]) : d.options.filter(function (x) { return x !== n; });
+      render(); return true;
+    }
+    if (name === "readApprovalCode") { const d = state.approveDraft; const rec = job && d && currentEstimateRec(job, d.estId); if (rec) readApprovalPaste(rec, d); render(); return true; }
+    if (name === "confirmApproveEst") {
+      const d = state.approveDraft; const rec = job && d && currentEstimateRec(job, d.estId); if (!rec) return true;
+      if (!d.options.length) { showToast("Pick at least one option"); return true; }
+      if (!String(d.by || "").trim()) { showToast("Enter who approved it"); return true; }
+      if (rec.approval) { showToast("Already approved"); return true; }
+      if (!window.confirm("Record approval of " + rec.id + " for " + money(approvedTotal(rec, d.options)) + "? Nothing is sent to the customer.")) return true;
+      const target = applyEstimateApproval(job, rec, d);
+      state.approveDraft = null; state.sheet = null; state.openJobId = target.id;
+      showToast(target.id === job.id ? "Approved · job #" + job.id + " is ready to schedule" : "Approved · new linked job #" + target.id);
+      return true;
+    }
+    if (name === "undoApproval") {
+      const rec = job && currentEstimateRec(job, arg); if (!rec) return true;
+      if (!window.confirm("Undo the recorded approval of " + rec.id + "?")) return true;
+      const err = undoEstimateApproval(job, rec);
+      if (err) { showToast(err); return true; }
+      render(); showToast("Approval undone"); return true;
+    }
+    if (name === "openLinkedJob") { state.sheet = null; state.openJobId = arg; render(); return true; }
+    if (name === "copyApprovalLink") { const rec = job && currentEstimateRec(job, arg); if (rec) copyText(customerApprovalUrl(job, rec), "Approval link copied. Nothing was sent."); return true; }
+    if (name === "shareApprovalLink") { const rec = job && currentEstimateRec(job, arg); if (rec) shareOrCopy(approvalLinkMessage(job, rec), "Message copied. Paste it into a text to the customer."); return true; }
+    if (name === "editScope") {
+      const rec = job && currentEstimateRec(job, arg); if (!rec) return true;
+      const cur = latestScope(rec, false);
+      state.scopeDraft = { estId: rec.id, text: cur ? cur.text : "" };
+      state.sheet = "scopeEdit"; render(); return true;
+    }
+    if (name === "saveScope") {
+      const d = state.scopeDraft; const rec = job && d && currentEstimateRec(job, d.estId); if (!rec) return true;
+      const text = String(d.text || "").trim(); if (!text) { showToast("Scope is empty"); return true; }
+      const v = rec.scopeVersions || [];
+      const last = v[v.length - 1];
+      if (last && last.text === text) { showToast("No changes"); return true; }
+      rec.scopeVersions = v.concat([{ v: (last ? last.v : 0) + 1, text: text, status: "Draft", at: isoNow() }]);
+      state.scopeDraft = null; state.viewEstimateId = rec.id; state.sheet = "viewEstimate";
+      showToast("Saved as v" + rec.scopeVersions[rec.scopeVersions.length - 1].v + " Draft"); return true;
+    }
+    if (name === "finalizeScope") {
+      const rec = job && currentEstimateRec(job, arg); if (!rec) return true;
+      const cur = latestScope(rec, false); if (!cur) return true;
+      cur.status = "Final"; cur.finalAt = isoNow();
+      if (rec.approval && job.approvedEstimateId === rec.id) { job.scope = cur.text; job.scopeVersion = cur.v; }
+      render(); showToast("v" + cur.v + " marked Final"); return true;
+    }
+    if (name === "refineScope") {
+      const rec = job && currentEstimateRec(job, arg); if (!rec) return true;
+      const text = (state.scopeDraft && state.scopeDraft.estId === rec.id && state.scopeDraft.text) || ((latestScope(rec, false) || {}).text) || "";
+      const cur = latestScope(rec, false);
+      const msg = "Please refine the scope for estimate " + rec.id + (cur ? " (currently v" + cur.v + " " + cur.status + ")" : "") + ".\n\n" + jobContextText(job) + "\n\nOptions:\n" + estimateOptions(rec).map(function (o) { return "Option " + o.n + ": " + o.label + " " + money(o.amount); }).join("\n") + "\n\nCurrent scope:\n" + text + "\n\nMy notes: ";
+      shareOrCopy(msg, "Copied. Paste into your ReliaTech chat, add notes, and paste the reply back as a new version.");
+      return true;
+    }
+    if (name === "printEstimate") {
+      const rec = job && currentEstimateRec(job, arg); const sc = rec && latestScope(rec, true);
+      if (!sc) { showToast("Mark a version Final first"); return true; }
+      const w = window.open("", "_blank");
+      if (!w) { showToast("Allow pop-ups to print"); return true; }
+      w.document.open(); w.document.write(printEstimateHtml(job, rec, sc)); w.document.close();
+      return true;
+    }
+    if (name === "askCopy") { if (job) copyText(String(state.askText || "").trim() + "\n\n" + jobContextText(job), "Copied. Paste into your ReliaTech chat."); return true; }
+    if (name === "askShare") { if (job) shareOrCopy(String(state.askText || "").trim() + "\n\n" + jobContextText(job), "Copied. Paste into your ReliaTech chat."); return true; }
+    if (name === "assetLocation") {
+      if (!state.assetDraft) return true;
+      if (arg === "Other") { state.assetDraft.locOther = true; if (EQUIPMENT_LOCATIONS.indexOf(state.assetDraft.location) !== -1) state.assetDraft.location = ""; }
+      else { state.assetDraft.locOther = false; state.assetDraft.location = arg; }
+      render();
+      if (arg === "Other") { const el = document.getElementById("eq-location"); if (el) { try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); } } }
+      return true;
+    }
+    return false;
+  }
+
   function handlePhase1(name, arg) {
     const job = getJob(state.openJobId);
     if (name === "addPart") { state.partDraft = { isNew: true, name: "", partNo: "", qty: 1, branchId: "", status: "needed" }; state.sheet = "part"; render(); return true; }
@@ -4181,6 +4567,7 @@
       jobEquipmentSection(job) +
       timeSection(job) +
       partsSection(job) +
+      approvedScopeHtml(job) +
       '<div class="panel" style="margin-bottom:16px">' + stepper(job.status) + "</div>" +
       '<div class="section">On this job</div><div class="quick">' +
       '<button class="quick-btn" ' + act("sheet", "photo") + ">" + icon("photo") + "<span>Photo</span></button>" +
@@ -4194,7 +4581,7 @@
       estimateHistoryHtml(job) +
       '<div class="actions">' +
       '<button class="btn" ' + act("openPriceBook") + ">Build estimate</button>" +
-      (job.estimateId ? '<button class="btn ghost" ' + act("sheet", "approval") + ">Send for approval · " + job.estimateId + "</button>" : "") +
+      (job.estimateId ? '<button class="btn ghost" ' + act("viewEstimate", job.estimateId) + ">" + (job.approvedEstimateId === job.estimateId ? "Estimate " + job.estimateId + " · approved" : "Approve / send · " + job.estimateId) + "</button>" : "") +
       (job.status === "done" || job.status === "approved" || job.status === "progress" ? '<button class="btn teal" ' + act("sheet", "invoice") + ">Make invoice</button>" : "") +
       (job.status === "invoiced" || job.status === "paid" || job.invoiceId ? '<button class="btn ghost" ' + act("sheet", "invoice") + ">View invoice</button>" : "") +
       (isPayable(job) ? '<button class="btn teal" ' + act("sheet", "pay") + ">Pay now</button>" : "") +
@@ -4323,10 +4710,7 @@
       html += '<div class="section-row"><div class="section" style="margin:0">Equipment</div></div>' +
         '<button class="dash" style="margin:10px 0 12px" ' + act("addEquipment", c.id + (only ? "|" + only.id : "")) + ">Add equipment</button>" +
         (assets.length ? '<div class="stack" style="margin-bottom:16px">' + assets.map(function (a) { return assetCard(a, c.id, false); }).join("") + "</div>" :
-          '<div class="muted" style="margin-bottom:16px">No equipment recorded yet. Add the furnace, coil, and condenser from the nameplate when you are on site.</div>') +
-        (mentions.length ? '<div class="section">Mentioned in job history</div><div class="muted" style="margin:-4px 0 10px">These came from Housecall Pro job or estimate descriptions. They are not full equipment records.</div>' + mentions.map(function (e) {
-          return '<div class="panel" style="margin-bottom:10px"><div class="h2">' + esc(e.name) + "</div><div class=\"muted\" style=\"margin-top:4px\">" + esc(e.detail) + "</div></div>";
-        }).join("") : "");
+          '<div class="muted" style="margin-bottom:16px">No equipment recorded yet. Add the furnace, coil, and condenser from the nameplate when you are on site.</div>') ;
     } else {
       html += '<div class="muted" style="margin-bottom:16px">Equipment is kept on each service address.</div>';
     }
@@ -4366,9 +4750,6 @@
       '<button class="dash" style="margin:10px 0 12px" ' + act("addEquipment", c.id + "|" + a.id) + ">Add equipment</button>" +
       (assets.length ? '<div class="stack" style="margin-bottom:16px">' + assets.map(function (x) { return assetCard(x, c.id, false); }).join("") + "</div>" :
         '<div class="muted" style="margin-bottom:16px">No equipment recorded at this address yet.</div>') +
-      (mentions.length ? '<div class="section">Mentioned in job history</div>' + mentions.map(function (e) {
-        return '<div class="panel" style="margin-bottom:10px"><div class="h2">' + esc(e.name) + "</div><div class=\"muted\" style=\"margin-top:4px\">" + esc(e.detail) + "</div></div>";
-      }).join("") : "") +
       '<div class="section">Jobs</div><div class="stack">' + (jobs.length ? jobs.map(function (j) {
         if (state.jobs.some(function (x) { return x.id === j.id; })) return jobCard(j);
         const col = sc(j.status);
@@ -4882,7 +5263,7 @@
   function equipmentSheet() {
     const d = state.assetDraft || emptyAsset();
     const editing = !!state.assetEditingId;
-    const locOther = d.location && EQUIPMENT_LOCATIONS.indexOf(d.location) === -1;
+    const locOther = !!d.locOther || !!(d.location && EQUIPMENT_LOCATIONS.indexOf(d.location) === -1);
     const fields = [
       ["make", "Make", "text", "Carrier, Rheem, Payne…"],
       ["model", "Model", "text", "From the nameplate"],
@@ -4908,7 +5289,7 @@
         const on = loc === "Other" ? locOther : d.location === loc;
         return '<button class="chip' + (on ? " on" : "") + '" ' + act("assetLocation", loc) + ">" + esc(loc) + "</button>";
       }).join("") + "</div>" +
-      ((locOther || !d.location) ? '<label class="field"><div class="field-lab">' + (locOther ? "Location" : "Location (or type one)") + '</div><input id="eq-location" value="' + esc(locOther ? d.location : "") + '" placeholder="Attic, garage, side yard…" oninput="RT.setAsset(\'location\', this.value)"></label>' : "") +
+      ((locOther || !d.location) ? '<label class="field"><div class="field-lab">' + (locOther ? "Location" : "Location (or type one)") + '</div><input id="eq-location" value="' + esc(locOther ? d.location : "") + '" placeholder="' + (locOther ? "Type the location" : "Attic, garage, side yard…") + '" oninput="RT.setAsset(\'location\', this.value)"></label>' : "") +
       '<label class="field"><div class="field-lab">Notes</div><textarea id="eq-notes" rows="3" placeholder="Condition, access, anything to remember" oninput="RT.setAsset(\'notes\', this.value)">' + esc(d.notes || "") + "</textarea></label>" +
       '<div class="field"><div class="field-lab">Nameplate photo</div>' +
       '<div class="nameplate">' +
@@ -5403,6 +5784,9 @@
     if (s === "moveAddress") return moveAddressSheet();
     if (s === "billTo") { const j = getJob(state.openJobId); return j ? billToSheet(j) : ""; }
     if (s === "viewEstimate") { const j = getJob(state.openJobId); return j ? viewEstimateSheet(j) : ""; }
+    if (s === "approveEst") { const j = getJob(state.openJobId); return j ? approveEstSheet(j) : ""; }
+    if (s === "scopeEdit") { const j = getJob(state.openJobId); return j ? scopeEditSheet(j) : ""; }
+    if (s === "ask") { const j = getJob(state.openJobId); return j ? askSheetHandoff(j) : ""; }
     const job = getJob(state.openJobId);
     if (s === "note") return noteSheet();
     if (s === "part") return job ? partSheet() : "";
@@ -5483,17 +5867,32 @@
     return jobsList();
   }
 
+  function renderScrollKeep(root) {
+    const sh = root.querySelector(".sheet"), ct = root.querySelector(".content");
+    return { sheet: sh ? sh.scrollTop : 0, content: ct ? ct.scrollTop : 0, win: window.scrollY || 0 };
+  }
+  function renderScrollRestore(root, k) {
+    const sh = root.querySelector(".sheet"), ct = root.querySelector(".content");
+    if (sh && k.sheet) sh.scrollTop = k.sheet;
+    if (ct && k.content) ct.scrollTop = k.content;
+    if (k.win && Math.abs((window.scrollY || 0) - k.win) > 1) window.scrollTo(0, k.win);
+  }
   function render() {
     const root = document.getElementById("app");
     if (!root) return;
     const toast = state.toast ? '<div class="toast">' + esc(state.toast) + "</div>" : "";
+    const key = [state.tab, state.screen, state.openJobId, state.openCustomerId, state.openAddressId, state.sheet, state.viewEstimateId, state.dashListKey].join("|");
+    const keep = renderScrollKeep(root);
     root.innerHTML = mainHtml() + sheetHtml() + toast;
+    if (key === state._viewKey) renderScrollRestore(root, keep);
+    state._viewKey = key;
     applyInputHints(root);
     persist();
     ensureTimer();
   }
 
   function handle(name, arg) {
+    if (handlePrePhase2(name, arg)) return;
     if (handlePhase1(name, arg)) return;
     if (name === "tab") { state.tab = arg; state.openJobId = null; state.openCustomerId = null; state.openAddressId = null; state.screen = null; state.query = ""; render(); return; }
     if (name === "filter") { state.filter = arg; render(); return; }

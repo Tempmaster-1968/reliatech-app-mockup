@@ -806,3 +806,4 @@ a.btn.teal { color: var(--on-brand); }
 .list-card, .link-btn, .money-tile, .chip, .dash, .btn, .tab, .icon-btn, .job-card { touch-action: manipulation; -webkit-tap-highlight-color: rgba(11, 58, 79, .12); }
 .link-btn.tap { min-height: 44px; padding: 0 8px; }
 .list-card { min-height: 44px; }
+.dash.sel { border-style: solid; border-color: var(--teal); background: var(--tint); }
