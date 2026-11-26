@@ -2368,6 +2368,32 @@
     state.jobs = markLewis25069Superseded(state.jobs);
     state.moneyJobs = markLewis25069Superseded(state.moneyJobs);
   })();
+  (function migrateLewisEstimateParts() {
+    const BOARD = { name: "Furnace control board (model TBD, confirm from nameplate)", partNo: "", qty: 1, cost: 334.31, costUnverified: true, note: "For Carrier furnace 58SU0B080M211220. Board cost $334.31 not yet verified with the supplier." };
+    const TSTAT = [
+      { name: "Venstar T2000 Explorer Mini Wi-Fi thermostat", partNo: "T2000", qty: 1, cost: 72, note: "Standard Wi-Fi thermostat assembly" },
+      { name: "Venstar large wallplate", partNo: "ACC-EMIN-L", qty: 1, cost: 6, note: "Use ACC-EMIN-M only if the old footprint is extra-wide" }
+    ];
+    function fill(lines) {
+      (lines || []).forEach(function (l) {
+        if (!l || Array.isArray(l.parts)) return;
+        const lab = String(l.label || "");
+        if (/thermostat/i.test(lab) && Number(l.amount) > 0) l.parts = JSON.parse(JSON.stringify(TSTAT));
+        else if (/control board/i.test(lab) && Number(l.amount) > 0) l.parts = [JSON.parse(JSON.stringify(BOARD))];
+        else if (/discount/i.test(lab) || Number(l.amount) <= 0) l.parts = [];
+      });
+    }
+    (state.jobs || []).forEach(function (j) {
+      if (!j || j.id !== "55720") return;
+      if (j.estimateId === "55720-E01") fill(j.lineItems);
+      /* Remove only the rows the first Phase 1 build wrongly pulled (option names
+         as parts), and only while still untouched: needed, no PO. */
+      if (Array.isArray(j.parts)) j.parts = j.parts.filter(function (x) {
+        return !(x && x.fromEstimate && x.status === "needed" && !x.po && /^(wi-fi thermostat upgrade|furnace control board replacement)$/i.test(String(x.name || "").trim()));
+      });
+      (j.estimates || []).forEach(function (e) { if (e && e.id === "55720-E01") fill(e.lineItems); });
+    });
+  })();
   (function migrateDedupeTechs() {
     try { if (typeof dedupeTechs === "function") dedupeTechs(); } catch (e) {}
   })();
@@ -3010,6 +3036,42 @@
   function vendorById(id) { return (state.vendors || []).find(function (v) { return v.id === id; }) || null; }
   function jobParts(job) { return (job && Array.isArray(job.parts)) ? job.parts : []; }
   function nextPoNumber(job) { return job.id + "-P" + pad2((Number(job.poSeq) || 0) + 1); }
+  /* Parts inside flat-rate assemblies and custom/specialty repairs. Keyed by
+     price book item id. Costs are pre-tax supplier costs from pricing.md. */
+  const ASSEMBLY_PARTS = {
+    "fr-tstat-wifi": [
+      { name: "Venstar T2000 Explorer Mini Wi-Fi thermostat", partNo: "T2000", qty: 1, cost: 72, note: "Standard Wi-Fi thermostat assembly (Steve-approved Nov 25, 2026)" },
+      { name: "Venstar large wallplate", partNo: "ACC-EMIN-L", qty: 1, cost: 6, note: "Use ACC-EMIN-M only if the old footprint is extra-wide" }
+    ]
+  };
+  const CUSTOM_PART_NAMES = {
+    "fr-control-board": "Furnace control board",
+    "fr-blower-ecm": "ECM blower motor",
+    "fr-txv": "TXV"
+  };
+  /* The parts that one estimate line carries. Used when the estimate is saved,
+     so every flat-rate or custom repair line stores its own parts list. */
+  function partsForLine(l) {
+    if (!l) return [];
+    if (Array.isArray(l.parts)) return l.parts;
+    const item = l.id ? getBookItem(l.id) : null;
+    const qty = Number(l.qty) > 0 ? Number(l.qty) : 1;
+    if (l.id && ASSEMBLY_PARTS[l.id]) return ASSEMBLY_PARTS[l.id].map(function (x) { return Object.assign({}, x, { qty: x.qty * qty }); });
+    if (item && (l.customQuote || isCustomQuoteItem(item))) {
+      const base = CUSTOM_PART_NAMES[item.id] || ("OEM part for " + item.name);
+      const cost = Number(l.partCost) > 0 ? Number(l.partCost) : null;
+      return [{ name: base + " (model TBD, confirm from nameplate)", partNo: "", qty: qty, cost: cost, note: "" }];
+    }
+    if (item && (l.flatRate || isFlatRateItem(item))) {
+      if (item.noPart) return [];
+      const part = item.partId ? getBookItem(item.partId) : null;
+      const pname = part ? part.name : (item.partName || "");
+      const pno = part ? (part.sku || "") : (item.sku || "");
+      if (pname || pno) return [{ name: pname || item.name + " part", partNo: pno, qty: qty, cost: part ? part.cost : (item.partCost || item.cost || null), note: "" }];
+      return [];
+    }
+    return [];
+  }
   const PART_CATS = /^(parts|equipment|duct & materials|refrigerant|materials?)$/i;
   const NOT_PART_RE = /(option|good|better|best|package|bundle|discount|upgrade|replacement|replace|repair|install|maintenance|tune|service|diagnostic|labor|trip|truck|permit|hers|warranty|plan|visit|inspection|cleaning|subtotal|total|deposit)/i;
   /* Pull only real parts and equipment off the estimate: price book Parts,
@@ -3021,7 +3083,11 @@
     const lines = (est && est.lineItems) || job.lineItems || [];
     const out = [];
     lines.forEach(function (l) {
-      if (!l || !l.label || !(Number(l.amount) > 0) || isLaborLine(l)) return;
+      if (!l || !l.label || !(Number(l.amount) > 0)) return;
+      if (Array.isArray(l.parts)) { l.parts.forEach(function (x) { out.push(Object.assign({}, x)); }); return; }
+      if (isLaborLine(l)) return;
+      const lp = partsForLine(l);
+      if (lp.length) { lp.forEach(function (x) { out.push(Object.assign({}, x)); }); return; }
       const item = (l.id && getBookItem(l.id)) || null;
       if (item && (l.flatRate || l.customQuote || isFlatRateItem(item) || isCustomQuoteItem(item))) {
         const part = item.partId ? getBookItem(item.partId) : null;
@@ -3047,7 +3113,8 @@
     html += '<div class="stack" style="margin-bottom:10px">' + (parts.length ? parts.map(function (x) {
       const v = vendorById(x.branchId);
       return '<button class="list-card" ' + act("editPart", x.id) + '><div class="job-body"><div class="row"><div class="job-name" style="font-size:15px">' + esc(x.name) + (Number(x.qty) > 1 ? " × " + esc(String(x.qty)) : "") + "</div>" + partStatusPill(x.status) + "</div>" +
-        '<div class="job-prob">' + esc([x.partNo, v ? v.name : "", x.po ? "PO " + x.po : ""].filter(Boolean).join(" · ") || "Tap to set part #, branch, or status") + "</div></div></button>";
+        '<div class="job-prob">' + esc([x.partNo, x.cost != null && x.cost !== "" ? "cost " + money(Number(x.cost)) + (x.costUnverified ? " (unverified)" : "") : "", v ? v.name : "", x.po ? "PO " + x.po : ""].filter(Boolean).join(" · ") || "Tap to set part #, branch, or status") + "</div>" +
+        (x.note ? '<div class="meta" style="margin-top:2px">' + esc(x.note) + "</div>" : "") + "</div></button>";
     }).join("") : '<div class="muted">No parts listed yet. Add them by hand or pull them from the estimate.</div>') + "</div>";
     html += '<div class="quick" style="grid-template-columns:1fr 1fr;margin-bottom:8px">' +
       '<button class="dash" ' + act("addPart") + ">+ Add part</button>" +
@@ -3407,7 +3474,7 @@
     if (name === "savePart") {
       const d = state.partDraft; if (!d || !job) return true;
       if (!String(d.name || "").trim()) { showToast("Enter the part name"); return true; }
-      const rec = { id: d.id || ("pt" + Date.now()), name: String(d.name).trim(), partNo: String(d.partNo || "").trim(), qty: Number(d.qty) > 0 ? Number(d.qty) : 1, branchId: d.branchId || "", status: d.status || "needed", po: d.po || "", fromEstimate: !!d.fromEstimate };
+      const rec = { id: d.id || ("pt" + Date.now()), name: String(d.name).trim(), partNo: String(d.partNo || "").trim(), qty: Number(d.qty) > 0 ? Number(d.qty) : 1, cost: d.cost != null ? d.cost : null, costUnverified: !!d.costUnverified, note: d.note || "", branchId: d.branchId || "", status: d.status || "needed", po: d.po || "", fromEstimate: !!d.fromEstimate };
       if (rec.status === "received" && !d.receivedAt) rec.receivedAt = isoNow(); else if (d.receivedAt) rec.receivedAt = d.receivedAt;
       const list = jobParts(job).slice();
       const i = list.findIndex(function (p) { return p.id === rec.id; });
@@ -3428,12 +3495,12 @@
       let added = 0;
       lines.forEach(function (l, i) {
         const label = l.name;
-        if (list.some(function (p) { return normalizeName(p.name) === normalizeName(label); })) return;
-        list.push({ id: "pt" + Date.now() + "-" + i, name: label, partNo: "", qty: l.qty || 1, branchId: "", status: "needed", po: "", fromEstimate: true });
+        if (list.some(function (p) { return normalizeName(p.name) === normalizeName(label) || (l.partNo && p.partNo && normalizeName(p.partNo) === normalizeName(l.partNo)); })) return;
+        list.push({ id: "pt" + Date.now() + "-" + i, name: label, partNo: l.partNo || "", qty: l.qty || 1, cost: l.cost != null && l.cost !== "" ? Number(l.cost) : null, costUnverified: !!l.costUnverified, note: l.note || "", branchId: "", status: "needed", po: "", fromEstimate: true });
         added++;
       });
       job.parts = list;
-      showToast(added ? "Added " + added + " part" + (added > 1 ? "s" : "") + " from the estimate" : "No part or equipment lines on this estimate. Add parts with + Add part.");
+      showToast(added ? "Added " + added + " part" + (added > 1 ? "s" : "") + " from the estimate" : (lines.length ? "All estimate parts are already on the list" : "No part or equipment lines on this estimate. Add parts with + Add part."));
       return true;
     }
     if (name === "openPo") {
@@ -5905,7 +5972,7 @@
     if (name === "saveEstimate") {
       const job = getJob(state.openJobId); if (!job) return;
       const lines = state.packDraft;
-      job.lineItems = lines.map(function (l) { return { label: draftLabel(l) + ((l.flatRate || l.customQuote) && flatRoleLabel(l) ? " (" + flatRoleLabel(l) + ")" : ""), amount: lineTotal(l), id: l.id, cost: lineCostOf({ id: l.id, label: l.label, amount: l.amount, qty: 1, cost: l.cost }), fromBook: !!l.fromBook, flatRate: !!l.flatRate, customQuote: !!l.customQuote, flatRole: l.flatRole || null }; });
+      job.lineItems = lines.map(function (l) { return { label: draftLabel(l) + ((l.flatRate || l.customQuote) && flatRoleLabel(l) ? " (" + flatRoleLabel(l) + ")" : ""), amount: lineTotal(l), id: l.id, cost: lineCostOf({ id: l.id, label: l.label, amount: l.amount, qty: 1, cost: l.cost }), fromBook: !!l.fromBook, flatRate: !!l.flatRate, customQuote: !!l.customQuote, flatRole: l.flatRole || null, parts: partsForLine(l) }; });
       job.total = draftTotal(lines);
       if (!job.estimateId) job.estimateId = job.id + "-E01";
       if (!Array.isArray(job.estimates)) job.estimates = [];
