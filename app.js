@@ -252,9 +252,12 @@
     const parts = [];
     if (a.capacity) parts.push(a.capacity);
     if (a.refrigerant) parts.push(a.refrigerant);
+    if (a.hcpLabel) parts.push(a.hcpLabel);
     if (a.location) parts.push(a.location);
     if (a.serial) parts.push("S/N " + a.serial);
     if (a.filterSize) parts.push("Filter " + a.filterSize);
+    if (a.lastServiced) parts.push("Last serviced " + a.lastServiced);
+    if (a.source === "HCP") parts.push("from HCP");
     return parts.join(" · ");
   }
   function emptyAsset() {
@@ -2420,6 +2423,106 @@
     (state.plans || []).forEach(function (p) { ensurePlanAddress(p, state.customers); });
     (state.visits || []).forEach(function (v) { ensureVisitAddress(v, state.customers, state.plans); });
   })();
+  /* Housecall Pro import (Nov 26, 2026): merge customers, service addresses, and
+     property-profile equipment into phone data. Never overwrites a filled field.
+     Idempotent: each equipment item is added once per address (hcpImported keys),
+     so an item Steve removes is not added back. */
+  function hcpNameKey(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, ""); }
+  function hcpStreetKey(s) {
+    const toks = String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
+    if (!toks.length || !/^\d+$/.test(toks[0])) return toks.join(" ");
+    const rest = toks.slice(1).filter(function (t) { return ["n", "s", "e", "w", "north", "south", "east", "west"].indexOf(t) === -1; });
+    return toks[0] + " " + (rest[0] || "");
+  }
+  function hcpPhoneKey(s) { const d = String(s || "").replace(/\D/g, ""); return d.length >= 10 ? d.slice(-10) : ""; }
+  (function migrateHcpImport20261126() {
+    const H = window.RT_HCP;
+    if (!H || !Array.isArray(H.customers)) return;
+    const report = { newCustomers: 0, newAddresses: 0, newAssets: 0, filled: 0 };
+    H.customers.forEach(function (hc) {
+      const nk = hcpNameKey(hc.name);
+      let c = state.customers.find(function (x) { return hcpNameKey(x.name) === nk; });
+      if (!c && hc.phone) c = state.customers.find(function (x) { return hcpPhoneKey(x.phone) && hcpPhoneKey(x.phone) === hcpPhoneKey(hc.phone) && hcpNameKey(x.name).indexOf(nk.slice(0, 4)) === 0; });
+      if (!c) {
+        c = ensureCustomerAddresses({ id: "c-hcp-" + nk.slice(0, 24), name: hc.name, address: "", city: "", phone: hc.phone || "", email: hc.email || "", addresses: [], assets: [], mentions: [], source: "HCP" }, state.customers);
+        state.customers.push(c);
+        report.newCustomers++;
+      }
+      if (!c.phone && hc.phone) { c.phone = hc.phone; report.filled++; }
+      if (!c.email && hc.email) { c.email = hc.email; report.filled++; }
+      if (!Array.isArray(c.addresses)) c.addresses = [];
+      (hc.addresses || []).forEach(function (ha) {
+        const sk = hcpStreetKey(ha.address);
+        if (ha.billingOnly) {
+          const already = serviceAddresses(c).some(function (a) { return hcpStreetKey(a.address) === sk; });
+          if (!already && !c.billingAddress) { c.billingAddress = ha.address; c.billingCity = ha.city; c.billingSameAsService = false; report.filled++; }
+          return;
+        }
+        let a = serviceAddresses(c).find(function (x) { return x.address && hcpStreetKey(x.address) === sk; });
+        if (!a) {
+          const blank = serviceAddresses(c).length === 1 && !serviceAddresses(c)[0].address && !(serviceAddresses(c)[0].assets || []).length ? serviceAddresses(c)[0] : null;
+          if (blank) { a = blank; a.address = ha.address; if (!a.city) a.city = ha.city; }
+          else {
+            a = emptyAddress({ id: nextAddressId(c.id, state.customers), address: ha.address, city: ha.city, label: ha.label || "", source: "HCP" });
+            c.addresses.push(a);
+          }
+          report.newAddresses++;
+        }
+        if (!a.city && ha.city) a.city = ha.city;
+        if (!a.label && ha.label) a.label = ha.label;
+        if (!Array.isArray(a.assets)) a.assets = [];
+        if (!Array.isArray(a.hcpImported)) a.hcpImported = [];
+        (ha.assets || []).forEach(function (hx) {
+          if (a.hcpImported.indexOf(hx.hcpKey) !== -1) return;
+          a.hcpImported.push(hx.hcpKey);
+          const mk = hcpNameKey(hx.model);
+          const dup = a.assets.some(function (x) { return x.id === hx.id || (mk && hcpNameKey(x.model) === mk && hcpNameKey(x.make) === hcpNameKey(hx.make) && (x.hcpLabel || "") === (hx.hcpLabel || "")); });
+          if (dup) return;
+          const asset = Object.assign(emptyAsset(), JSON.parse(JSON.stringify(hx)));
+          asset.id = hx.id;
+          a.assets.push(asset);
+          report.newAssets++;
+        });
+      });
+      syncCustomerPrimary(c);
+    });
+    /* Jobs that were parked on a customer's first address get linked to the address
+       whose street matches the job's street, now that all addresses exist. */
+    state.jobs.forEach(function (j) {
+      const c = state.customers.find(function (x) { return x.id === j.customerId; });
+      if (!c || !j.address) return;
+      const jk = hcpStreetKey(j.address);
+      const cur = j.addressId ? getAddressById(j.addressId) : null;
+      if (cur && hcpStreetKey(cur.address) === jk) return;
+      const m = serviceAddresses(c).find(function (a) { return a.address && hcpStreetKey(a.address) === jk; });
+      if (m) j.addressId = m.id;
+    });
+    state._hcpImportReport = report;
+  })();
+  function hcpEstimatesFor(c, addr) {
+    const H = window.RT_HCP;
+    if (!H || !c) return [];
+    const nk = hcpNameKey(c.name);
+    const inApp = {};
+    state.jobs.forEach(function (j) { if (j.estimateId) inApp[j.estimateId] = true; inApp[j.id] = true; (j.estimates || []).forEach(function (e) { inApp[e.id] = true; }); });
+    return (H.estimates || []).filter(function (e) {
+      if (hcpNameKey(e.customer) !== nk) return false;
+      if (inApp[e.number] || inApp[String(e.number).split("-")[0]]) return false;
+      if (addr) { const k = hcpStreetKey(String(e.address || "").split(",")[0]); if (k && k !== hcpStreetKey(addr.address)) return false; }
+      return true;
+    });
+  }
+  function hcpEstimatesHtml(c, addr) {
+    const list = hcpEstimatesFor(c, addr);
+    if (!list.length) return "";
+    return '<div class="section">Housecall Pro estimates</div><div class="muted" style="margin:-4px 0 8px">History only. Approved estimates that became jobs are listed under Jobs.</div><div class="stack" style="margin-bottom:16px">' +
+      list.map(function (e) {
+        return '<div class="panel"><div class="row"><div class="meta">Estimate ' + esc(e.number) + "</div>" + '<div class="meta">' + esc(e.status) + "</div></div>" +
+          '<div class="h2" style="margin-top:4px">' + esc(e.description || "No description") + "</div>" +
+          '<div class="row" style="margin-top:4px"><div class="muted">' + esc(String(e.address || "").split(",")[0]) + "</div><div>" + money(e.amount) + "</div></div></div>";
+      }).join("") + "</div>";
+  }
+
   function snapshotState() {
     return {
         v: 1,
@@ -4714,6 +4817,7 @@
     } else {
       html += '<div class="muted" style="margin-bottom:16px">Equipment is kept on each service address.</div>';
     }
+    html += hcpEstimatesHtml(c, null);
     html += '<div class="section">Jobs</div><div class="stack">' + (jobs.length ? jobs.map(function (j) {
         if (state.jobs.some(function (x) { return x.id === j.id; })) return jobCard(j);
         const col = sc(j.status);
@@ -4750,6 +4854,7 @@
       '<button class="dash" style="margin:10px 0 12px" ' + act("addEquipment", c.id + "|" + a.id) + ">Add equipment</button>" +
       (assets.length ? '<div class="stack" style="margin-bottom:16px">' + assets.map(function (x) { return assetCard(x, c.id, false); }).join("") + "</div>" :
         '<div class="muted" style="margin-bottom:16px">No equipment recorded at this address yet.</div>') +
+      hcpEstimatesHtml(c, a) +
       '<div class="section">Jobs</div><div class="stack">' + (jobs.length ? jobs.map(function (j) {
         if (state.jobs.some(function (x) { return x.id === j.id; })) return jobCard(j);
         const col = sc(j.status);
@@ -5273,7 +5378,9 @@
       ["capacity", "Tonnage or BTU", "text", "e.g. 3 ton or 80,000 BTU"],
       ["refrigerant", "Refrigerant", "text", "e.g. R-410A"],
       ["filterSize", "Filter size", "text", "e.g. 16x25x1"],
-      ["warranty", "Warranty", "text", "Parts, labor, or remaining term"]
+      ["warranty", "Warranty", "text", "Parts, labor, or remaining term"],
+      ["hcpLabel", "Unit label", "text", "e.g. FAU upstairs, Master suite CU"],
+      ["lastServiced", "Last serviced", "text", "e.g. 10/31/2026"]
     ];
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">' + (editing ? "Equipment" : "Add equipment") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
