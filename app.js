@@ -3146,6 +3146,202 @@
     return false;
   }
 
+  /* ——— Phase 2 · Replacement / retrofit / AC add builder + site survey ———
+     Hours: pricing.md "Install labor hours: locked defaults" + Steve field times (2026-11-25).
+     Install labor: cost $60/hr, sell $100/hr (pricing.md, Steve-approved 2026-11-25). Equipment: Payne/Sigler Aug 31, 2026 bundles; AC add 4/5-ton Sigler quotes. */
+  const RP = { laborSell: 100, laborCost: 60, tax: 10.25, gp: 40 };
+  const RP_BUNDLES = { "2": [4300.12, 4301.12], "2.5": [4467.12, 4468.12], "3": [4676.76, 4677.76], "3.5": [5084.36, 5012.36], "4": [5370.82, 5298.82], "5": [5894.82, 5863.82] };
+  const RP_ACADD = { "4": 3520.91, "5": 3949.91 };
+  const SV_FIELDS = [
+    { k: "flueType", lab: "Flue / venting type", opts: ["PVC (90%+) reuse", "PVC (90%+) new", "B-vent (80%) reuse", "B-vent (80%) new", "None (AC add / electric)"] },
+    { k: "flueFt", lab: "Flue length (ft)", num: true, when: function (s) { return /new/.test(s.flueType || ""); } },
+    { k: "flueMaterial", lab: "Flue material / notes", text: true, opt: true },
+    { k: "condRoute", lab: "Condensate route", opts: ["Gravity, existing drain OK", "Gravity, new drain line", "Pump required", "Difficult drain"] },
+    { k: "drainFt", lab: "New drain pipe (ft)", num: true, when: function (s) { return /new drain/.test(s.condRoute || ""); } },
+    { k: "condTerm", lab: "Condensate termination", text: true },
+    { k: "secPan", lab: "Secondary pan", opts: ["Not needed", "Existing OK", "New pan"] },
+    { k: "floatSw", lab: "Float switch", opts: ["Existing OK", "New float switch", "Not needed"] },
+    { k: "lineSet", lab: "Line set", opts: ["Reuse (flush)", "New, accessible", "New, difficult / concealed", "None (no AC)"] },
+    { k: "lineSetFt", lab: "Line set length (ft)", num: true, when: function (s) { return !/None/.test(s.lineSet || ""); } },
+    { k: "lineSetCover", lab: "Line set cover", opts: ["No", "Yes"] },
+    { k: "disconnect", lab: "Disconnect", opts: ["Existing OK", "New disconnect"] },
+    { k: "circuit", lab: "Breaker / circuit", opts: ["Existing OK", "New condenser circuit", "Not applicable"] },
+    { k: "wire", lab: "Wire size / notes", text: true },
+    { k: "pad", lab: "Pad / stand", opts: ["Existing OK", "New pad", "New stand / wall brackets", "Not applicable"] },
+    { k: "plenum", lab: "Plenum / transition", opts: ["Standard", "Beyond standard (custom)"] },
+    { k: "platform", lab: "Attic platform", opts: ["Not needed", "Existing OK", "New, easy", "New, medium", "New, hard", "Extend / repair"] },
+    { k: "gas", lab: "Gas", opts: ["Existing OK", "Needs work (price manually)", "Not applicable"] },
+    { k: "permit", lab: "Permit / HERS", opts: ["Permit + HERS", "Permit only", "Not required"] },
+    { k: "haulAway", lab: "Haul-away", opts: ["Yes (included)", "Customer keeps"] },
+    { k: "startup", lab: "Startup / commissioning", opts: ["Yes (included)"] },
+    { k: "warrantyReg", lab: "Warranty registration", opts: ["Yes (included)", "Customer will register"] }
+  ];
+  function svActive(s) { return SV_FIELDS.filter(function (f) { return !f.when || f.when(s); }); }
+  function svMissing(s) { s = s || {}; return svActive(s).filter(function (f) { return !f.opt && String(s[f.k] == null ? "" : s[f.k]).trim() === ""; }).map(function (f) { return f.lab; }); }
+  function siteSurveyText(s) { s = s || {}; return svActive(s).filter(function (f) { return String(s[f.k] || "").trim(); }).map(function (f) { return f.lab + ": " + s[f.k]; }).join("; ") + (s.at ? " (" + s.at + ")" : ""); }
+  function rpAdders(s, kind) {
+    s = s || {}; const out = [];
+    function add(id, label, hrs, note) { out.push({ id: id, label: label, hours: Math.round(hrs * 100) / 100, note: note || "" }); }
+    const ft = rbNum(s.lineSetFt);
+    if (/New/.test(s.lineSet || "")) {
+      if (/difficult/.test(s.lineSet)) add("lineset", "Line set, difficult/concealed " + (ft || "?") + " ft", 20 + Math.max(0, ft - 50) * 0.15, ft <= 25 ? "No locked time under 26 ft; 20 mh used, edit" : "");
+      else if (ft > 25) add("lineset", "Line set, accessible " + ft + " ft", 7 + Math.max(0, ft - 50) * 0.15);
+      else add("lineset", "Line set, accessible " + (ft || "?") + " ft", ft * 0.15, "No locked time under 26 ft; 0.15 hr/ft used, edit");
+    }
+    if (s.lineSetCover === "Yes") add("lscover", "Line set cover", 1.5);
+    if (s.circuit === "New condenser circuit") add("circuit", "New condenser circuit", 9);
+    if (s.disconnect === "New disconnect") add("disconnect", "New disconnect", 0, "No locked time; enter hours");
+    if (s.plenum === "Beyond standard (custom)") add("plenum", "Plenum / transition beyond standard", 9);
+    if (/Pump|Difficult/.test(s.condRoute || "")) add("condpump", "Condensate pump / difficult drain", 6);
+    if (/new drain/.test(s.condRoute || "")) add("drain", "Drain pipe " + rbNum(s.drainFt) + " ft", rbNum(s.drainFt) * 0.12);
+    if (s.secPan === "New pan") add("secpan", "Secondary drain pan", 1.5);
+    if (s.floatSw === "New float switch") add("float", "Float switch", 0.75);
+    if (s.flueType === "PVC (90%+) new") add("pvc", "PVC vent to 30 ft", 4, rbNum(s.flueFt) > 30 ? "Over 30 ft: no locked time, edit" : "");
+    if (s.flueType === "B-vent (80%) new") add("bvent", "B-vent " + rbNum(s.flueFt) + " ft", rbNum(s.flueFt) * 0.11);
+    if (s.pad === "New pad") add("pad", "Condenser pad", 1);
+    if (s.pad === "New stand / wall brackets") add("stand", "Condenser stand / brackets", 0, "No locked time; enter hours");
+    if (/^New, /.test(s.platform || "")) add("platform", "New attic platform (" + s.platform.slice(5) + ")", { easy: 3, medium: 4, hard: 6 }[s.platform.slice(5)] || 4);
+    if (s.platform === "Extend / repair") add("platext", "Platform extension / repair", 2);
+    if (/^Permit/.test(s.permit || "")) add("permit", "Permit / HERS coordination", 3, "Permit and HERS fees not included; add as material cost");
+    if (/Needs work/.test(s.gas || "")) add("gas", "Gas work", 0, "No locked time; enter hours");
+    return out;
+  }
+  function rpBase(d) {
+    if (d.kind === "acadd") return { hours: 9, label: "AC add (condenser only base)", note: "Coil install / furnace work not in the locked list; add manual hours" };
+    if (d.kind === "retrofit") return { hours: 32, label: "Closet furnace relocated to attic" };
+    return d.config === "horizontal" ? { hours: 28, label: "Like-for-like split, horizontal" } : { hours: 26, label: "Like-for-like split, upflow" };
+  }
+  function rpDefaultEquipCost(d) {
+    if (d.kind === "acadd") return RP_ACADD[d.tons] || "";
+    const b = RP_BUNDLES[d.tons]; if (!b) return "";
+    return (d.kind === "retrofit" || d.config === "horizontal") ? b[1] : b[0];
+  }
+  function emptyRpDraft(job) {
+    const d = { kind: "replacement", tons: "3", config: "upflow", equipCost: "", materialsCost: "", gp: RP.gp, tax: RP.tax, refCostLb: "", ozPerFt: 0.6, hrs: {}, manualHours: "", label: "", labelTouched: false };
+    d.equipCost = rpDefaultEquipCost(d); return d;
+  }
+  function rpCalc(d, job) {
+    const s = (job && job.siteSurvey) || {};
+    const missing = svMissing(s);
+    const tax = rbNum(d.tax) / 100, gp = Math.min(0.9, Math.max(0, rbNum(d.gp) / 100));
+    const base = rpBase(d);
+    const adders = rpAdders(s, d.kind).map(function (a) { const o = d.hrs[a.id]; return Object.assign({}, a, { hours: o !== undefined && o !== "" ? rbNum(o) : a.hours }); });
+    const baseHours = d.hrs.base !== undefined && d.hrs.base !== "" ? rbNum(d.hrs.base) : base.hours;
+    const manual = rbNum(d.manualHours);
+    const hours = baseHours + manual + adders.reduce(function (t, a) { return t + a.hours; }, 0);
+    const eqCost = rbNum(d.equipCost) * (1 + tax), matCost = rbNum(d.materialsCost) * (1 + tax);
+    const eqSell = eqCost > 0 ? Math.round(eqCost / (1 - gp)) : 0, matSell = matCost > 0 ? Math.round(matCost / (1 - gp)) : 0;
+    const ft = rbNum(s.lineSetFt);
+    const refLb = /None/.test(s.lineSet || "") ? 0 : Math.round(Math.max(0, ft - 15) * rbNum(d.ozPerFt) / 16 * 100) / 100;
+    const cpl = rbNum(d.refCostLb), refSellLb = cpl > 0 ? Math.round(cpl * 2.25) : 0;
+    const refSell = Math.round(refLb * refSellLb * 100) / 100, refCost = refLb * cpl;
+    const laborSell = Math.round(hours * RP.laborSell * 100) / 100, laborCost = hours * RP.laborCost;
+    const total = Math.round((eqSell + matSell + refSell + laborSell) * 100) / 100;
+    const cost = Math.round((eqCost + matCost + refCost + laborCost) * 100) / 100;
+    const gpPct = total > 0 ? (total - cost) / total * 100 : 0;
+    const flags = ["Purchase tax " + rbNum(d.tax) + "% is an assumption (pricing.md: confirm)", "Haul-away, startup and warranty registration are included (no separate line)"];
+    if (!(rbNum(d.materialsCost) > 0)) flags.push("Materials cost not entered (flagged; enter from the Sigler duct/misc sheet)");
+    if (!(rbNum(d.equipCost) > 0)) flags.push("Equipment cost not entered" + (d.kind === "acadd" ? " (Sigler quotes cover 4 and 5 ton only)" : ""));
+    if (refLb > 0 && !(cpl > 0)) flags.push("Enter refrigerant cost per lb for the extra " + refLb + " lb");
+    if (base.note) flags.push(base.note);
+    adders.forEach(function (a) { if (a.note) flags.push(a.label + ": " + a.note); });
+    if (gpPct > 0 && gpPct < 30) flags.push("Below the 30–35% replacement project target");
+    const rows = [["Equipment (cost " + money(rbNum(d.equipCost)) + " + tax)", eqSell, eqCost]];
+    if (matSell) rows.push(["Materials", matSell, matCost]);
+    if (refLb > 0) rows.push(["Extra refrigerant " + refLb + " lb (line set " + ft + " ft)", refSell, refCost]);
+    rows.push([base.label + " · " + baseHours + " hr", baseHours * RP.laborSell, baseHours * RP.laborCost]);
+    adders.forEach(function (a) { rows.push([a.label + " · " + a.hours + " hr", a.hours * RP.laborSell, a.hours * RP.laborCost]); });
+    if (manual) rows.push(["Manual hours · " + manual + " hr", manual * RP.laborSell, manual * RP.laborCost]);
+    return { missing: missing, base: base, baseHours: baseHours, adders: adders, hours: hours, eqSell: eqSell, matSell: matSell, refLb: refLb, refSell: refSell, laborSell: laborSell, total: total, cost: cost, gpPct: gpPct, flags: flags, rows: rows, survey: s };
+  }
+  function rpKindLabel(d) { return d.kind === "acadd" ? d.tons + "-ton AC add" : d.kind === "retrofit" ? d.tons + "-ton system replacement, closet to attic retrofit" : d.tons + "-ton system replacement (" + d.config + ")"; }
+  function rpOpenButton() { return '<button class="btn teal" style="margin:0" ' + act("rpOpen") + ">Replacement / retrofit / AC add</button>"; }
+  function rpSheet(job) {
+    const d = state.rpDraft; if (!d) return "";
+    const c = rpCalc(d, job);
+    function inp(k, lab, ph) { return '<label class="field"><div class="field-lab">' + lab + '</div><input id="rp-' + k + '" inputmode="decimal" value="' + esc(d[k] == null ? "" : d[k]) + '" placeholder="' + esc(ph || "") + '" oninput="RT.setRp(\'' + k + '\', this.value)"></label>'; }
+    function hrInp(id, val) { return '<input id="rp-h-' + id + '" inputmode="decimal" style="width:68px;text-align:right;font-size:16px;padding:6px 8px;border:1px solid #cfd8dc;border-radius:8px;background:#f4f6f8" value="' + esc(String(val)) + '" oninput="RT.setRpHr(\'' + id + '\', this.value)">'; }
+    function seg(k, opts) { return '<div class="chips">' + opts.map(function (o) { return '<button class="chip' + (d[k] === o[0] ? " on" : "") + '" ' + act("rpSet", k + "|" + o[0]) + ">" + esc(o[1]) + "</button>"; }).join("") + "</div>"; }
+    const done = c.missing.length === 0;
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Replacement / retrofit / AC add</div><button class="icon-btn ghost" ' + act("rpClose") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      seg("kind", [["replacement", "Replacement"], ["retrofit", "Retrofit (closet → attic)"], ["acadd", "AC add"]]) +
+      seg("tons", [["2", "2 T"], ["2.5", "2.5 T"], ["3", "3 T"], ["3.5", "3.5 T"], ["4", "4 T"], ["5", "5 T"]]) +
+      (d.kind === "replacement" ? seg("config", [["upflow", "Upflow"], ["horizontal", "Horizontal"]]) : "") +
+      '<button class="btn ' + (done ? "ghost" : "accent") + '" style="margin:6px 0 10px" ' + act("svOpen") + ">Site survey · " + (done ? "complete ✓" : c.missing.length + " left") + "</button>" +
+      (done ? "" : '<div class="warn-banner">Finish the site survey to price this job. Missing: ' + esc(c.missing.join(", ")) + ".</div>") +
+      '<label class="field"><div class="field-lab">Line name (customer sees this)</div><input id="rp-label" value="' + esc(d.label) + '" placeholder="' + esc(rpKindLabel(d)) + '" oninput="RT.setRp(\'label\', this.value)"></label>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' + inp("equipCost", "Equipment cost (pre-tax)", "Aug 31 bundle") + inp("materialsCost", "Materials cost (pre-tax)", "Enter") + "</div>" +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' + inp("refCostLb", "Refrigerant cost / lb", "for line set over 15 ft") + inp("ozPerFt", "Oz per ft over 15 ft", "0.6") + "</div>" +
+      '<div class="section">Labor · $100/hr sell · $60/hr cost</div>' +
+      '<div class="row"><div>' + esc(c.base.label) + "</div><div>" + hrInp("base", c.baseHours) + " hr</div></div>" +
+      c.adders.map(function (a) { return '<div class="row"><div style="min-width:0">' + esc(a.label) + (a.note ? '<div class="meta">' + esc(a.note) + "</div>" : "") + "</div><div>" + hrInp(a.id, a.hours) + " hr</div></div>"; }).join("") +
+      (c.adders.length ? "" : '<div class="meta">Adders come from the site survey answers.</div>') +
+      '<div class="row"><div>Manual hours (other)</div><div><input id="rp-manualHours" inputmode="decimal" style="width:68px;text-align:right;font-size:16px;padding:6px 8px;border:1px solid #cfd8dc;border-radius:8px;background:#f4f6f8" value="' + esc(d.manualHours) + '" oninput="RT.setRp(\'manualHours\', this.value)"> hr</div></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">' + inp("gp", "Equipment/materials GP %", "40") + inp("tax", "Purchase tax % (assumed)", "10.25") + "</div>" +
+      (done ? '<div class="doc"><div class="k-up">Customer sees</div><div class="row" style="font-weight:750;margin-top:6px"><div>' + esc(d.label || rpKindLabel(d)) + "</div><div>" + money(c.total) + "</div></div></div>" +
+        builderInternalHtml({ rows: c.rows, total: c.total, cost: c.cost, gpPct: c.gpPct, flags: c.flags, survey: c.survey }) +
+        '<button class="btn" style="margin-top:12px" ' + act("rpAdd") + ">Add to estimate · " + money(c.total) + "</button>"
+        : '<button class="btn" style="margin-top:12px;opacity:.5" ' + act("rpAdd") + ">Price locked until the survey is done</button>")
+    );
+  }
+  function siteSurveySheet(job) {
+    const s = state.svDraft || {};
+    const miss = svMissing(s);
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Site survey</div><button class="icon-btn ghost" ' + act("svCancel") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="muted" style="margin-bottom:8px">Required before a replacement, retrofit or AC add can be priced. You can save it part-done. Answers set the adders.</div>' +
+      svActive(s).map(function (f) {
+        const v = s[f.k] == null ? "" : s[f.k];
+        if (f.opts) return '<label class="field"><div class="field-lab">' + esc(f.lab) + '</div><select id="sv-' + f.k + '" onchange="RT.setSv(\'' + f.k + '\', this.value, true)"><option value="">Choose…</option>' + f.opts.map(function (o) { return '<option' + (o === v ? " selected" : "") + ">" + esc(o) + "</option>"; }).join("") + "</select></label>";
+        return '<label class="field"><div class="field-lab">' + esc(f.lab) + (f.opt ? " (optional)" : "") + '</div><input id="sv-' + f.k + '"' + (f.num ? ' inputmode="decimal"' : "") + ' value="' + esc(v) + '" oninput="RT.setSv(\'' + f.k + '\', this.value)"></label>';
+      }).join("") +
+      '<div class="meta" style="margin:6px 0">' + (miss.length ? miss.length + " left: " + esc(miss.join(", ")) : "All required answers done.") + "</div>" +
+      '<button class="btn" ' + act("svSave") + ">Save survey</button>"
+    );
+  }
+  Object.assign(RT_RB, {
+    setRp: function (k, v) { if (!state.rpDraft) return; state.rpDraft[k] = v; if (k === "label") state.rpDraft.labelTouched = true; renderKeepFocus("rp-" + k); },
+    setRpHr: function (id, v) { if (!state.rpDraft) return; state.rpDraft.hrs[id] = v; renderKeepFocus("rp-h-" + id); },
+    setSv: function (k, v, rerender) { if (!state.svDraft) return; state.svDraft[k] = v; if (rerender) render(); else renderKeepFocus("sv-" + k); }
+  });
+  function handleReplacementBuilder(name, arg) {
+    const job = getJob(state.openJobId);
+    if (name === "rpOpen") { if (!job) return true; state.rpDraft = emptyRpDraft(job); state.sheet = "rpBuilder"; render(); return true; }
+    if (name === "rpClose") { state.rpDraft = null; state.sheet = "priceBook"; render(); return true; }
+    if (name === "rpSet") {
+      const d = state.rpDraft; if (!d) return true;
+      const i = String(arg).indexOf("|"), k = String(arg).slice(0, i), v = String(arg).slice(i + 1);
+      const oldDef = rpDefaultEquipCost(d);
+      d[k] = v;
+      if (String(d.equipCost) === String(oldDef) || d.equipCost === "") d.equipCost = rpDefaultEquipCost(d);
+      if (k !== "tons") d.hrs.base = "";
+      render(); return true;
+    }
+    if (name === "svOpen") { if (!job) return true; state.svDraft = Object.assign({}, job.siteSurvey || {}); state.svReturn = state.sheet; state.sheet = "siteSurvey"; render(); return true; }
+    if (name === "svCancel") { state.svDraft = null; state.sheet = state.svReturn || null; render(); return true; }
+    if (name === "svSave") {
+      if (!job) return true;
+      const s = Object.assign({}, state.svDraft || {}); s.at = new Date().toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+      s.by = (typeof actingAs === "function" && actingAs()) || "";
+      job.siteSurvey = s; state.svDraft = null; state.sheet = state.svReturn || null;
+      showToast(svMissing(s).length ? "Survey saved · " + svMissing(s).length + " left" : "Survey complete"); return true;
+    }
+    if (name === "rpAdd") {
+      const d = state.rpDraft; if (!job || !d) return true;
+      const c = rpCalc(d, job);
+      if (c.missing.length) { showToast("Finish the site survey first"); return true; }
+      if (!(c.total > 0)) { showToast("Nothing to price yet"); return true; }
+      const parts = [{ name: rpKindLabel(d) + " equipment (Payne/Sigler)", partNo: "", qty: 1, cost: rbNum(d.equipCost) || null, note: "From the replacement builder" }];
+      if (c.refLb > 0) parts.push({ name: "Refrigerant (line set " + rbNum(c.survey.lineSetFt) + " ft)", partNo: "", qty: c.refLb, cost: rbNum(d.refCostLb) || null, note: "lb over factory charge" });
+      const line = { id: "rp-" + Date.now(), label: (d.label || rpKindLabel(d)).trim(), amount: c.total, qty: 1, unit: "", fromBook: false, cost: c.cost, parts: parts,
+        builder: { kind: d.kind, rows: c.rows, total: c.total, cost: c.cost, gpPct: c.gpPct, flags: c.flags, survey: JSON.parse(JSON.stringify(c.survey)), hours: c.hours, inputs: JSON.parse(JSON.stringify(d)) } };
+      state.packDraft = (state.packDraft || []).concat([line]);
+      state.rpDraft = null; state.sheet = "priceBook"; showToast("Added · " + money(c.total)); return true;
+    }
+    return false;
+  }
+
   function snapshotState() {
     return {
         v: 1,
@@ -6519,6 +6715,8 @@
     if (!s) return "";
     if (s === "newCall") return newCallSheet();
     if (s === "equipment") return equipmentSheetV2();
+    if (s === "rpBuilder") { const j = getJob(state.openJobId); return j ? rpSheet(j) : ""; }
+    if (s === "siteSurvey") { const j = getJob(state.openJobId); return j ? siteSurveySheet(j) : ""; }
     if (s === "repairBuilder") { const j = getJob(state.openJobId); return j ? repairBuilderSheet(j) : ""; }
     if (s === "unitWork") { const j = getJob(state.openJobId); return j ? unitWorkSheet(j) : ""; }
     if (s === "address") return addressSheet();
@@ -6634,6 +6832,7 @@
 
   function handle(name, arg) {
     if (handleRepairBuilder(name, arg)) return;
+    if (handleReplacementBuilder(name, arg)) return;
     if (handleEquipV2(name, arg)) return;
     if (handlePrePhase2(name, arg)) return;
     if (handlePhase1(name, arg)) return;
