@@ -1848,9 +1848,10 @@
       }
     }
     const ranked = rankedCustomers(customerPart);
-    const customer = ranked.length ? ranked[0].c : null;
+    const customer = (ranked.length && ranked[0].score >= 90 && (ranked.length === 1 || ranked[1].score < ranked[0].score)) ? ranked[0].c : null;
     const addrs = customer ? serviceAddresses(customer) : [];
     const resolved = resolveRequestedTime(when);
+    const noMatches = !customer && !ranked.length;
     return {
       kind: "newJob",
       raw: raw,
@@ -1858,7 +1859,8 @@
         jobId: nextJobId(state.jobs),
         customerId: customer ? customer.id : "",
         customerName: customer ? customer.name : customerPart,
-        isNewCustomer: !customer,
+        isNewCustomer: noMatches,
+        custQuery: customer ? "" : customerPart,
         newName: customer ? "" : customerPart,
         newPhone: "",
         newAddress: "",
@@ -2310,7 +2312,7 @@
     state.priceDraft = null;
     state.saveLineDraft = null;
     if (state.voice) state.voice.listening = false;
-    if (recognition) { try { recognition.abort(); } catch (e) {} }
+    if (typeof endVoiceSession === "function") { voiceSession++; endVoiceSession(); }
     if (typeof stopMemoRecord === "function") try { stopMemoRecord(true); } catch (e) {}
     render();
   }
@@ -2838,7 +2840,7 @@
         const r = resolveRequestedTime(v);
         state.voiceJobDraft.whenIso = r.iso || "";
       }
-      const ids = { newName: "vj-newName", newPhone: "vj-newPhone", newAddress: "vj-newAddress", newCity: "vj-newCity", problem: "vj-problem", whenLabel: "vj-whenLabel" };
+      const ids = { custQuery: "vj-cq", newName: "vj-newName", newPhone: "vj-newPhone", newAddress: "vj-newAddress", newCity: "vj-newCity", problem: "vj-problem", whenLabel: "vj-whenLabel" };
       renderKeepFocus(ids[k] || "vj-problem");
     },
     setPhotoCaption: function (v) { if (!state.photoDraft) state.photoDraft = emptyPhotoDraft(); state.photoDraft.caption = v; renderKeepFocus("photo-cap"); },
@@ -2887,8 +2889,92 @@
     }
   };
 
+  /* Phase 1 keyboard fix: while typing, patch the page in place instead of
+     rebuilding it, so the focused field is never replaced. iPhone Safari resets
+     the keyboard (back to letters) whenever a focused input is swapped out. */
+  const NUMERIC_ID_RE = /^(cq-|pb-(cost|firstPrice|addOnPrice|laborHours)|pack-custom-amount|st-(defaultGp|minGp|refrigerantMinMarkup)|pt-(qty)|rd-val)/;
+  const NOCAP_ID_RE = /^(np-(model|serial|filterSize|refrigerant)|nt-(amps|gas|pressures|shsc|static|temps|filterSize)|pb-sku|pt-(partNo)|eq-(model|serial)|vd-(email|account))/;
+  function applyInputHints(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll("input, textarea").forEach(function (el) {
+      const id = el.id || "";
+      const type = (el.getAttribute("type") || "text").toLowerCase();
+      if (type === "email" || type === "tel" || type === "search" || type === "url") {
+        el.setAttribute("autocapitalize", "off"); el.setAttribute("autocorrect", "off"); el.setAttribute("spellcheck", "false");
+      }
+      if (NUMERIC_ID_RE.test(id) && !el.getAttribute("inputmode")) el.setAttribute("inputmode", "decimal");
+      if (el.getAttribute("inputmode") === "decimal" || el.getAttribute("inputmode") === "numeric") {
+        el.setAttribute("autocapitalize", "off"); el.setAttribute("autocorrect", "off"); el.setAttribute("spellcheck", "false"); el.setAttribute("autocomplete", "off");
+      }
+      if (NOCAP_ID_RE.test(id)) {
+        el.setAttribute("autocapitalize", "characters"); el.setAttribute("autocorrect", "off"); el.setAttribute("spellcheck", "false");
+      }
+    });
+  }
+  function morphAttrs(a, b) {
+    const keep = {};
+    for (let i = 0; i < b.attributes.length; i++) {
+      const at = b.attributes[i]; keep[at.name] = true;
+      if (a.getAttribute(at.name) !== at.value) a.setAttribute(at.name, at.value);
+    }
+    for (let i = a.attributes.length - 1; i >= 0; i--) {
+      const n = a.attributes[i].name;
+      if (!keep[n]) a.removeAttribute(n);
+    }
+  }
+  function morphNode(a, b) {
+    if (a.nodeType === 3 || a.nodeType === 8) { if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; return; }
+    morphAttrs(a, b);
+    const tag = a.nodeName;
+    const focused = a === document.activeElement;
+    if (tag === "INPUT") {
+      const type = (b.getAttribute("type") || "").toLowerCase();
+      if (type === "checkbox" || type === "radio") a.checked = b.hasAttribute("checked");
+      else if (type !== "file" && !focused && a.value !== (b.getAttribute("value") || "")) a.value = b.getAttribute("value") || "";
+      return;
+    }
+    if (tag === "TEXTAREA") {
+      if (!focused && a.value !== b.textContent) a.value = b.textContent;
+      return;
+    }
+    morphChildren(a, b);
+    if (tag === "SELECT" && !focused) {
+      const opts = b.querySelectorAll("option");
+      for (let i = 0; i < opts.length; i++) if (opts[i].hasAttribute("selected")) { a.selectedIndex = i; break; }
+    }
+  }
+  function morphChildren(a, b) {
+    const an = Array.prototype.slice.call(a.childNodes);
+    const bn = Array.prototype.slice.call(b.childNodes);
+    for (let i = 0; i < bn.length; i++) {
+      const x = an[i], y = bn[i];
+      if (!x) { a.appendChild(y.cloneNode(true)); continue; }
+      const same = x.nodeType === y.nodeType && x.nodeName === y.nodeName &&
+        (x.nodeType !== 1 || ((x.id || "") === (y.id || "") && (x.nodeName !== "INPUT" || (x.getAttribute("type") || "") === (y.getAttribute("type") || ""))));
+      if (same) morphNode(x, y);
+      else a.replaceChild(y.cloneNode(true), x);
+    }
+    for (let i = an.length - 1; i >= bn.length; i--) a.removeChild(an[i]);
+  }
   function renderKeepFocus(id) {
     const el = document.getElementById(id);
+    const root = document.getElementById("app");
+    if (el && root && document.activeElement === el && typeof document.createElement("template").content !== "undefined") {
+      try {
+        const tpl = document.createElement("template");
+        const toast = state.toast ? '<div class="toast">' + esc(state.toast) + "</div>" : "";
+        tpl.innerHTML = mainHtml() + sheetHtml() + toast;
+        applyInputHints(tpl.content);
+        morphChildren(root, tpl.content);
+        persist();
+        ensureTimer();
+        if (document.activeElement !== el) {
+          const n = document.getElementById(id);
+          if (n) n.focus();
+        }
+        return;
+      } catch (e) { /* fall back to a full render */ }
+    }
     const start = el ? el.selectionStart : null;
     const end = el ? el.selectionEnd : null;
     render();
@@ -3945,6 +4031,7 @@
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Voice command</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
       (v.listening ? '<div class="voice-orb" aria-hidden="true"></div><div class="h2" style="text-align:center;margin-bottom:8px">Listening…</div>' : "") +
+      (v.listening ? '<button class="btn" style="margin-bottom:10px" ' + act("stopVoice") + ">Stop — use what I said</button>" : "") +
       '<div id="voice-status" class="muted" style="text-align:center;margin-bottom:10px">' +
         esc(v.listening ? "Try “clock me in for Lopez”, “clock me in on Elm”, “clock me out”, or “new job for Lisa Mezo, AC not cooling, Saturday morning.”" : (v.error || "Voice is ready when you are. You can also type the command.")) +
       "</div>" +
@@ -3952,7 +4039,7 @@
       (v.fallback || !v.listening ? '<label class="field"><div class="field-lab">' + (v.fallback ? "Type the command" : "Or type it") + "</div>" +
         '<input id="voice-input" type="text" placeholder="clock me in for Lopez, or new job for Lisa Mezo, AC not cooling, Saturday morning" value="' + esc(v.text || "") + '" oninput="RT.setVoiceText(this.value)"></label>' +
         '<button class="btn" ' + act("submitVoice") + ">Continue</button>" +
-        (speechAvailable() && !v.listening ? '<button class="btn ghost" style="margin-top:8px" ' + act("openVoice") + ">Listen again</button>" : "") : "")
+        (speechAvailable() && !v.listening ? '<button class="btn ghost" style="margin-top:8px" ' + act("openVoice") + ">Try again</button>" : "") : "")
     );
   }
 
@@ -4270,6 +4357,25 @@
       '<button class="btn ghost" style="margin-top:8px" ' + act("closeSheet") + ">Cancel</button>"
     );
   }
+  function voiceJobCustomerMatches(q) {
+    const nq = normalizeName(q);
+    if (!nq) return [];
+    const ranked = rankedCustomers(q).map(function (x) { return x.c; });
+    const extra = state.customers.filter(function (c) {
+      return ranked.indexOf(c) === -1 && customerSearchHay(c).toLowerCase().indexOf(String(q).toLowerCase().trim()) !== -1;
+    });
+    return ranked.concat(extra).slice(0, 6);
+  }
+  function voiceJobCustomerPicker(d) {
+    const list = voiceJobCustomerMatches(d.custQuery || "");
+    return '<div class="note">Pick the customer from your list, or add a new one. The job is not created until a customer is chosen.</div>' +
+      '<label class="field"><div class="field-lab">Find customer</div><input id="vj-cq" type="search" autocomplete="off" placeholder="Name, street, or phone" value="' + esc(d.custQuery || "") + '" oninput="RT.setVoiceJobField(\'custQuery\', this.value)"></label>' +
+      '<div class="stack" style="margin-bottom:10px">' + (list.length ? list.map(function (c) {
+        const a = primaryAddress(c);
+        return '<button class="list-card" ' + act("voiceJobPickCust", c.id) + '><div class="job-body"><div class="job-name">' + esc(c.name) + '</div><div class="job-prob">' + esc((a ? addressLine(a) : formatAddrLine(c.address, c.city)) || c.phone || "") + "</div></div></button>";
+      }).join("") : '<div class="muted">No customers match. Check the spelling or add a new customer.</div>') + "</div>" +
+      '<button class="btn ghost" style="margin-bottom:12px" ' + act("voiceJobNewCust") + ">New customer</button>";
+  }
   function voiceNewJobSheet() {
     const d = state.voiceJobDraft; if (!d) return "";
     const cust = d.customerId ? getCustomer(d.customerId) : null;
@@ -4282,17 +4388,21 @@
         (d.offerReason ? '<div class="muted" style="margin-bottom:8px">' + esc(d.offerReason) + "</div>" : "") +
       "</div>" +
       (d.isNewCustomer
-        ? '<div class="note">No matching customer. Add them, then confirm the job.</div>' +
-          '<label class="field"><div class="field-lab">Customer name</div><input id="vj-newName" value="' + esc(d.newName || "") + '" oninput="RT.setVoiceJobField(\'newName\', this.value)"></label>' +
-          '<label class="field"><div class="field-lab">Phone</div><input id="vj-newPhone" type="tel" value="' + esc(d.newPhone || "") + '" oninput="RT.setVoiceJobField(\'newPhone\', this.value)"></label>' +
-          '<label class="field"><div class="field-lab">Service address</div><input id="vj-newAddress" value="' + esc(d.newAddress || "") + '" oninput="RT.setVoiceJobField(\'newAddress\', this.value)"></label>' +
-          '<label class="field"><div class="field-lab">City</div><input id="vj-newCity" value="' + esc(d.newCity || "") + '" oninput="RT.setVoiceJobField(\'newCity\', this.value)"></label>'
-        : '<div class="confirm-row"><div class="field-lab">Customer</div><div class="h2">' + esc(d.customerName || "") + "</div></div>" +
-          (addrs.length > 1
-            ? '<div class="field-lab">Service address</div><div class="stack" style="margin-bottom:12px">' + addrs.map(function (a) {
-                return '<button class="dash' + (d.addressId === a.id ? " sel" : "") + '" ' + act("voiceJobAddress", a.id) + ">" + esc(addressLine(a) || "Address") + "</button>";
-              }).join("") + "</div>"
-            : (addrs.length === 1 ? '<div class="muted" style="margin-bottom:12px">' + esc(addressLine(addrs[0])) + "</div>" : '<div class="muted" style="margin-bottom:12px">No service address on file yet.</div>'))
+        ? '<div class="note">New customer. Name, phone, and service address are required before the job is created.</div>' +
+          '<label class="field"><div class="field-lab">Customer name</div><input id="vj-newName" autocomplete="off" value="' + esc(d.newName || "") + '" oninput="RT.setVoiceJobField(\'newName\', this.value)"></label>' +
+          '<label class="field"><div class="field-lab">Phone</div><input id="vj-newPhone" type="tel" inputmode="tel" autocomplete="off" value="' + esc(d.newPhone || "") + '" oninput="RT.setVoiceJobField(\'newPhone\', this.value)"></label>' +
+          '<label class="field"><div class="field-lab">Service address</div><input id="vj-newAddress" autocomplete="off" value="' + esc(d.newAddress || "") + '" oninput="RT.setVoiceJobField(\'newAddress\', this.value)"></label>' +
+          '<label class="field"><div class="field-lab">City</div><input id="vj-newCity" autocomplete="off" value="' + esc(d.newCity || "") + '" oninput="RT.setVoiceJobField(\'newCity\', this.value)"></label>' +
+          '<button class="link-btn" style="margin:0 0 12px" ' + act("voiceJobPickExisting") + ">Pick an existing customer instead</button>"
+        : (cust
+          ? '<div class="confirm-row"><div class="field-lab">Customer</div><div class="h2">' + esc(cust.name) + "</div></div>" +
+            '<button class="link-btn" style="margin:0 0 10px" ' + act("voiceJobChangeCust") + ">Change customer</button>" +
+            (addrs.length > 1
+              ? '<div class="field-lab">Service address</div><div class="stack" style="margin-bottom:12px">' + addrs.map(function (a) {
+                  return '<button class="dash' + (d.addressId === a.id ? " sel" : "") + '" ' + act("voiceJobAddress", a.id) + ">" + esc(addressLine(a) || "Address") + "</button>";
+                }).join("") + "</div>"
+              : (addrs.length === 1 ? '<div class="muted" style="margin-bottom:12px">' + esc(addressLine(addrs[0])) + "</div>" : '<div class="muted" style="margin-bottom:12px">No service address on file yet.</div>'))
+          : voiceJobCustomerPicker(d))
       ) +
       '<label class="field"><div class="field-lab">Problem</div><input id="vj-problem" value="' + esc(d.problem || "") + '" oninput="RT.setVoiceJobField(\'problem\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Requested time</div><input id="vj-whenLabel" value="' + esc(d.whenLabel || "") + '" oninput="RT.setVoiceJobField(\'whenLabel\', this.value)"></label>' +
@@ -4431,6 +4541,7 @@
     if (!root) return;
     const toast = state.toast ? '<div class="toast">' + esc(state.toast) + "</div>" : "";
     root.innerHTML = mainHtml() + sheetHtml() + toast;
+    applyInputHints(root);
     persist();
     ensureTimer();
   }
@@ -5040,6 +5151,7 @@
     if (name === "npType") { state.noteDraft.nameplate.type = arg; render(); return; }
     if (name === "clearNpPhoto") { state.noteDraft.nameplate.photo = ""; render(); return; }
     if (name === "openVoice") { startListening(); return; }
+    if (name === "stopVoice") { stopListening(); return; }
     if (name === "submitVoice") { applyVoiceText((state.voice && state.voice.text) || ""); return; }
     if (name === "confirmVoice") {
       const c = state.voiceConfirm; if (!c) return;
@@ -5355,7 +5467,8 @@
         jobId: nextJobId(state.jobs),
         customerId: customer ? customer.id : "",
         customerName: customer ? customer.name : spoken,
-        isNewCustomer: !customer,
+        isNewCustomer: !customer && !rankedCustomers(spoken).length,
+        custQuery: customer ? "" : spoken,
         newName: customer ? "" : spoken,
         newPhone: "",
         newAddress: "",
@@ -5371,6 +5484,28 @@
       state.sheet = "voiceNewJob";
       render(); return;
     }
+    if (name === "voiceJobPickCust") {
+      const d = state.voiceJobDraft; const c = getCustomer(arg); if (!d || !c) return;
+      ensureCustomerAddresses(c, state.customers);
+      const addrs = serviceAddresses(c);
+      Object.assign(d, { customerId: c.id, customerName: c.name, isNewCustomer: false, billToCustomerId: c.id, addressId: addrs.length === 1 ? addrs[0].id : "" });
+      render(); return;
+    }
+    if (name === "voiceJobChangeCust") {
+      const d = state.voiceJobDraft; if (!d) return;
+      Object.assign(d, { custQuery: d.custQuery || d.customerName || "", customerId: "", isNewCustomer: false, addressId: "", billToCustomerId: "" });
+      render(); return;
+    }
+    if (name === "voiceJobNewCust") {
+      const d = state.voiceJobDraft; if (!d) return;
+      Object.assign(d, { customerId: "", isNewCustomer: true, addressId: "", billToCustomerId: "", newName: d.newName || d.custQuery || "" });
+      render(); return;
+    }
+    if (name === "voiceJobPickExisting") {
+      const d = state.voiceJobDraft; if (!d) return;
+      Object.assign(d, { isNewCustomer: false, customerId: "", custQuery: d.custQuery || d.newName || "" });
+      render(); return;
+    }
     if (name === "voiceJobAddress") {
       if (!state.voiceJobDraft) return;
       state.voiceJobDraft.addressId = arg;
@@ -5379,9 +5514,12 @@
     if (name === "confirmVoiceNewJob") {
       const d = state.voiceJobDraft; if (!d) return;
       let customerId = d.customerId, customer, address = "", city = "", phone = "", addressId = d.addressId || "", billToCustomerId = d.billToCustomerId || "";
+      if (!d.isNewCustomer && !d.customerId) { showToast("Pick a customer from the list, or tap New customer"); return; }
       if (d.isNewCustomer) {
-        const name = (d.newName || d.customerName || "").trim();
-        if (!name) { showToast("Enter a customer name"); return; }
+        const name = (d.newName || "").trim();
+        if (!name) { showToast("Enter the customer name"); return; }
+        if (String(d.newPhone || "").replace(/\D/g, "").length < 10) { showToast("Enter a 10-digit phone number"); return; }
+        if (!(d.newAddress || "").trim()) { showToast("Enter the service address"); return; }
         customerId = nextCustomerId();
         customer = name; address = (d.newAddress || "").trim(); city = (d.newCity || "").trim() || "Long Beach"; phone = (d.newPhone || "").trim();
         const fresh = { id: customerId, name: customer, address: address, city: city, phone: phone, email: "", billingSameAsService: true, billingAddress: "", billingCity: "", addresses: [], assets: [], mentions: [] };
@@ -5533,7 +5671,8 @@
     };
   }
   function applyVoiceText(text) {
-    if (recognition) { try { recognition.stop(); } catch (e) {} }
+    voiceSession++;
+    endVoiceSession();
     const parsed = parseVoiceCommand(text, voiceContext());
     state.voice.listening = false;
     state.voice.text = text || "";
@@ -5561,43 +5700,85 @@
     state.sheet = "voiceConfirm";
     render();
   }
+  let voiceSession = 0;
+  let voiceTimer = null;
+  function endVoiceSession() {
+    if (voiceTimer) { clearTimeout(voiceTimer); voiceTimer = null; }
+    const r = recognition;
+    recognition = null;
+    if (r) {
+      r.onresult = null; r.onerror = null; r.onend = null;
+      try { r.abort(); } catch (e) {}
+    }
+  }
+  function finishListening(sessionId, reason) {
+    if (sessionId !== voiceSession) return;
+    voiceSession++;
+    endVoiceSession();
+    const text = ((state.voice && state.voice.text) || "").trim();
+    if (state.sheet !== "voice") { if (state.voice) state.voice.listening = false; return; }
+    if (text && reason !== "error") { applyVoiceText(text); return; }
+    state.voice = Object.assign({}, state.voice || {}, {
+      listening: false,
+      fallback: true,
+      error: reason === "denied" ? "Microphone permission was denied. Type the command instead, or allow the mic for this site in Safari settings."
+        : reason === "error" ? "Voice stopped. Tap Try again, or type the command."
+        : "Didn’t catch that. Tap Try again and start talking, or type the command."
+    });
+    render();
+  }
+  function stopListening() {
+    finishListening(voiceSession, "stop");
+  }
   function startListening() {
     const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    voiceSession++;
+    endVoiceSession();
+    if (typeof stopMemoRecord === "function" && state.memoDraft && state.memoDraft.recording) try { stopMemoRecord(true); } catch (e) {}
     if (!Ctor) {
       state.voice = { listening: false, text: state.voice && state.voice.text || "", fallback: true, error: "This browser doesn’t support voice. Type the command instead. On iPhone, use Safari." };
       state.sheet = "voice";
       render();
       return;
     }
+    const sid = voiceSession;
     try {
-      if (recognition) { try { recognition.abort(); } catch (e) {} }
-      recognition = new Ctor();
-      recognition.lang = "en-US";
-      recognition.interimResults = true;
-      recognition.continuous = false;
-      recognition.onresult = function (ev) {
-        let said = "";
-        for (let i = ev.resultIndex; i < ev.results.length; i++) said += ev.results[i][0].transcript;
-        state.voice.text = said.trim();
+      const rec = new Ctor();
+      recognition = rec;
+      rec.lang = "en-US";
+      rec.interimResults = true;
+      rec.continuous = false;
+      rec.maxAlternatives = 1;
+      let finalText = "";
+      rec.onresult = function (ev) {
+        if (sid !== voiceSession) return;
+        let interim = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          if (ev.results[i].isFinal) finalText += ev.results[i][0].transcript + " ";
+          else interim += ev.results[i][0].transcript;
+        }
+        state.voice.text = (finalText + interim).replace(/\s+/g, " ").trim();
         const el = document.getElementById("voice-text");
         if (el) el.textContent = state.voice.text;
-        if (ev.results[ev.results.length - 1].isFinal) applyVoiceText(state.voice.text);
+        if (voiceTimer) clearTimeout(voiceTimer);
+        voiceTimer = setTimeout(function () { finishListening(sid, "timeout"); }, interim ? 2500 : 1200);
+        if (ev.results[ev.results.length - 1].isFinal) finishListening(sid, "final");
       };
-      recognition.onerror = function (ev) {
-        state.voice.listening = false;
-        state.voice.fallback = true;
-        state.voice.error = ev.error === "not-allowed"
-          ? "Microphone permission was denied. Type the command instead."
-          : "Voice isn’t available right now. Type the command instead.";
-        state.sheet = "voice";
-        render();
+      rec.onerror = function (ev) {
+        if (sid !== voiceSession) return;
+        const e = ev && ev.error;
+        if (e === "no-speech" || e === "aborted") { finishListening(sid, "nospeech"); return; }
+        finishListening(sid, (e === "not-allowed" || e === "service-not-allowed") ? "denied" : "error");
       };
-      recognition.onend = function () { state.voice.listening = false; };
+      rec.onend = function () { finishListening(sid, "end"); };
       state.voice = { listening: true, text: "", fallback: false, error: "" };
       state.sheet = "voice";
       render();
-      recognition.start();
+      rec.start();
+      voiceTimer = setTimeout(function () { finishListening(sid, "timeout"); }, 12000);
     } catch (err) {
+      voiceSession++;
+      endVoiceSession();
       state.voice = { listening: false, text: "", fallback: true, error: "Voice isn’t available. Type the command instead." };
       state.sheet = "voice";
       render();
