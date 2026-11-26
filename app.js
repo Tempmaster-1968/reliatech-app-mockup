@@ -2062,12 +2062,45 @@
   /* state and remaining UI will be appended */
   window.__RT_BOOT = { INITIAL_CUSTOMERS: INITIAL_CUSTOMERS, INITIAL_JOBS: INITIAL_JOBS, PAST_JOBS: PAST_JOBS };
 
-  function loadPersisted() {
-    try {
-      const raw = localStorage.getItem(STORE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (e) { return null; }
-  }
+  /* Phase 1 data layer. Every read and write of saved app data goes through
+     RTStore. Today the backend is this browser's localStorage. A shared online
+     database (Supabase or Firebase) can be plugged in later by giving RTStore a
+     remote adapter, without touching the screens. */
+  const RTStore = (function () {
+    const subs = [];
+    let lastSaved = "";
+    const local = {
+      name: "local",
+      load: function () {
+        try { const raw = localStorage.getItem(STORE_KEY); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
+      },
+      save: function (snapshot, json) {
+        try { localStorage.setItem(STORE_KEY, json || JSON.stringify(snapshot)); return true; } catch (e) { return false; }
+      }
+    };
+    let remote = null; /* future: { name, push(snapshot), pull() -> Promise<snapshot> } */
+    function notify(snapshot, source) { subs.forEach(function (fn) { try { fn(snapshot, source); } catch (e) {} }); }
+    window.addEventListener("storage", function (ev) {
+      if (ev.key !== STORE_KEY || !ev.newValue) return;
+      try { notify(JSON.parse(ev.newValue), "other-tab"); } catch (e) {}
+    });
+    return {
+      backend: function () { return remote ? remote.name : local.name; },
+      load: function () { return local.load(); },
+      save: function (snapshot) {
+        const json = JSON.stringify(snapshot);
+        if (json === lastSaved) return true;
+        const ok = local.save(snapshot, json);
+        if (ok) lastSaved = json;
+        if (remote && remote.push) { try { remote.push(snapshot); } catch (e) {} }
+        return ok;
+      },
+      subscribe: function (fn) { subs.push(fn); return function () { const i = subs.indexOf(fn); if (i !== -1) subs.splice(i, 1); }; },
+      setRemote: function (adapter) { remote = adapter || null; }
+    };
+  })();
+  window.RTStore = RTStore;
+  function loadPersisted() { return RTStore.load(); }
   function mergeCustomers(initial, saved) {
     const byId = {};
     initial.forEach(function (c) { byId[c.id] = c; });
@@ -2198,7 +2231,12 @@
     attachQuery: "",
     packCustomName: "",
     packCustomAmount: "",
-    saveLineDraft: null
+    saveLineDraft: null,
+    vendors: (_saved && Array.isArray(_saved.vendors)) ? _saved.vendors : [],
+    vendorDraft: null,
+    partDraft: null,
+    poDraft: null,
+    importReport: null
   };
   state.techRecords = normalizeTechRecords(state.techs, _saved && _saved.techRecords);
   state.priceBook = applyProposedPricing(mergePriceBook(seedPriceBook(), _saved && _saved.priceBook));
@@ -2273,9 +2311,8 @@
     (state.plans || []).forEach(function (p) { ensurePlanAddress(p, state.customers); });
     (state.visits || []).forEach(function (v) { ensureVisitAddress(v, state.customers, state.plans); });
   })();
-  function persist() {
-    try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({
+  function snapshotState() {
+    return {
         v: 1,
         customers: state.customers,
         jobs: state.jobs,
@@ -2287,9 +2324,12 @@
         settings: state.settings,
         showCompleted: false,
         priceBook: state.priceBook,
-        unfiledCaptures: state.unfiledCaptures
-      }));
-    } catch (e) {}
+        unfiledCaptures: state.unfiledCaptures,
+        vendors: state.vendors || []
+    };
+  }
+  function persist() {
+    try { RTStore.save(snapshotState()); } catch (e) {}
   }
   let toastTimer = null;
 
@@ -2311,6 +2351,9 @@
     state.attachCaptureId = null;
     state.priceDraft = null;
     state.saveLineDraft = null;
+    state.partDraft = null;
+    state.poDraft = null;
+    state.vendorDraft = null;
     if (state.voice) state.voice.listening = false;
     if (typeof endVoiceSession === "function") { voiceSession++; endVoiceSession(); }
     if (typeof stopMemoRecord === "function") try { stopMemoRecord(true); } catch (e) {}
@@ -2889,6 +2932,322 @@
     }
   };
 
+  /* ——— Phase 1: vendors, job parts, PO email, backup / move data ——— */
+  const PART_STATUS = [["needed", "Needed"], ["ordered", "Ordered"], ["received", "Received"]];
+  function partStatusPill(st) {
+    if (st === "received") return pill("Received", "#145C38", "#E3F5EC");
+    if (st === "ordered") return pill("Ordered", "#7A5800", "#FBF3D8");
+    return pill("Needed", "#A12A2A", "#FBE4E4");
+  }
+  function vendorById(id) { return (state.vendors || []).find(function (v) { return v.id === id; }) || null; }
+  function jobParts(job) { return (job && Array.isArray(job.parts)) ? job.parts : []; }
+  function nextPoNumber(job) { return job.id + "-P" + pad2((Number(job.poSeq) || 0) + 1); }
+  function estimatePartLines(job) {
+    const est = (job.estimates || []).filter(function (e) { return !e.superseded; }).slice(-1)[0];
+    const lines = (est && est.lineItems) || job.lineItems || [];
+    return lines.filter(function (l) {
+      if (!l || !l.label || Number(l.amount) <= 0) return false;
+      if (isLaborLine(l)) return false;
+      if (/^(diagnostic|service call|trip|truck|permit|hers|discount)/i.test(l.label)) return false;
+      return true;
+    });
+  }
+  function partsSection(job) {
+    const parts = jobParts(job);
+    const need = parts.filter(function (x) { return x.status === "needed"; }).length;
+    const ord = parts.filter(function (x) { return x.status === "ordered"; }).length;
+    let html = '<div class="section-row"><div class="section" style="margin:0">Parts and equipment</div>' +
+      (parts.length ? '<div class="meta">' + (need ? need + " needed" : "") + (need && ord ? " · " : "") + (ord ? ord + " on order" : "") + (!need && !ord ? "All received" : "") + "</div>" : "") + "</div>";
+    html += '<div class="stack" style="margin-bottom:10px">' + (parts.length ? parts.map(function (x) {
+      const v = vendorById(x.branchId);
+      return '<button class="list-card" ' + act("editPart", x.id) + '><div class="job-body"><div class="row"><div class="job-name" style="font-size:15px">' + esc(x.name) + (Number(x.qty) > 1 ? " × " + esc(String(x.qty)) : "") + "</div>" + partStatusPill(x.status) + "</div>" +
+        '<div class="job-prob">' + esc([x.partNo, v ? v.name : "", x.po ? "PO " + x.po : ""].filter(Boolean).join(" · ") || "Tap to set part #, branch, or status") + "</div></div></button>";
+    }).join("") : '<div class="muted">No parts listed yet. Add them by hand or pull them from the estimate.</div>') + "</div>";
+    html += '<div class="quick" style="grid-template-columns:1fr 1fr;margin-bottom:8px">' +
+      '<button class="dash" ' + act("addPart") + ">+ Add part</button>" +
+      '<button class="dash" ' + act("partsFromEstimate") + ">Pull from estimate</button></div>" +
+      (need ? '<button class="btn ghost" style="margin-bottom:16px" ' + act("openPo") + ">Draft PO email · " + esc(nextPoNumber(job)) + "</button>" : '<div style="margin-bottom:16px"></div>');
+    return html;
+  }
+  function partSheet() {
+    const d = state.partDraft; if (!d) return "";
+    const vendors = state.vendors || [];
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">' + (d.isNew ? "Add part" : "Edit part") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<label class="field"><div class="field-lab">Part or equipment</div><input id="pt-name" autocomplete="off" value="' + esc(d.name || "") + '" oninput="RT.setPartField(\'name\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Part # / model (optional)</div><input id="pt-partNo" autocomplete="off" value="' + esc(d.partNo || "") + '" oninput="RT.setPartField(\'partNo\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Qty</div><input id="pt-qty" inputmode="decimal" autocomplete="off" value="' + esc(String(d.qty == null ? 1 : d.qty)) + '" oninput="RT.setPartField(\'qty\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Preferred branch</div><select id="pt-branch" onchange="RT.setPartField(\'branchId\', this.value)"><option value="">' + (vendors.length ? "Pick a branch" : "No branches yet (Settings › Vendors)") + "</option>" +
+        vendors.map(function (v) { return '<option value="' + esc(v.id) + '"' + (d.branchId === v.id ? " selected" : "") + ">" + esc(v.name) + "</option>"; }).join("") + "</select></label>" +
+      '<div class="field-lab">Status</div><div class="chips" style="margin-bottom:14px">' + PART_STATUS.map(function (x) {
+        return '<button class="chip' + (d.status === x[0] ? " on" : "") + '" ' + act("partStatus", x[0]) + ">" + x[1] + "</button>";
+      }).join("") + "</div>" +
+      (d.po ? '<div class="muted" style="margin-bottom:10px">On PO ' + esc(d.po) + "</div>" : "") +
+      '<button class="btn teal" ' + act("savePart") + ">Save part</button>" +
+      (d.isNew ? "" : '<button class="btn ghost" style="margin-top:8px" ' + act("deletePart") + ">Remove from job</button>")
+    );
+  }
+  function poParts(job, d) {
+    return jobParts(job).filter(function (x) { return x.status === "needed" && (!d.branchId || !x.branchId || x.branchId === d.branchId); });
+  }
+  function poText(job, d) {
+    const v = vendorById(d.branchId);
+    const parts = poParts(job, d);
+    const lines = [
+      "PO: " + d.po,
+      v && v.account ? "Account: " + v.account : "",
+      "Job: " + job.id + " · " + (job.customer || ""),
+      "Job address: " + [job.address, job.city].filter(Boolean).join(", "),
+      d.delivery ? "Delivery to job address" : "Will-call pickup",
+      "",
+      "Parts:"
+    ].filter(function (x, i) { return x !== "" || i === 5; });
+    parts.forEach(function (x) { lines.push("- " + (Number(x.qty) || 1) + " × " + x.name + (x.partNo ? " (" + x.partNo + ")" : "")); });
+    lines.push("", "Please confirm availability and pickup/delivery time. Thanks,", "Steve Seguine · ReliaTech Services · " + ((state.settings && state.settings.stevePhone) || "(562) 487-8750"));
+    return lines.join("\n");
+  }
+  function poSubject(job, d) { return "PO " + d.po + " · " + (d.delivery ? "Delivery" : "Will-call") + " · " + (job.customer || "") ; }
+  function poSheet(job) {
+    const d = state.poDraft; if (!d) return "";
+    const vendors = state.vendors || [];
+    const v = vendorById(d.branchId);
+    const parts = poParts(job, d);
+    const href = "mailto:" + (v && v.email ? String(v.email).replace(/[^A-Za-z0-9@._+,-]/g, "") : "") + "?subject=" + encodeURIComponent(poSubject(job, d)) + "&body=" + encodeURIComponent(poText(job, d));
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">PO ' + esc(d.po) + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="field-lab">Branch</div><div class="stack" style="margin-bottom:10px">' + (vendors.length ? vendors.map(function (x) {
+        return '<button class="dash' + (d.branchId === x.id ? " sel" : "") + '" ' + act("poBranch", x.id) + ">" + esc(x.name) + (x.email ? " · " + esc(x.email) : " · no email yet") + "</button>";
+      }).join("") : '<div class="muted">No branches yet. Add them in Settings › Vendors. You can still copy the text below.</div>') + "</div>" +
+      '<div class="chips" style="margin-bottom:10px"><button class="chip' + (!d.delivery ? " on" : "") + '" ' + act("poDelivery", "0") + ">Will-call</button><button class=\"chip" + (d.delivery ? " on" : "") + '" ' + act("poDelivery", "1") + ">Delivery</button></div>" +
+      (parts.length ? "" : '<div class="note">No needed parts for this branch.</div>') +
+      '<pre class="voice-text" style="white-space:pre-wrap;font-size:13px;text-align:left">' + esc(poText(job, d)) + "</pre>" +
+      '<div class="muted" style="margin:6px 0 10px">Opens a draft in your mail app. Nothing is sent until you press Send.</div>' +
+      (v && v.email ? '<a class="btn teal" style="display:flex;text-decoration:none" href="' + esc(href) + '">Open email to ' + esc(v.name) + "</a>" : "") +
+      '<button class="btn ghost" style="margin-top:8px" ' + act("copyPo") + ">Copy PO text</button>" +
+      (parts.length ? '<button class="btn" style="margin-top:8px" ' + act("markPoOrdered") + ">Mark these " + parts.length + " as ordered on " + esc(d.po) + "</button>" : "")
+    );
+  }
+  function vendorsSection() {
+    const list = state.vendors || [];
+    return '<div class="section">Vendors</div>' +
+      '<div class="muted" style="margin:-4px 0 12px">Supply house branches for PO emails. Add each counter’s email, your account number, and what you usually buy there.</div>' +
+      '<div class="stack" style="margin-bottom:8px">' + list.map(function (v) {
+        return '<button class="list-card" ' + act("editVendor", v.id) + '><div class="job-body"><div class="job-name" style="font-size:15px">' + esc(v.name) + '</div><div class="job-prob">' + esc([v.email, v.account ? "Acct " + v.account : "", v.buys].filter(Boolean).join(" · ") || "Tap to add details") + "</div></div></button>";
+      }).join("") + "</div>" +
+      '<button class="dash" style="margin-bottom:16px" ' + act("addVendor") + ">+ Add branch</button>";
+  }
+  function vendorSheet() {
+    const d = state.vendorDraft; if (!d) return "";
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">' + (d.isNew ? "Add branch" : "Edit branch") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<label class="field"><div class="field-lab">Branch name</div><input id="vd-name" autocomplete="off" placeholder="e.g. Sigler Long Beach" value="' + esc(d.name || "") + '" oninput="RT.setVendorField(\'name\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Counter email</div><input id="vd-email" type="email" inputmode="email" autocomplete="off" value="' + esc(d.email || "") + '" oninput="RT.setVendorField(\'email\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Counter phone (optional)</div><input id="vd-phone" type="tel" autocomplete="off" value="' + esc(d.phone || "") + '" oninput="RT.setVendorField(\'phone\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Account #</div><input id="vd-account" autocomplete="off" value="' + esc(d.account || "") + '" oninput="RT.setVendorField(\'account\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">What you buy there</div><input id="vd-buys" autocomplete="off" placeholder="e.g. Payne equipment, copper, filters" value="' + esc(d.buys || "") + '" oninput="RT.setVendorField(\'buys\', this.value)"></label>' +
+      '<button class="btn teal" ' + act("saveVendor") + ">Save branch</button>" +
+      (d.isNew ? "" : '<button class="btn ghost" style="margin-top:8px" ' + act("deleteVendor") + ">Remove branch</button>")
+    );
+  }
+  function backupSection() {
+    const r = state.importReport;
+    return '<div class="section">Backup / Move data</div>' +
+      '<div class="muted" style="margin:-4px 0 12px">Each phone or browser keeps its own copy until online sync is set up. To move techs, jobs, and customers between your iPhone and desktop: Save a backup file on one, then Import it on the other. Import adds what’s missing and never deletes or overwrites what’s already here.</div>' +
+      '<button class="btn" style="margin-bottom:8px" ' + act("exportData") + ">Save backup file</button>" +
+      '<label class="btn ghost" style="display:flex;margin-bottom:8px;cursor:pointer">Import backup file<input type="file" accept=".json,application/json" style="display:none" onchange="RT.importFile(this)"></label>' +
+      (r ? '<div class="note" style="margin-bottom:16px">' + esc(r) + "</div>" : '<div style="margin-bottom:16px"></div>');
+  }
+  function downloadBackup() {
+    const snap = snapshotState();
+    const payload = { app: "reliatech", kind: "backup", exportedAt: new Date().toISOString(), device: navigator.userAgent, data: snap };
+    const json = JSON.stringify(payload);
+    const name = "reliatech-backup-" + todayYmd() + ".json";
+    try {
+      const file = typeof File !== "undefined" ? new File([json], name, { type: "application/json" }) : null;
+      if (file && navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share && /iPhone|iPad|Android/i.test(navigator.userAgent)) {
+        navigator.share({ files: [file], title: name }).catch(function () {});
+        return;
+      }
+    } catch (e) {}
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+    showToast("Backup saved: " + name);
+  }
+  function unionById(local, incoming) {
+    const out = (local || []).slice();
+    const have = {};
+    out.forEach(function (x) { if (x && x.id) have[x.id] = true; });
+    let added = 0;
+    (incoming || []).forEach(function (x) { if (x && x.id && !have[x.id]) { out.push(x); have[x.id] = true; added++; } });
+    return { list: out, added: added };
+  }
+  function importBackup(payload) {
+    const d = payload && payload.data ? payload.data : payload;
+    if (!d || (!Array.isArray(d.jobs) && !Array.isArray(d.customers) && !Array.isArray(d.techRecords))) throw new Error("not a backup");
+    const counts = { customers: 0, jobs: 0, techs: 0, vendors: 0, plans: 0, visits: 0, items: 0, renumbered: 0 };
+    // customers
+    const custMap = {};
+    (d.customers || []).forEach(function (ic) {
+      if (!ic || !ic.id) return;
+      const mine = getCustomer(ic.id);
+      if (!mine) { state.customers.push(normalizeCustomer(ic)); counts.customers++; return; }
+      if (normalizeName(mine.name) === normalizeName(ic.name)) return;
+      const nid = nextCustomerId();
+      const copy = JSON.parse(JSON.stringify(ic));
+      copy.id = nid;
+      (copy.addresses || []).forEach(function (a) { if (a && a.id) a.id = String(a.id).replace("sa-" + ic.id + "-", "sa-" + nid + "-"); });
+      custMap[ic.id] = nid;
+      state.customers.push(normalizeCustomer(copy));
+      counts.customers++;
+    });
+    // jobs
+    (d.jobs || []).forEach(function (ij) {
+      if (!ij || !ij.id) return;
+      const j = JSON.parse(JSON.stringify(ij));
+      if (custMap[j.customerId]) j.customerId = custMap[j.customerId];
+      if (custMap[j.billToCustomerId]) j.billToCustomerId = custMap[j.billToCustomerId];
+      if (j.addressId) Object.keys(custMap).forEach(function (old) { j.addressId = String(j.addressId).replace("sa-" + old + "-", "sa-" + custMap[old] + "-"); });
+      const mine = getJob(j.id);
+      if (!mine) { state.jobs.push(normalizeJob(j)); counts.jobs++; return; }
+      if (normalizeName(mine.customer) !== normalizeName(j.customer)) {
+        const nid = nextJobId(state.jobs);
+        j.timeline = [t("timp" + Date.now() + counts.renumbered, "system", "Just now", "Imported as #" + nid, "This job was #" + j.id + " on the other device. That number was already used here.")].concat(j.timeline || []);
+        j.id = nid;
+        state.jobs.push(normalizeJob(j));
+        counts.jobs++; counts.renumbered++;
+        return;
+      }
+      ["timeEntries", "timeline", "parts", "captures", "readingSets"].forEach(function (k) {
+        if (!Array.isArray(j[k]) || !j[k].length) return;
+        const u = unionById(mine[k], j[k]);
+        if (u.added) { mine[k] = u.list; counts.items += u.added; }
+      });
+    });
+    // techs
+    const before = (state.techRecords || []).length;
+    state.techRecords = normalizeTechRecords((state.techs || []).concat(d.techs || []), (state.techRecords || []).concat((d.techRecords || []).filter(function (r) {
+      return !(state.techRecords || []).some(function (x) { return x.name === techNameOf(r); });
+    })));
+    state.techs = techNamesFrom(state.techRecords);
+    counts.techs = state.techRecords.length - before;
+    let u = unionById(state.vendors, d.vendors); state.vendors = u.list; counts.vendors = u.added;
+    u = unionById(state.plans, d.plans); state.plans = u.list; counts.plans = u.added;
+    u = unionById(state.visits, d.visits); state.visits = u.list; counts.visits = u.added;
+    u = unionById(state.unfiledCaptures, d.unfiledCaptures); state.unfiledCaptures = u.list; counts.items += u.added;
+    u = unionById(state.priceBook, d.priceBook); state.priceBook = u.list; counts.items += u.added;
+    const parts = [];
+    if (counts.techs) parts.push(counts.techs + " tech" + (counts.techs > 1 ? "s" : ""));
+    if (counts.customers) parts.push(counts.customers + " customer" + (counts.customers > 1 ? "s" : ""));
+    if (counts.jobs) parts.push(counts.jobs + " job" + (counts.jobs > 1 ? "s" : "") + (counts.renumbered ? " (" + counts.renumbered + " renumbered because the number was taken)" : ""));
+    if (counts.vendors) parts.push(counts.vendors + " branch" + (counts.vendors > 1 ? "es" : ""));
+    if (counts.plans || counts.visits) parts.push((counts.plans + counts.visits) + " plan records");
+    if (counts.items) parts.push(counts.items + " notes, times, parts, or price book items");
+    return parts.length ? "Imported " + parts.join(", ") + ". Nothing here was deleted or overwritten." : "Nothing new in that file. Everything in it is already on this device.";
+  }
+  Object.assign(window.RT, {
+    setPartField: function (k, v) { if (state.partDraft) state.partDraft[k] = v; },
+    setVendorField: function (k, v) { if (state.vendorDraft) state.vendorDraft[k] = v; },
+    importFile: function (el) {
+      const f = el.files && el.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = function () {
+        try {
+          state.importReport = importBackup(JSON.parse(String(reader.result || "")));
+          showToast("Import finished");
+        } catch (e) {
+          state.importReport = "That file isn’t a ReliaTech backup. Nothing was changed.";
+          render();
+        }
+      };
+      reader.readAsText(f);
+      el.value = "";
+    }
+  });
+  function handlePhase1(name, arg) {
+    const job = getJob(state.openJobId);
+    if (name === "addPart") { state.partDraft = { isNew: true, name: "", partNo: "", qty: 1, branchId: "", status: "needed" }; state.sheet = "part"; render(); return true; }
+    if (name === "editPart") {
+      const x = jobParts(job).find(function (p) { return p.id === arg; }); if (!x) return true;
+      state.partDraft = Object.assign({ isNew: false }, JSON.parse(JSON.stringify(x))); state.sheet = "part"; render(); return true;
+    }
+    if (name === "partStatus") { if (state.partDraft) state.partDraft.status = arg; render(); return true; }
+    if (name === "savePart") {
+      const d = state.partDraft; if (!d || !job) return true;
+      if (!String(d.name || "").trim()) { showToast("Enter the part name"); return true; }
+      const rec = { id: d.id || ("pt" + Date.now()), name: String(d.name).trim(), partNo: String(d.partNo || "").trim(), qty: Number(d.qty) > 0 ? Number(d.qty) : 1, branchId: d.branchId || "", status: d.status || "needed", po: d.po || "", fromEstimate: !!d.fromEstimate };
+      if (rec.status === "received" && !d.receivedAt) rec.receivedAt = isoNow(); else if (d.receivedAt) rec.receivedAt = d.receivedAt;
+      const list = jobParts(job).slice();
+      const i = list.findIndex(function (p) { return p.id === rec.id; });
+      if (i === -1) list.push(rec); else list[i] = rec;
+      job.parts = list;
+      state.partDraft = null; state.sheet = null;
+      showToast("Part saved"); return true;
+    }
+    if (name === "deletePart") {
+      const d = state.partDraft; if (!d || !job) return true;
+      job.parts = jobParts(job).filter(function (p) { return p.id !== d.id; });
+      state.partDraft = null; state.sheet = null; showToast("Part removed"); return true;
+    }
+    if (name === "partsFromEstimate") {
+      if (!job) return true;
+      const lines = estimatePartLines(job);
+      const list = jobParts(job).slice();
+      let added = 0;
+      lines.forEach(function (l, i) {
+        const label = String(l.label).replace(/\s*\((first repair|add-on)\)\s*$/i, "");
+        if (list.some(function (p) { return normalizeName(p.name) === normalizeName(label); })) return;
+        list.push({ id: "pt" + Date.now() + "-" + i, name: label, partNo: "", qty: 1, branchId: "", status: "needed", po: "", fromEstimate: true });
+        added++;
+      });
+      job.parts = list;
+      showToast(added ? "Added " + added + " from the estimate. Remove any that aren’t parts." : "Nothing new to pull from the estimate");
+      return true;
+    }
+    if (name === "openPo") {
+      if (!job) return true;
+      const needed = jobParts(job).filter(function (p) { return p.status === "needed"; });
+      const firstBranch = (needed.find(function (p) { return p.branchId; }) || {}).branchId || ((state.vendors || [])[0] || {}).id || "";
+      state.poDraft = { po: nextPoNumber(job), branchId: firstBranch, delivery: false };
+      state.sheet = "po"; render(); return true;
+    }
+    if (name === "poBranch") { if (state.poDraft) state.poDraft.branchId = arg; render(); return true; }
+    if (name === "poDelivery") { if (state.poDraft) state.poDraft.delivery = arg === "1"; render(); return true; }
+    if (name === "copyPo") { if (job && state.poDraft) copyText(poText(job, state.poDraft), "PO text copied"); return true; }
+    if (name === "markPoOrdered") {
+      const d = state.poDraft; if (!d || !job) return true;
+      const ids = poParts(job, d).map(function (p) { return p.id; });
+      job.parts = jobParts(job).map(function (p) { return ids.indexOf(p.id) === -1 ? p : Object.assign({}, p, { status: "ordered", po: d.po, branchId: p.branchId || d.branchId, orderedAt: isoNow() }); });
+      job.poSeq = (Number(job.poSeq) || 0) + 1;
+      const v = vendorById(d.branchId);
+      job.timeline = [t("tpo" + Date.now(), "system", "Just now", "PO " + d.po + " ordered", ids.length + " part" + (ids.length > 1 ? "s" : "") + (v ? " from " + v.name : "") + (d.delivery ? " · delivery" : " · will-call"))].concat(job.timeline || []);
+      state.poDraft = null; state.sheet = null; showToast("Marked ordered on " + d.po); return true;
+    }
+    if (name === "addVendor") { state.vendorDraft = { isNew: true, name: "", email: "", phone: "", account: "", buys: "" }; state.sheet = "vendor"; render(); return true; }
+    if (name === "editVendor") { const v = vendorById(arg); if (!v) return true; state.vendorDraft = Object.assign({ isNew: false }, v); state.sheet = "vendor"; render(); return true; }
+    if (name === "saveVendor") {
+      const d = state.vendorDraft; if (!d) return true;
+      if (!String(d.name || "").trim()) { showToast("Enter the branch name"); return true; }
+      const rec = { id: d.id || ("vd" + Date.now()), name: String(d.name).trim(), email: String(d.email || "").trim(), phone: String(d.phone || "").trim(), account: String(d.account || "").trim(), buys: String(d.buys || "").trim() };
+      const list = (state.vendors || []).slice();
+      const i = list.findIndex(function (v) { return v.id === rec.id; });
+      if (i === -1) list.push(rec); else list[i] = rec;
+      state.vendors = list; state.vendorDraft = null; state.sheet = null; showToast("Branch saved"); return true;
+    }
+    if (name === "deleteVendor") {
+      const d = state.vendorDraft; if (!d) return true;
+      if (!window.confirm("Remove " + (d.name || "this branch") + "?")) return true;
+      state.vendors = (state.vendors || []).filter(function (v) { return v.id !== d.id; });
+      state.vendorDraft = null; state.sheet = null; showToast("Branch removed"); return true;
+    }
+    if (name === "exportData") { downloadBackup(); return true; }
+    return false;
+  }
+
   /* Phase 1 keyboard fix: while typing, patch the page in place instead of
      rebuilding it, so the focused field is never replaced. iPhone Safari resets
      the keyboard (back to letters) whenever a focused input is swapped out. */
@@ -3225,6 +3584,8 @@
       }).join("") +
       '<label class="field"><div class="field-lab">Add an independent tech</div><input id="new-tech" type="text" placeholder="Tech name" value="" oninput="RT.setNewTech(this.value)"></label>' +
       '<button class="dash" style="margin-top:-4px;margin-bottom:16px" ' + act("addTech") + ">Add tech</button>" +
+      vendorsSection() +
+      backupSection() +
       '<div class="section">Availability</div>' +
       '<div class="muted" style="margin:-4px 0 12px">Used when you pick a time and when a customer booking link shows open slots. The public booking page also reads published slots.json, so after you change these hours run the update_slots script and publish that file.</div>' +
       '<label class="field"><div class="field-lab">Weekday evening start (PT)</div><input id="st-weekdayStart" type="time" value="' + esc(s.weekdayStart) + '" oninput="RT.setSetting(\'weekdayStart\', this.value)"></label>' +
@@ -3266,6 +3627,7 @@
       '<div style="margin-bottom:16px">' + pill(st.label, col.text, col.bg) + (job.schedule ? '<span class="muted" style="margin-left:8px;font-size:12px">' + esc(job.schedule) + "</span>" : "") + "</div>" +
       jobEquipmentSection(job) +
       timeSection(job) +
+      partsSection(job) +
       '<div class="panel" style="margin-bottom:16px">' + stepper(job.status) + "</div>" +
       '<div class="section">On this job</div><div class="quick">' +
       '<button class="quick-btn" ' + act("sheet", "photo") + ">" + icon("photo") + "<span>Photo</span></button>" +
@@ -4463,6 +4825,9 @@
     if (s === "viewEstimate") { const j = getJob(state.openJobId); return j ? viewEstimateSheet(j) : ""; }
     const job = getJob(state.openJobId);
     if (s === "note") return noteSheet();
+    if (s === "part") return job ? partSheet() : "";
+    if (s === "po") return job ? poSheet(job) : "";
+    if (s === "vendor") return vendorSheet();
     if (s === "timeEdit") return job ? timeEditSheet(job) : "";
     if (s === "actingAs") return actingAsSheet();
     if (s === "voice") return voiceSheet();
@@ -4547,6 +4912,7 @@
   }
 
   function handle(name, arg) {
+    if (handlePhase1(name, arg)) return;
     if (name === "tab") { state.tab = arg; state.openJobId = null; state.openCustomerId = null; state.openAddressId = null; state.screen = null; state.query = ""; render(); return; }
     if (name === "filter") { state.filter = arg; render(); return; }
     if (name === "openJob") { state.openJobId = arg; state.openCustomerId = null; state.openAddressId = null; render(); return; }
