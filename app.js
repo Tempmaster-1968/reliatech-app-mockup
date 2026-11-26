@@ -1188,8 +1188,71 @@
     if (!hits) return 0;
     return 40 + (hits / qt.length) * 50;
   }
+  function editDistance(a, b) {
+    if (a === b) return 0;
+    if (!a.length) return b.length;
+    if (!b.length) return a.length;
+    let prev = [];
+    for (let j = 0; j <= b.length; j++) prev[j] = j;
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i];
+      for (let j = 1; j <= b.length; j++) {
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      }
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+  function soundKey(w) {
+    w = String(w || "").toLowerCase().replace(/[^a-z]/g, "");
+    if (!w) return "";
+    const codes = { b: 1, f: 1, p: 1, v: 1, c: 2, g: 2, j: 2, k: 2, q: 2, s: 2, x: 2, z: 2, d: 3, t: 3, l: 4, m: 5, n: 5, r: 6 };
+    let out = w[0], last = codes[w[0]] || 0;
+    for (let i = 1; i < w.length && out.length < 4; i++) {
+      const c = codes[w[i]] || 0;
+      if (c && c !== last) out += c;
+      if (w[i] !== "h" && w[i] !== "w") last = c;
+    }
+    return (out + "000").slice(0, 4);
+  }
+  function tokenSim(q, n) {
+    if (q === n) return 1;
+    if (n.indexOf(q) === 0 && q.length >= 2) return 0.95;
+    if (q.indexOf(n) === 0 && n.length >= 3) return 0.85;
+    const d = editDistance(q, n);
+    const ratio = 1 - d / Math.max(q.length, n.length);
+    let sim = ratio;
+    if (q.length >= 3 && n.length >= 3 && soundKey(q) === soundKey(n)) sim = Math.max(sim, 0.82);
+    return sim;
+  }
+  /* Fuzzy customer score 0–100: first or last name, either order, small misspellings,
+     sound-alike names (Mezo / Meso), partial words, and spoken phone digits. */
+  function scoreCustomer(query, c) {
+    const base = scoreName(query, c.name);
+    if (base >= 90) return base;
+    const digits = String(query || "").replace(/\D/g, "");
+    if (digits.length >= 4) {
+      const phones = [c.phone].concat(serviceAddresses(c).map(function (a) { return a.onsitePhone; })).map(function (x) { return String(x || "").replace(/\D/g, ""); });
+      if (phones.some(function (ph) { return ph && ph.indexOf(digits) !== -1; })) return 95;
+    }
+    const stop = { and: 1, the: 1, llc: 1, inc: 1, mr: 1, mrs: 1, ms: 1, for: 1, job: 1, new: 1 };
+    const qt = normalizeName(query).split(" ").filter(function (t) { return t.length > 1 && !stop[t] && !/^\d+$/.test(t); });
+    const nt = normalizeName(c.name).split(" ").filter(function (t) { return t.length > 1 && !stop[t]; });
+    if (!qt.length || !nt.length) return base;
+    let total = 0, strong = 0;
+    qt.forEach(function (t) {
+      let best = 0;
+      nt.forEach(function (x) { best = Math.max(best, tokenSim(t, x)); });
+      total += best;
+      if (best >= 0.75) strong++;
+    });
+    const avg = total / qt.length;
+    if (!strong) return base;
+    const fuzzy = Math.round(35 + avg * 55);
+    return Math.max(base, avg >= 0.6 ? fuzzy : 0);
+  }
   function rankedCustomers(query) {
-    return state.customers.map(function (c) { return { c: c, score: scoreName(query, c.name) }; })
+    return state.customers.map(function (c) { return { c: c, score: scoreCustomer(query, c) }; })
       .filter(function (x) { return x.score >= 50; })
       .sort(function (a, b) { return b.score - a.score; });
   }
@@ -1849,7 +1912,7 @@
       }
     }
     const ranked = rankedCustomers(customerPart);
-    const customer = (ranked.length && ranked[0].score >= 90 && (ranked.length === 1 || ranked[1].score < ranked[0].score)) ? ranked[0].c : null;
+    const customer = (ranked.length && ranked[0].score >= 85 && (ranked.length === 1 || ranked[1].score < ranked[0].score - 15)) ? ranked[0].c : null;
     const addrs = customer ? serviceAddresses(customer) : [];
     const resolved = resolveRequestedTime(when);
     const noMatches = !customer && !ranked.length;
@@ -1860,7 +1923,7 @@
         jobId: nextJobId(state.jobs),
         customerId: customer ? customer.id : "",
         customerName: customer ? customer.name : customerPart,
-        isNewCustomer: noMatches,
+        isNewCustomer: false,
         custQuery: customer ? "" : customerPart,
         newName: customer ? "" : customerPart,
         newPhone: "",
@@ -2304,6 +2367,9 @@
     }
     state.jobs = markLewis25069Superseded(state.jobs);
     state.moneyJobs = markLewis25069Superseded(state.moneyJobs);
+  })();
+  (function migrateDedupeTechs() {
+    try { if (typeof dedupeTechs === "function") dedupeTechs(); } catch (e) {}
   })();
   (function migrateServiceAccounts() {
     state.customers = state.customers.map(function (c) { return ensureCustomerAddresses(c, state.customers); });
@@ -2817,7 +2883,7 @@
       reader.readAsDataURL(f);
     },
     setTimeEdit: function (k, v) { state.timeEdit[k] = v; },
-    setVoiceText: function (v) { state.voice.text = v; },
+    setVoiceText: function (v) { state.voice.text = v; updateVoiceSuggest(v); },
     setSetting: function (k, v) {
       if (k === "defaultGp" || k === "minGp" || k === "refrigerantMinMarkup") {
         state.settings[k] = v === "" ? "" : Number(v);
@@ -2880,6 +2946,7 @@
     setVoiceJobField: function (k, v) {
       if (!state.voiceJobDraft) return;
       state.voiceJobDraft[k] = v;
+      if (k === "newName" || k === "newPhone") { state.voiceJobDraft.dupOk = false; state.voiceJobDraft.dupMatches = []; }
       if (k === "whenLabel") {
         const r = resolveRequestedTime(v);
         state.voiceJobDraft.whenIso = r.iso || "";
@@ -2943,21 +3010,39 @@
   function vendorById(id) { return (state.vendors || []).find(function (v) { return v.id === id; }) || null; }
   function jobParts(job) { return (job && Array.isArray(job.parts)) ? job.parts : []; }
   function nextPoNumber(job) { return job.id + "-P" + pad2((Number(job.poSeq) || 0) + 1); }
+  const PART_CATS = /^(parts|equipment|duct & materials|refrigerant|materials?)$/i;
+  const NOT_PART_RE = /(option|good|better|best|package|bundle|discount|upgrade|replacement|replace|repair|install|maintenance|tune|service|diagnostic|labor|trip|truck|permit|hers|warranty|plan|visit|inspection|cleaning|subtotal|total|deposit)/i;
+  /* Pull only real parts and equipment off the estimate: price book Parts,
+     Equipment, Duct & materials, and Refrigerant lines, plus the part inside a
+     flat-rate or custom-quote repair. Option names, headers, services, and
+     labor are skipped. Returns [{ name, qty }]. */
   function estimatePartLines(job) {
     const est = (job.estimates || []).filter(function (e) { return !e.superseded; }).slice(-1)[0];
     const lines = (est && est.lineItems) || job.lineItems || [];
-    return lines.filter(function (l) {
-      if (!l || !l.label || Number(l.amount) <= 0) return false;
-      if (isLaborLine(l)) return false;
-      if (/^(diagnostic|service call|trip|truck|permit|hers|discount)/i.test(l.label)) return false;
-      return true;
+    const out = [];
+    lines.forEach(function (l) {
+      if (!l || !l.label || !(Number(l.amount) > 0) || isLaborLine(l)) return;
+      const item = (l.id && getBookItem(l.id)) || null;
+      if (item && (l.flatRate || l.customQuote || isFlatRateItem(item) || isCustomQuoteItem(item))) {
+        const part = item.partId ? getBookItem(item.partId) : null;
+        const pname = part ? part.name : (item.partName || "");
+        if (pname && !item.noPart) out.push({ name: pname, qty: 1 });
+        return;
+      }
+      if (item) { if (PART_CATS.test(String(item.category || "").trim())) out.push({ name: item.name, qty: Number(l.qty) || 1 }); return; }
+      const label = String(l.label).replace(/\s*\((first repair|add-on)\)\s*$/i, "").replace(/\s*×\s*\d+$/, "");
+      if (NOT_PART_RE.test(label)) return;
+      const match = lineInBook(label);
+      if (match && !PART_CATS.test(String(match.category || "").trim())) return;
+      out.push({ name: match ? match.name : label, qty: 1 });
     });
+    return out;
   }
   function partsSection(job) {
     const parts = jobParts(job);
     const need = parts.filter(function (x) { return x.status === "needed"; }).length;
     const ord = parts.filter(function (x) { return x.status === "ordered"; }).length;
-    let html = '<div class="section-row"><div class="section" style="margin:0">Parts and equipment</div>' +
+    let html = '<div id="job-parts" class="section-row" style="scroll-margin-top:12px"><div class="section" style="margin:0">Parts and equipment</div>' +
       (parts.length ? '<div class="meta">' + (need ? need + " needed" : "") + (need && ord ? " · " : "") + (ord ? ord + " on order" : "") + (!need && !ord ? "All received" : "") + "</div>" : "") + "</div>";
     html += '<div class="stack" style="margin-bottom:10px">' + (parts.length ? parts.map(function (x) {
       const v = vendorById(x.branchId);
@@ -3094,6 +3179,11 @@
     const custMap = {};
     (d.customers || []).forEach(function (ic) {
       if (!ic || !ic.id) return;
+      const icPh = String(ic.phone || "").replace(/\D/g, "").slice(-10);
+      const twin = state.customers.find(function (c) {
+        return normalizeName(c.name) === normalizeName(ic.name) && String(c.phone || "").replace(/\D/g, "").slice(-10) === icPh;
+      });
+      if (twin) { if (twin.id !== ic.id) custMap[ic.id] = twin.id; return; }
       const mine = getCustomer(ic.id);
       if (!mine) { state.customers.push(normalizeCustomer(ic)); counts.customers++; return; }
       if (normalizeName(mine.name) === normalizeName(ic.name)) return;
@@ -3134,8 +3224,11 @@
       return !(state.techRecords || []).some(function (x) { return x.name === techNameOf(r); });
     })));
     state.techs = techNamesFrom(state.techRecords);
-    counts.techs = state.techRecords.length - before;
-    let u = unionById(state.vendors, d.vendors); state.vendors = u.list; counts.vendors = u.added;
+    dedupeTechs();
+    counts.techs = Math.max(0, state.techRecords.length - before);
+    const vKey = function (v) { return normalizeName(v.name) + "|" + String(v.email || "").trim().toLowerCase() + "|" + String(v.phone || "").replace(/\D/g, ""); };
+    const incomingVendors = (d.vendors || []).filter(function (v) { return v && !(state.vendors || []).some(function (x) { return vKey(x) === vKey(v); }); });
+    let u = unionById(state.vendors, incomingVendors); state.vendors = u.list; counts.vendors = u.added;
     u = unionById(state.plans, d.plans); state.plans = u.list; counts.plans = u.added;
     u = unionById(state.visits, d.visits); state.visits = u.list; counts.visits = u.added;
     u = unionById(state.unfiledCaptures, d.unfiledCaptures); state.unfiledCaptures = u.list; counts.items += u.added;
@@ -3169,6 +3262,140 @@
       el.value = "";
     }
   });
+  function techKey(n) { return String(n || "").trim().replace(/\s+/g, " ").toLowerCase(); }
+  function techFieldCount(r) { return Object.keys(r || {}).filter(function (k) { const v = r[k]; return v !== "" && v != null && v !== false; }).length; }
+  function remapTechName(from, to) {
+    if (!from || from === to) return;
+    function walk(o) {
+      if (Array.isArray(o)) { for (let i = 0; i < o.length; i++) { if (o[i] === from) o[i] = to; else if (o[i] && typeof o[i] === "object") walk(o[i]); } return; }
+      Object.keys(o).forEach(function (k) {
+        if (o[k] === from && /tech|by|requester|reviewer|editor|who|assigned/i.test(k)) o[k] = to;
+        else if (o[k] && typeof o[k] === "object") walk(o[k]);
+      });
+    }
+    (state.jobs || []).forEach(function (j) { if (j.timeEntries) walk(j.timeEntries); if (j.assignedTechs) walk(j.assignedTechs); if (j.assignedTech === from) j.assignedTech = to; });
+    if (state.currentTech === from) state.currentTech = to;
+  }
+  /* Merge tech records that are the same person: same name ignoring case and
+     spaces, or the same phone or email. Keeps the record with the most data. */
+  function dedupeTechs() {
+    const recs = (state.techRecords || []).map(function (r) { return Object.assign({}, r, { name: String(r.name || "").trim().replace(/\s+/g, " ") }); });
+    const groups = [];
+    recs.forEach(function (r) {
+      const ph = String(r.phone || "").replace(/\D/g, "").slice(-10), em = String(r.email || "").trim().toLowerCase();
+      const g = groups.find(function (g) {
+        return g.some(function (x) {
+          if (techKey(x.name) === techKey(r.name)) return true;
+          const xph = String(x.phone || "").replace(/\D/g, "").slice(-10), xem = String(x.email || "").trim().toLowerCase();
+          return (ph && ph === xph) || (em && em === xem);
+        });
+      });
+      if (g) g.push(r); else groups.push([r]);
+    });
+    let merged = 0;
+    const out = groups.map(function (g) {
+      let keep = g.find(function (x) { return x.name === DEFAULT_TECH; }) || g.slice().sort(function (a, b) { return techFieldCount(b) - techFieldCount(a); })[0];
+      const combined = Object.assign({}, keep);
+      if (keep.name !== DEFAULT_TECH) {
+        const caseScore = function (n) { return /[A-Z]/.test(n) && n !== n.toUpperCase() ? 2 : (n === n.toUpperCase() && /[A-Z]/.test(n) ? 1 : 0); };
+        combined.name = g.map(function (x) { return x.name; }).sort(function (a, b) { return caseScore(b) - caseScore(a); })[0];
+      }
+      g.forEach(function (x) {
+        Object.keys(x).forEach(function (k) { if ((combined[k] === "" || combined[k] == null) && x[k] !== "" && x[k] != null) combined[k] = x[k]; });
+        if (x.canEditOwnTimes) combined.canEditOwnTimes = true;
+        if (x.role === "admin") combined.role = "admin";
+      });
+      g.forEach(function (x) { if (x !== keep) { merged++; } });
+      return { keep: combined, names: g.map(function (x) { return x.name; }) };
+    });
+    // remap references using original (pre-trim) names too
+    (state.techRecords || []).forEach(function (orig) {
+      const hit = out.find(function (o) { return o.names.indexOf(String(orig.name || "").trim().replace(/\s+/g, " ")) !== -1; });
+      if (hit && orig.name !== hit.keep.name) remapTechName(orig.name, hit.keep.name);
+    });
+    out.forEach(function (o) { o.names.forEach(function (n) { if (n !== o.keep.name) remapTechName(n, o.keep.name); }); });
+    (state.techs || []).forEach(function (n) {
+      const o = out.find(function (o) { return o.names.some(function (x) { return techKey(x) === techKey(n); }); });
+      if (o && n !== o.keep.name) remapTechName(n, o.keep.name);
+    });
+    state.techRecords = normalizeTechRecords(out.map(function (o) { return o.keep.name; }), out.map(function (o) { return o.keep; }));
+    state.techs = techNamesFrom(state.techRecords);
+    if (state.techs.indexOf(state.currentTech) === -1) state.currentTech = DEFAULT_TECH;
+    return merged;
+  }
+  function possibleTechDupes() {
+    const recs = state.techRecords || [];
+    const pairs = [];
+    for (let i = 0; i < recs.length; i++) for (let j = i + 1; j < recs.length; j++) {
+      const a = techKey(recs[i].name), b = techKey(recs[j].name);
+      const at = a.split(" "), bt = b.split(" ");
+      const firstSame = at[0] && at[0] === bt[0];
+      const close = editDistance(a, b) <= 2 || a.indexOf(b) === 0 || b.indexOf(a) === 0 || (firstSame && (at.length === 1 || bt.length === 1));
+      if (close) pairs.push([recs[i].name, recs[j].name]);
+    }
+    return pairs;
+  }
+  function possibleCustomerDupes() {
+    const list = state.customers || [];
+    const pairs = [];
+    const byPhone = {}, byName = {};
+    list.forEach(function (c) {
+      const ph = String(c.phone || "").replace(/\D/g, "").slice(-10);
+      const nm = normalizeName(c.name);
+      if (nm && byName[nm]) pairs.push([byName[nm], c.id, "same name"]);
+      else if (nm) byName[nm] = c.id;
+      if (ph.length === 10 && byPhone[ph] && byPhone[ph] !== byName[nm] && normalizeName((getCustomer(byPhone[ph]) || {}).name) !== nm) {
+        const other = getCustomer(byPhone[ph]);
+        if (other && scoreCustomer(c.name, other) >= 60) pairs.push([byPhone[ph], c.id, "same phone"]);
+      } else if (ph.length === 10 && !byPhone[ph]) byPhone[ph] = c.id;
+    });
+    return pairs.filter(function (p) { return p[0] !== p[1]; }).slice(0, 20);
+  }
+  function mergeCustomerInto(keepId, dropId) {
+    const keep = getCustomer(keepId), drop = getCustomer(dropId);
+    if (!keep || !drop || keep === drop) return false;
+    const addrMap = {};
+    (drop.addresses || []).forEach(function (a) {
+      const dup = (keep.addresses || []).find(function (k) { return normalizeName(k.address) === normalizeName(a.address) && normalizeName(k.city) === normalizeName(a.city); });
+      if (dup) { addrMap[a.id] = dup.id; return; }
+      const nid = nextAddressId(keep.id, state.customers);
+      addrMap[a.id] = nid;
+      keep.addresses = (keep.addresses || []).concat([Object.assign({}, a, { id: nid })]);
+    });
+    ["phone", "email", "address", "city", "billingAddress", "billingCity"].forEach(function (k) { if (!keep[k] && drop[k]) keep[k] = drop[k]; });
+    keep.assets = (keep.assets || []).concat((drop.assets || []).filter(function (x) { return !(keep.assets || []).some(function (y) { return y.id === x.id; }); }));
+    (state.jobs || []).concat(state.moneyJobs || []).forEach(function (j) {
+      if (j.customerId === dropId) { j.customerId = keepId; j.customer = keep.name; }
+      if (j.billToCustomerId === dropId) j.billToCustomerId = keepId;
+      if (j.addressId && addrMap[j.addressId]) j.addressId = addrMap[j.addressId];
+    });
+    (state.plans || []).forEach(function (x) { if (x.customerId === dropId) x.customerId = keepId; if (x.addressId && addrMap[x.addressId]) x.addressId = addrMap[x.addressId]; });
+    (state.visits || []).forEach(function (x) { if (x.customerId === dropId) x.customerId = keepId; if (x.addressId && addrMap[x.addressId]) x.addressId = addrMap[x.addressId]; });
+    state.customers = state.customers.filter(function (c) { return c.id !== dropId; });
+    return true;
+  }
+  function duplicatesSection() {
+    const tp = possibleTechDupes(), cp = possibleCustomerDupes();
+    let h = '<div class="section">Possible duplicates</div>';
+    if (!tp.length && !cp.length) return h + '<div class="muted" style="margin:-4px 0 16px">No likely duplicate techs or customers found.</div>';
+    h += '<div class="muted" style="margin:-4px 0 10px">Only merge if they are the same person. Merging moves clock-ins, jobs, and addresses to the one you keep. Nothing merges on its own.</div>';
+    tp.forEach(function (p) {
+      h += '<div class="panel" style="margin-bottom:8px"><div class="h2" style="margin:0 0 8px">Tech: ' + esc(p[0]) + " / " + esc(p[1]) + "</div>" +
+        '<div class="quick" style="grid-template-columns:1fr 1fr">' +
+        '<button class="dash" ' + act("mergeTech", p[1] + "||" + p[0]) + ">Keep " + esc(p[0]) + "</button>" +
+        '<button class="dash" ' + act("mergeTech", p[0] + "||" + p[1]) + ">Keep " + esc(p[1]) + "</button></div></div>";
+    });
+    cp.forEach(function (p) {
+      const a = getCustomer(p[0]), b = getCustomer(p[1]); if (!a || !b) return;
+      const na = jobsForCustomer(a).length, nb = jobsForCustomer(b).length;
+      h += '<div class="panel" style="margin-bottom:8px"><div class="h2" style="margin:0 0 4px">Customer (' + esc(p[2]) + ")</div>" +
+        '<div class="muted" style="margin-bottom:8px">' + esc(a.name) + " · " + esc(a.phone || "no phone") + " · " + na + " jobs<br>" + esc(b.name) + " · " + esc(b.phone || "no phone") + " · " + nb + " jobs</div>" +
+        '<div class="quick" style="grid-template-columns:1fr 1fr">' +
+        '<button class="dash" ' + act("mergeCustomer", a.id + "||" + b.id) + ">Keep " + esc(a.name) + " (" + esc(a.id) + ")</button>" +
+        '<button class="dash" ' + act("mergeCustomer", b.id + "||" + a.id) + ">Keep " + esc(b.name) + " (" + esc(b.id) + ")</button></div></div>";
+    });
+    return h + '<div style="margin-bottom:16px"></div>';
+  }
   function handlePhase1(name, arg) {
     const job = getJob(state.openJobId);
     if (name === "addPart") { state.partDraft = { isNew: true, name: "", partNo: "", qty: 1, branchId: "", status: "needed" }; state.sheet = "part"; render(); return true; }
@@ -3200,13 +3427,13 @@
       const list = jobParts(job).slice();
       let added = 0;
       lines.forEach(function (l, i) {
-        const label = String(l.label).replace(/\s*\((first repair|add-on)\)\s*$/i, "");
+        const label = l.name;
         if (list.some(function (p) { return normalizeName(p.name) === normalizeName(label); })) return;
-        list.push({ id: "pt" + Date.now() + "-" + i, name: label, partNo: "", qty: 1, branchId: "", status: "needed", po: "", fromEstimate: true });
+        list.push({ id: "pt" + Date.now() + "-" + i, name: label, partNo: "", qty: l.qty || 1, branchId: "", status: "needed", po: "", fromEstimate: true });
         added++;
       });
       job.parts = list;
-      showToast(added ? "Added " + added + " from the estimate. Remove any that aren’t parts." : "Nothing new to pull from the estimate");
+      showToast(added ? "Added " + added + " part" + (added > 1 ? "s" : "") + " from the estimate" : "No part or equipment lines on this estimate. Add parts with + Add part.");
       return true;
     }
     if (name === "openPo") {
@@ -3246,6 +3473,38 @@
       state.vendorDraft = null; state.sheet = null; showToast("Branch removed"); return true;
     }
     if (name === "exportData") { downloadBackup(); return true; }
+    if (name === "mergeTech") {
+      const p = String(arg).split("||"); const drop = p[0], keep = p[1];
+      if (!window.confirm("Merge " + drop + " into " + keep + "? Clock-ins move to " + keep + ".")) return true;
+      const keepRec = (state.techRecords || []).find(function (r) { return r.name === keep; });
+      const dropRec = (state.techRecords || []).find(function (r) { return r.name === drop; });
+      if (!keepRec || !dropRec || keep === DEFAULT_TECH && drop === DEFAULT_TECH) return true;
+      if (drop === DEFAULT_TECH) { showToast("Steve stays as the admin. Keep Steve instead."); return true; }
+      remapTechName(drop, keep);
+      state.techRecords = state.techRecords.filter(function (r) { return r !== dropRec; });
+      state.techs = techNamesFrom(state.techRecords);
+      showToast("Merged " + drop + " into " + keep); return true;
+    }
+    if (name === "mergeCustomer") {
+      const p = String(arg).split("||"); const keepId = p[0], dropId = p[1];
+      const k = getCustomer(keepId), d = getCustomer(dropId); if (!k || !d) return true;
+      if (!window.confirm("Merge " + d.name + " into " + k.name + "? Jobs, plans, and addresses move to " + k.name + ".")) return true;
+      mergeCustomerInto(keepId, dropId);
+      showToast("Merged into " + k.name); return true;
+    }
+    if (name === "dashList") { state.screen = "dashList"; state.dashListKey = arg; state.openJobId = null; state.openCustomerId = null; state.openAddressId = null; render(); return true; }
+    if (name === "closeDashList") { state.screen = null; state.tab = "home"; render(); return true; }
+    if (name === "dashOpenJob") {
+      const parts = String(arg || "").split("|");
+      const j = getJob(parts[0]);
+      if (!j) { showToast("That job isn’t on this device"); return true; }
+      state.screen = null; state.openCustomerId = null; state.openAddressId = null; state.openJobId = j.id;
+      const sec = parts[1] || "";
+      if (sec === "invoice" && (j.invoiceId || j.status === "invoiced" || j.status === "paid")) { state.sheet = "invoice"; }
+      else if (sec === "parts") state._scrollTo = "job-parts";
+      else if (sec === "estimate") state._scrollTo = "job-estimates";
+      render(); return true;
+    }
     if (name === "dashToggleProspects") { state._dashAllProspects = !state._dashAllProspects; render(); return true; }
     return false;
   }
@@ -3277,7 +3536,7 @@
       (sub ? '<div class="job-prob"' + (color ? ' style="color:' + color + '"' : "") + ">" + sub + "</div>" : "") + "</div></button>";
   }
   function dashEmpty(msg) { return '<div class="muted" style="margin:0 2px 12px">' + esc(msg) + "</div>"; }
-  function dashboardScreen() {
+  function dashData() {
     const today = startOfTodayLocal();
     const weekEnd = new Date(today.getTime() + 7 * DAY_MS);
     const active = (state.jobs || []).filter(isActiveJob);
@@ -3335,7 +3594,6 @@
     const noPlan = (state.customers || []).filter(function (c) { return !hasActivePlan(c.id); }).map(function (c) {
       return { c: c, last: lastVisitDate(c) };
     }).filter(function (x) { return !!x.last; }).sort(function (a, b) { return b.last - a.last; });
-    const showAll = !!state._dashAllProspects;
     // This month
     const now = tzParts(new Date());
     const monthStart = new Date(Number(now.year), Number(now.month) - 1, 1);
@@ -3353,65 +3611,120 @@
     const bidH = hourJobs.reduce(function (s, j) { return s + billedLaborHours(j); }, 0);
     const actH = hourJobs.reduce(function (s, j) { return s + loggedHours(j); }, 0);
 
+    return { today: today, upcoming: upcoming, todays: todays, weekVisits: weekVisits, partAlerts: partAlerts, onOrder: onOrder, estimates: estimates, unpaid: unpaid, unpaidTotal: unpaidTotal, estTotal: estTotal, renewals: renewals, dueVisits: dueVisits, noPlan: noPlan, paidUnique: paidUnique, sales: sales, estJobs: estJobs, won: won, hourJobs: hourJobs, bidH: bidH, actH: actH };
+  }
+  function dashboardScreen() {
+    const D = dashData();
+    const today = D.today, upcoming = D.upcoming, todays = D.todays, weekVisits = D.weekVisits, partAlerts = D.partAlerts, onOrder = D.onOrder, estimates = D.estimates, unpaid = D.unpaid, unpaidTotal = D.unpaidTotal, estTotal = D.estTotal, renewals = D.renewals, dueVisits = D.dueVisits, noPlan = D.noPlan, paidUnique = D.paidUnique, sales = D.sales, estJobs = D.estJobs, won = D.won, hourJobs = D.hourJobs, bidH = D.bidH, actH = D.actH;
+    const showAll = !!state._dashAllProspects;
+    const L = dashListItems(D);
+    function tile(key, label, val, meta, extra) {
+      return '<button class="money-tile dash-tile" style="' + (extra || "") + '" ' + act("dashList", key) + '><div class="k-up">' + esc(label) + '</div><div class="money-val" style="font-size:22px">' + val + "</div>" + (meta ? '<div class="meta">' + meta + "</div>" : "") + "</button>";
+    }
+    function head(label, key, count) {
+      return '<div class="section-row"><div class="section" style="margin:0">' + esc(label) + "</div>" +
+        (count === 0 ? "" : '<button class="link-btn tap" style="margin:0" ' + act("dashList", key) + ">" + (count != null ? "See all " + count + " ›" : "Open ›") + "</button>") + "</div>";
+    }
+    function preview(key, n, emptyMsg) {
+      const items = L[key].items;
+      if (!items.length) return dashEmpty(emptyMsg || L[key].empty);
+      return '<div class="stack" style="margin-bottom:12px">' + items.slice(0, n).join("") + "</div>" +
+        (items.length > n ? '<button class="link-btn tap" style="margin:-4px 2px 12px" ' + act("dashList", key) + ">Show all " + items.length + " ›</button>" : "");
+    }
     let h = "";
-    h += '<div class="section">Upcoming work</div>';
+    h += head("Upcoming work", "week", L.week.items.length);
     h += '<div style="display:flex;gap:10px;margin-bottom:10px">' +
-      '<div class="money-tile" style="flex:1"><div class="k-up">Today</div><div class="money-val" style="font-size:22px">' + todays.length + "</div></div>" +
-      '<div class="money-tile" style="flex:1"><div class="k-up">Active / this week</div><div class="money-val" style="font-size:22px">' + (upcoming.length + weekVisits.length) + "</div></div></div>";
-    h += upcoming.length || weekVisits.length ? '<div class="stack" style="margin-bottom:12px">' +
-      upcoming.map(function (j) {
-        const d = jobScheduleDate(j);
-        const when = isInProgressWork(j) ? "In progress" : (d ? formatPrettyDateTime(d.toISOString()) : "");
-        const miss = jobParts(j).some(function (p) { return p.status !== "received"; });
-        return dashItem("#" + j.id + " · " + j.customer, esc(j.problem || "") + (miss ? " · parts not all in" : ""), esc(when), "openJob", j.id, miss && daysFromToday(d) != null && daysFromToday(d) <= 3 ? "red" : "");
-      }).join("") +
-      weekVisits.map(function (v) {
-        const c = getCustomer(v.customerId);
-        return dashItem((c ? c.name : "Customer") + " · Plan visit", esc(v.label || ""), esc(formatPrettyDateTime(v.scheduledStart)), "openVisit", v.id, "");
-      }).join("") + "</div>" : dashEmpty("Nothing scheduled in the next 7 days.");
-    h += '<div class="section">Parts to order or chase</div>';
-    h += partAlerts.length ? '<div class="stack" style="margin-bottom:12px">' + partAlerts.map(function (x) {
-      return dashItem("#" + x.j.id + " · " + x.j.customer, esc(x.text), x.n == null ? "No date" : x.n <= 0 ? "Today" : "In " + x.n + " day" + (x.n > 1 ? "s" : ""), "openJob", x.j.id, x.red ? "red" : "amber");
-    }).join("") + "</div>" : dashEmpty("No parts waiting. Add parts on a job to track them here.");
-    h += '<div class="section">Parts and equipment on order</div>';
-    h += onOrder.length ? '<div class="stack" style="margin-bottom:12px">' + onOrder.map(function (x) {
-      const v = vendorById(x.p.branchId);
-      return dashItem(x.p.name + (Number(x.p.qty) > 1 ? " × " + x.p.qty : ""), esc("#" + x.j.id + " · " + x.j.customer + (x.p.po ? " · PO " + x.p.po : "") + (v ? " · " + v.name : "")), "Ordered", "openJob", x.j.id, "");
-    }).join("") + "</div>" : dashEmpty("Nothing on order.");
-
+      tile("today", "Today", String(todays.length), "Tap for today’s jobs", "flex:1") +
+      tile("week", "Active / this week", String(upcoming.length + weekVisits.length), "Tap for the list", "flex:1") + "</div>";
+    h += preview("week", 5);
+    h += head("Parts to order or chase", "partsAlerts", L.partsAlerts.items.length);
+    h += preview("partsAlerts", 5);
+    h += head("Parts and equipment on order", "onOrder", L.onOrder.items.length);
+    h += preview("onOrder", 4);
     h += '<div class="section">Money</div>';
     h += '<div style="display:flex;gap:10px;margin-bottom:10px">' +
-      '<button class="money-tile" style="flex:1;text-align:left;border:none;cursor:pointer" ' + act("tab", "money") + '><div class="k-up">Unpaid</div><div class="money-val" style="font-size:22px">' + money(unpaidTotal) + '</div><div class="meta">' + unpaid.length + " invoice" + (unpaid.length === 1 ? "" : "s") + "</div></button>" +
-      '<div class="money-tile" style="flex:1"><div class="k-up">Open estimates</div><div class="money-val" style="font-size:22px">' + money(estTotal) + '</div><div class="meta">' + estimates.length + " to follow up</div></div></div>";
-    if (estimates.length) h += '<div class="stack" style="margin-bottom:12px">' + estimates.map(function (x) {
-      return dashItem("#" + x.j.id + " · " + x.j.customer, esc((x.j.estimateId || "Estimate") + " · " + (x.j.problem || "")), money(Number(x.j.total) || 0) + (x.age != null ? " · " + x.age + "d" : ""), "openJob", x.j.id, x.age != null && x.age >= 7 ? "amber" : "");
-    }).join("") + "</div>";
-    if (unpaid.length) h += '<div class="stack" style="margin-bottom:12px">' + unpaid.slice(0, 6).map(function (j) {
-      return dashItem("#" + j.id + " · " + j.customer, "Balance due", money(invoiceDue(j)), "openJob", j.id, "amber");
-    }).join("") + "</div>";
-
-    h += '<div class="section-row"><div class="section" style="margin:0">Plans</div><button class="link-btn" style="margin:0" ' + act("openPlans") + ">All plan visits</button></div>";
-    h += renewals.length ? '<div class="stack" style="margin-bottom:10px">' + renewals.map(function (p) {
-      const c = getCustomer(p.customerId); const d = ymdToLocalDate(p.renewalDate); const n = daysFromToday(d);
-      return dashItem((c ? c.name : "Customer") + " · renewal", esc(p.name || "Plan") + " · " + esc(formatYmd(p.renewalDate)), n < 0 ? "Past due" : "In " + n + "d", "openCustomer", p.customerId, n < 0 ? "red" : "amber");
-    }).join("") + "</div>" : dashEmpty("No plan renewals due in the next 30 days.");
-    if (dueVisits.length) h += '<div class="muted" style="margin:-6px 2px 10px">' + dueVisits.length + " plan visit" + (dueVisits.length > 1 ? "s" : "") + " due or overdue to schedule.</div>";
-    h += '<div class="section-row"><div class="section" style="margin:0">Past customers without a plan</div><div class="meta">' + noPlan.length + "</div></div>";
-    h += noPlan.length ? '<div class="stack" style="margin-bottom:8px">' + (showAll ? noPlan : noPlan.slice(0, 6)).map(function (x) {
-      return dashItem(x.c.name, esc((x.c.city || "") + (x.c.phone ? " · " + x.c.phone : "")), "Last visit " + esc(formatDate(x.last.toISOString())), "openCustomer", x.c.id, "");
-    }).join("") + "</div>" + (noPlan.length > 6 ? '<button class="link-btn" style="margin:0 2px 14px" ' + act("dashToggleProspects") + ">" + (showAll ? "Show fewer" : "Show all " + noPlan.length) + "</button>" : "") : dashEmpty("Every past customer has a plan.");
-
+      tile("unpaid", "Unpaid", money(unpaidTotal), unpaid.length + " invoice" + (unpaid.length === 1 ? "" : "s"), "flex:1") +
+      tile("estimates", "Open estimates", money(estTotal), estimates.length + " to follow up", "flex:1") + "</div>";
+    h += head("Estimates to follow up", "estimates", L.estimates.items.length);
+    h += preview("estimates", 4);
+    h += head("Unpaid invoices", "unpaid", L.unpaid.items.length);
+    h += preview("unpaid", 4);
+    h += head("Plan renewals (next 30 days)", "renewals", L.renewals.items.length);
+    h += preview("renewals", 4);
+    h += dueVisits.length ? '<button class="list-card" style="margin-bottom:12px" ' + act("openPlans") + '><div class="job-body"><div class="row"><div class="job-name" style="font-size:15px">Plan visits to schedule</div><div class="meta" style="color:#9A6700;font-weight:700">' + dueVisits.length + '</div></div><div class="job-prob">Due or overdue · tap to see and schedule them</div></div></button>' : "";
+    h += head("Past customers without a plan", "noPlan", noPlan.length);
+    h += preview("noPlan", 5);
     h += '<div class="section">This month</div>';
     h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">' +
-      '<div class="money-tile"><div class="k-up">Sales (paid)</div><div class="money-val" style="font-size:20px">' + money(sales) + "</div></div>" +
-      '<div class="money-tile"><div class="k-up">Closed jobs</div><div class="money-val" style="font-size:20px">' + paidUnique.length + "</div></div>" +
-      '<div class="money-tile"><div class="k-up">Estimate win rate</div><div class="money-val" style="font-size:20px">' + (estJobs.length ? Math.round(won.length / estJobs.length * 100) + "%" : "—") + '</div><div class="meta">' + (estJobs.length ? won.length + " of " + estJobs.length + " (all time)" : "No estimates yet") + "</div></div>" +
-      '<div class="money-tile"><div class="k-up">Bid vs actual hrs</div><div class="money-val" style="font-size:20px">' + (hourJobs.length ? formatHours(bidH) + " / " + formatHours(actH) : "—") + '</div><div class="meta">' + (hourJobs.length ? hourJobs.length + " job" + (hourJobs.length > 1 ? "s" : "") + " with clocked time" : "Starts once techs clock in on hourly jobs") + "</div></div></div>";
+      tile("paid", "Sales (paid)", money(sales), "Tap for paid jobs") +
+      tile("paid", "Closed jobs", String(paidUnique.length), "Tap for the list") +
+      tile("estJobs", "Estimate win rate", estJobs.length ? Math.round(won.length / estJobs.length * 100) + "%" : "—", estJobs.length ? won.length + " of " + estJobs.length + " (all time)" : "No estimates yet") +
+      tile("hours", "Bid vs actual hrs", hourJobs.length ? formatHours(bidH) + " / " + formatHours(actH) : "—", hourJobs.length ? hourJobs.length + " job" + (hourJobs.length > 1 ? "s" : "") + " with clocked time" : "Starts once techs clock in") + "</div>";
     return topBar({ kicker: "ReliaTech Services", title: "Home", badge: SHOW_SAMPLE_BADGE, settings: true }) +
       '<div class="content"><div class="pad pad-fab">' + h + "</div></div>" +
       '<button class="fab" ' + act("openNewCall") + ' aria-label="New call">' + icon("plus", 28) + "</button>" +
       tabBar();
   }
+  function jobItem(j, sub, right, section, tone) {
+    return dashItem("#" + j.id + " · " + j.customer, sub, right, "dashOpenJob", j.id + "|" + (section || ""), tone);
+  }
+  function dashListItems(D) {
+    const L = {};
+    function whenOf(j) { const d = jobScheduleDate(j); return isInProgressWork(j) ? "In progress" : (d ? esc(formatPrettyDateTime(d.toISOString())) : "No date"); }
+    function upcomingItem(j) {
+      const d = jobScheduleDate(j);
+      const miss = jobParts(j).some(function (p) { return p.status !== "received"; });
+      const n = daysFromToday(d);
+      return jobItem(j, esc(j.problem || "") + (miss ? " · parts not all in" : ""), whenOf(j), miss ? "parts" : "", miss && n != null && n <= 3 ? "red" : "");
+    }
+    function visitItem(v) {
+      const c = getCustomer(v.customerId);
+      return dashItem((c ? c.name : "Customer") + " · Plan visit", esc(v.label || ""), esc(formatPrettyDateTime(v.scheduledStart)), "openVisit", v.id, "");
+    }
+    L.today = { title: "Today’s jobs", empty: "Nothing scheduled today.", items: D.todays.map(upcomingItem) };
+    L.week = { title: "Active and this week", empty: "Nothing scheduled in the next 7 days.", items: D.upcoming.map(upcomingItem).concat(D.weekVisits.map(visitItem)) };
+    L.partsAlerts = { title: "Parts to order or chase", empty: "No parts waiting. Add parts on a job to track them here.", items: D.partAlerts.map(function (x) {
+      return jobItem(x.j, esc(x.text), x.n == null ? "No date" : x.n <= 0 ? "Today" : "In " + x.n + " day" + (x.n > 1 ? "s" : ""), "parts", x.red ? "red" : "amber");
+    }) };
+    L.onOrder = { title: "Parts and equipment on order", empty: "Nothing on order.", items: D.onOrder.map(function (x) {
+      const v = vendorById(x.p.branchId);
+      return dashItem(x.p.name + (Number(x.p.qty) > 1 ? " × " + x.p.qty : ""), esc("#" + x.j.id + " · " + x.j.customer + (x.p.po ? " · PO " + x.p.po : "") + (v ? " · " + v.name : "")), "Ordered", "dashOpenJob", x.j.id + "|parts", "");
+    }) };
+    L.estimates = { title: "Open estimates", empty: "No open estimates.", items: D.estimates.map(function (x) {
+      return jobItem(x.j, esc((x.j.estimateId || "Estimate") + " · " + (x.j.problem || "")), money(Number(x.j.total) || 0) + (x.age != null ? " · " + x.age + "d" : ""), "estimate", x.age != null && x.age >= 7 ? "amber" : "");
+    }) };
+    L.unpaid = { title: "Unpaid invoices", empty: "No unpaid invoices.", items: D.unpaid.map(function (j) {
+      return jobItem(j, "Balance due · tap to open the invoice", money(invoiceDue(j)), "invoice", "amber");
+    }) };
+    L.renewals = { title: "Plan renewals (next 30 days)", empty: "No plan renewals due in the next 30 days.", items: D.renewals.map(function (p) {
+      const c = getCustomer(p.customerId); const n = daysFromToday(ymdToLocalDate(p.renewalDate));
+      return dashItem((c ? c.name : "Customer") + " · renewal", esc(p.name || "Plan") + " · " + esc(formatYmd(p.renewalDate)), n < 0 ? "Past due" : "In " + n + "d", "openCustomer", p.customerId, n < 0 ? "red" : "amber");
+    }) };
+    L.noPlan = { title: "Past customers without a plan", empty: "Every past customer has a plan.", items: D.noPlan.map(function (x) {
+      return dashItem(x.c.name, esc((x.c.city || "") + (x.c.phone ? " · " + x.c.phone : "")), "Last visit " + esc(formatDate(x.last.toISOString())), "openCustomer", x.c.id, "");
+    }) };
+    L.paid = { title: "Paid this month", empty: "No paid jobs yet this month.", items: D.paidUnique.map(function (j) {
+      const d = jobPaidDate(j);
+      return jobItem(j, esc(j.problem || "") + (d ? " · paid " + esc(formatDate(d.toISOString())) : ""), money(Number(j.total) || 0), "invoice", "");
+    }) };
+    L.estJobs = { title: "Estimates (all time)", empty: "No estimates yet.", items: D.estJobs.map(function (j) {
+      const st = STATUS[j.status] || STATUS.new;
+      return jobItem(j, esc((j.estimateId || "") + " · " + (j.problem || "")), esc(st.label), "estimate", D.won.indexOf(j) !== -1 ? "" : "amber");
+    }) };
+    L.hours = { title: "Bid vs actual hours", empty: "No jobs with both bid hours and clocked time yet. This fills in once techs clock in on hourly jobs.", items: D.hourJobs.map(function (j) {
+      return jobItem(j, "Bid " + formatHours(billedLaborHours(j)) + " · actual " + formatHours(loggedHours(j)), loggedHours(j) > billedLaborHours(j) ? "Over" : "Under", "", loggedHours(j) > billedLaborHours(j) ? "red" : "");
+    }) };
+    return L;
+  }
+  function dashListScreen() {
+    const L = dashListItems(dashData());
+    const x = L[state.dashListKey] || L.week;
+    return topBar({ back: "closeDashList", title: x.title, badge: SHOW_SAMPLE_BADGE }) +
+      '<div class="content screen"><div class="pad">' +
+      (x.items.length ? '<div class="stack">' + x.items.join("") + "</div>" : dashEmpty(x.empty)) +
+      "</div></div>";
+  }
+
 
   /* Phase 1 keyboard fix: while typing, patch the page in place instead of
      rebuilding it, so the focused field is never replaced. iPhone Safari resets
@@ -3758,6 +4071,7 @@
       '<button class="dash" style="margin-top:-4px;margin-bottom:16px" ' + act("addTech") + ">Add tech</button>" +
       vendorsSection() +
       backupSection() +
+      duplicatesSection() +
       '<div class="section">Availability</div>' +
       '<div class="muted" style="margin:-4px 0 12px">Used when you pick a time and when a customer booking link shows open slots. The public booking page also reads published slots.json, so after you change these hours run the update_slots script and publish that file.</div>' +
       '<label class="field"><div class="field-lab">Weekday evening start (PT)</div><input id="st-weekdayStart" type="time" value="' + esc(s.weekdayStart) + '" oninput="RT.setSetting(\'weekdayStart\', this.value)"></label>' +
@@ -3809,6 +4123,7 @@
       "</div>" +
       readingsSection(job) +
       '<div class="section">Timeline</div><div class="timeline">' + (job.timeline || []).map(timelineItemHtml).join("") + "</div>" +
+      '<div id="job-estimates" style="scroll-margin-top:12px"></div>' +
       estimateHistoryHtml(job) +
       '<div class="actions">' +
       '<button class="btn" ' + act("openPriceBook") + ">Build estimate</button>" +
@@ -4571,7 +4886,8 @@
       "</div>" +
       '<div id="voice-text" class="voice-text">' + esc(v.text || "") + "</div>" +
       (v.fallback || !v.listening ? '<label class="field"><div class="field-lab">' + (v.fallback ? "Type the command" : "Or type it") + "</div>" +
-        '<input id="voice-input" type="text" placeholder="clock me in for Lopez, or new job for Lisa Mezo, AC not cooling, Saturday morning" value="' + esc(v.text || "") + '" oninput="RT.setVoiceText(this.value)"></label>' +
+        '<input id="voice-input" type="text" autocomplete="off" placeholder="clock me in for Lopez, or new job for Lisa Mezo, AC not cooling, Saturday morning" value="' + esc(v.text || "") + '" oninput="RT.setVoiceText(this.value)"></label>' +
+        '<div id="voice-suggest" class="stack" style="margin-bottom:10px">' + voiceSuggestHtml(v.text || "") + "</div>" +
         '<button class="btn" ' + act("submitVoice") + ">Continue</button>" +
         (speechAvailable() && !v.listening ? '<button class="btn ghost" style="margin-top:8px" ' + act("openVoice") + ">Try again</button>" : "") : "")
     );
@@ -4891,9 +5207,30 @@
       '<button class="btn ghost" style="margin-top:8px" ' + act("closeSheet") + ">Cancel</button>"
     );
   }
+  const VOICE_PREFIX_RE = /^(?:(?:please\s+)?(?:new job|create (?:a )?(?:new )?job|start (?:a )?(?:new )?job|clock (?:me )?(?:in|out)|clock in|check in)(?:\s+(?:for|on|at))?\s+)/i;
+  function voiceNamePart(text) {
+    const t = String(text || "").trim();
+    const m = t.match(VOICE_PREFIX_RE);
+    const rest = m ? t.slice(m[0].length) : t;
+    return { prefix: m ? m[0] : "", name: rest.split(",")[0].trim(), tail: rest.indexOf(",") !== -1 ? rest.slice(rest.indexOf(",")) : "" };
+  }
+  function voiceSuggestHtml(text) {
+    const part = voiceNamePart(text);
+    if (part.name.length < 2) return "";
+    const list = voiceJobCustomerMatches(part.name).slice(0, 4);
+    if (!list.length) return '<div class="muted">No customer matches “' + esc(part.name) + '” yet.</div>';
+    return '<div class="field-lab">Matching customers · tap to use</div>' + list.map(function (c) {
+      const a = primaryAddress(c);
+      return '<button class="list-card" style="min-height:44px" ' + act("voiceUseCustomer", c.id) + '><div class="job-body"><div class="job-name" style="font-size:15px">' + esc(c.name) + '</div><div class="job-prob">' + esc((a ? addressLine(a) : formatAddrLine(c.address, c.city)) || c.phone || "") + "</div></div></button>";
+    }).join("");
+  }
+  function updateVoiceSuggest(text) {
+    const el = document.getElementById("voice-suggest");
+    if (el) el.innerHTML = voiceSuggestHtml(text);
+  }
   function voiceJobCustomerMatches(q) {
     const nq = normalizeName(q);
-    if (!nq) return [];
+    if (!nq && String(q || "").replace(/\D/g, "").length < 4) return [];
     const ranked = rankedCustomers(q).map(function (x) { return x.c; });
     const extra = state.customers.filter(function (c) {
       return ranked.indexOf(c) === -1 && customerSearchHay(c).toLowerCase().indexOf(String(q).toLowerCase().trim()) !== -1;
@@ -4908,7 +5245,7 @@
         const a = primaryAddress(c);
         return '<button class="list-card" ' + act("voiceJobPickCust", c.id) + '><div class="job-body"><div class="job-name">' + esc(c.name) + '</div><div class="job-prob">' + esc((a ? addressLine(a) : formatAddrLine(c.address, c.city)) || c.phone || "") + "</div></div></button>";
       }).join("") : '<div class="muted">No customers match. Check the spelling or add a new customer.</div>') + "</div>" +
-      '<button class="btn ghost" style="margin-bottom:12px" ' + act("voiceJobNewCust") + ">New customer</button>";
+      '<button class="btn ghost" style="margin-bottom:12px" ' + act("voiceJobNewCust") + ">Not listed · New customer</button>";
   }
   function voiceNewJobSheet() {
     const d = state.voiceJobDraft; if (!d) return "";
@@ -4927,6 +5264,10 @@
           '<label class="field"><div class="field-lab">Phone</div><input id="vj-newPhone" type="tel" inputmode="tel" autocomplete="off" value="' + esc(d.newPhone || "") + '" oninput="RT.setVoiceJobField(\'newPhone\', this.value)"></label>' +
           '<label class="field"><div class="field-lab">Service address</div><input id="vj-newAddress" autocomplete="off" value="' + esc(d.newAddress || "") + '" oninput="RT.setVoiceJobField(\'newAddress\', this.value)"></label>' +
           '<label class="field"><div class="field-lab">City</div><input id="vj-newCity" autocomplete="off" value="' + esc(d.newCity || "") + '" oninput="RT.setVoiceJobField(\'newCity\', this.value)"></label>' +
+          (d.dupMatches && d.dupMatches.length ? '<div class="warn-banner" style="margin-bottom:8px">Did you mean an existing customer?</div><div class="stack" style="margin-bottom:8px">' + d.dupMatches.map(function (id) {
+            const c = getCustomer(id); if (!c) return "";
+            return '<button class="list-card" ' + act("voiceJobPickCust", c.id) + '><div class="job-body"><div class="job-name">Use ' + esc(c.name) + '</div><div class="job-prob">' + esc([formatAddrLine(c.address, c.city), c.phone].filter(Boolean).join(" · ")) + "</div></div></button>";
+          }).join("") + '</div><button class="btn ghost" style="margin-bottom:12px" ' + act("voiceJobForceNew") + ">No, create a new customer</button>" : "") +
           '<button class="link-btn" style="margin:0 0 12px" ' + act("voiceJobPickExisting") + ">Pick an existing customer instead</button>"
         : (cust
           ? '<div class="confirm-row"><div class="field-lab">Customer</div><div class="h2">' + esc(cust.name) + "</div></div>" +
@@ -5052,6 +5393,7 @@
 
   function mainHtml() {
     if (state.screen === "settings") return settingsScreen();
+    if (state.screen === "dashList") return dashListScreen();
     if (state.screen === "plans") return plansScreen();
     if (state.screen === "timeCorrections") return timeCorrectionsScreen();
     if (state.openAddressId) {
@@ -5607,8 +5949,10 @@
       render(); return;
     }
     if (name === "addTech") {
-      const n = (state._newTech || "").trim();
+      const n = (state._newTech || "").trim().replace(/\s+/g, " ");
       if (!n) { showToast("Enter a tech name"); return; }
+      const existing = (state.techRecords || []).find(function (r) { return techKey(r.name) === techKey(n); });
+      if (existing) { state.currentTech = existing.name; state._newTech = ""; showToast(existing.name + " is already on the list"); return; }
       state.techRecords = normalizeTechRecords((state.techs || []).concat([n]), state.techRecords);
       state.techs = techNamesFrom(state.techRecords);
       state.currentTech = n;
@@ -5691,6 +6035,18 @@
     if (name === "clearNpPhoto") { state.noteDraft.nameplate.photo = ""; render(); return; }
     if (name === "openVoice") { startListening(); return; }
     if (name === "stopVoice") { stopListening(); return; }
+    if (name === "voiceUseCustomer") {
+      const c = getCustomer(arg); if (!c) return;
+      const part = voiceNamePart((state.voice && state.voice.text) || "");
+      const prefix = part.prefix || "new job for ";
+      state.voice.text = (prefix + c.name + (part.tail || "")).replace(/\s+/g, " ").trim();
+      state.voice.pickedCustomerId = c.id;
+      const inp = document.getElementById("voice-input");
+      if (inp) inp.value = state.voice.text;
+      updateVoiceSuggest(state.voice.text);
+      if (!part.tail && /new job|create|start/i.test(prefix)) { if (inp) { inp.value = state.voice.text + ", "; state.voice.text = inp.value; inp.focus(); } }
+      return;
+    }
     if (name === "submitVoice") { applyVoiceText((state.voice && state.voice.text) || ""); return; }
     if (name === "confirmVoice") {
       const c = state.voiceConfirm; if (!c) return;
@@ -6006,7 +6362,7 @@
         jobId: nextJobId(state.jobs),
         customerId: customer ? customer.id : "",
         customerName: customer ? customer.name : spoken,
-        isNewCustomer: !customer && !rankedCustomers(spoken).length,
+        isNewCustomer: false,
         custQuery: customer ? "" : spoken,
         newName: customer ? "" : spoken,
         newPhone: "",
@@ -6027,7 +6383,7 @@
       const d = state.voiceJobDraft; const c = getCustomer(arg); if (!d || !c) return;
       ensureCustomerAddresses(c, state.customers);
       const addrs = serviceAddresses(c);
-      Object.assign(d, { customerId: c.id, customerName: c.name, isNewCustomer: false, billToCustomerId: c.id, addressId: addrs.length === 1 ? addrs[0].id : "" });
+      Object.assign(d, { customerId: c.id, customerName: c.name, isNewCustomer: false, billToCustomerId: c.id, addressId: addrs.length === 1 ? addrs[0].id : "", dupMatches: [], dupOk: false });
       render(); return;
     }
     if (name === "voiceJobChangeCust") {
@@ -6037,8 +6393,13 @@
     }
     if (name === "voiceJobNewCust") {
       const d = state.voiceJobDraft; if (!d) return;
-      Object.assign(d, { customerId: "", isNewCustomer: true, addressId: "", billToCustomerId: "", newName: d.newName || d.custQuery || "" });
+      Object.assign(d, { customerId: "", isNewCustomer: true, addressId: "", billToCustomerId: "", newName: d.newName || d.custQuery || "", dupMatches: [], dupOk: false });
       render(); return;
+    }
+    if (name === "voiceJobForceNew") {
+      const d = state.voiceJobDraft; if (!d) return;
+      d.dupOk = true; d.dupMatches = [];
+      handle("confirmVoiceNewJob"); return;
     }
     if (name === "voiceJobPickExisting") {
       const d = state.voiceJobDraft; if (!d) return;
@@ -6059,6 +6420,14 @@
         if (!name) { showToast("Enter the customer name"); return; }
         if (String(d.newPhone || "").replace(/\D/g, "").length < 10) { showToast("Enter a 10-digit phone number"); return; }
         if (!(d.newAddress || "").trim()) { showToast("Enter the service address"); return; }
+        if (!d.dupOk) {
+          const phoneDigits = String(d.newPhone || "").replace(/\D/g, "").slice(-10);
+          const hits = state.customers.filter(function (c) {
+            const cp = String(c.phone || "").replace(/\D/g, "").slice(-10);
+            return (phoneDigits && cp && cp === phoneDigits) || scoreCustomer(name, c) >= 80;
+          }).slice(0, 4).map(function (c) { return c.id; });
+          if (hits.length) { d.dupMatches = hits; render(); showToast("Check: this may be an existing customer"); return; }
+        }
         customerId = nextCustomerId();
         customer = name; address = (d.newAddress || "").trim(); city = (d.newCity || "").trim() || "Long Beach"; phone = (d.newPhone || "").trim();
         const fresh = { id: customerId, name: customer, address: address, city: city, phone: phone, email: "", billingSameAsService: true, billingAddress: "", billingCity: "", addresses: [], assets: [], mentions: [] };
@@ -6224,6 +6593,11 @@
     }
     if (parsed.kind === "newJob") {
       parsed.draft.raw = parsed.raw;
+      const picked = state.voice && state.voice.pickedCustomerId ? getCustomer(state.voice.pickedCustomerId) : null;
+      if (picked && normalizeName(voiceNamePart(text).name) === normalizeName(picked.name)) {
+        const addrs = serviceAddresses(picked);
+        Object.assign(parsed.draft, { customerId: picked.id, customerName: picked.name, isNewCustomer: false, billToCustomerId: picked.id, addressId: addrs.length === 1 ? addrs[0].id : "" });
+      }
       state.voiceJobDraft = parsed.draft;
       state.sheet = "voiceNewJob";
       render();
@@ -6241,15 +6615,33 @@
   }
   let voiceSession = 0;
   let voiceTimer = null;
+  let voiceReleasedAt = 0;
+  let voiceStartTimer = null;
   function endVoiceSession() {
     if (voiceTimer) { clearTimeout(voiceTimer); voiceTimer = null; }
+    if (voiceStartTimer) { clearTimeout(voiceStartTimer); voiceStartTimer = null; }
     const r = recognition;
     recognition = null;
     if (r) {
-      r.onresult = null; r.onerror = null; r.onend = null;
+      r.onresult = null; r.onerror = null; r.onend = null; r.onaudioend = null; r.onspeechend = null;
+      try { r.stop(); } catch (e) {}
       try { r.abort(); } catch (e) {}
+      voiceReleasedAt = Date.now();
     }
   }
+  function releaseVoiceOnLeave() {
+    if (!recognition && !voiceStartTimer) return;
+    voiceSession++;
+    endVoiceSession();
+    if (state.voice && state.voice.listening) {
+      state.voice.listening = false;
+      state.voice.fallback = true;
+      state.voice.error = "Mic stopped when the app went to the background. Tap Try again, or type it.";
+      render();
+    }
+  }
+  document.addEventListener("visibilitychange", function () { if (document.hidden) releaseVoiceOnLeave(); });
+  window.addEventListener("pagehide", releaseVoiceOnLeave);
   function finishListening(sessionId, reason) {
     if (sessionId !== voiceSession) return;
     voiceSession++;
@@ -6310,11 +6702,23 @@
         finishListening(sid, (e === "not-allowed" || e === "service-not-allowed") ? "denied" : "error");
       };
       rec.onend = function () { finishListening(sid, "end"); };
+      rec.onspeechend = function () {
+        if (sid !== voiceSession) return;
+        if (voiceTimer) clearTimeout(voiceTimer);
+        voiceTimer = setTimeout(function () { finishListening(sid, "timeout"); }, 900);
+      };
       state.voice = { listening: true, text: "", fallback: false, error: "" };
       state.sheet = "voice";
       render();
-      rec.start();
-      voiceTimer = setTimeout(function () { finishListening(sid, "timeout"); }, 12000);
+      /* iOS needs a moment to hand the mic back after the last session. */
+      const wait = Math.max(0, 450 - (Date.now() - voiceReleasedAt));
+      const go = function () {
+        voiceStartTimer = null;
+        if (sid !== voiceSession) return;
+        try { rec.start(); } catch (e) { finishListening(sid, "error"); return; }
+        voiceTimer = setTimeout(function () { finishListening(sid, "timeout"); }, 12000);
+      };
+      if (wait) voiceStartTimer = setTimeout(go, wait); else go();
     } catch (err) {
       voiceSession++;
       endVoiceSession();
@@ -6395,6 +6799,11 @@
   render = function () {
     _render0();
     syncHash();
+    if (state._scrollTo) {
+      const id = state._scrollTo; state._scrollTo = null;
+      const el = document.getElementById(id);
+      if (el && el.scrollIntoView) setTimeout(function () { try { el.scrollIntoView({ block: "start", behavior: "smooth" }); } catch (e) { el.scrollIntoView(); } }, 30);
+    }
   };
 
   if (window.matchMedia) {

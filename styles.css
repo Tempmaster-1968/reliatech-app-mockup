@@ -799,3 +799,10 @@ a.btn {
 }
 a.btn.teal { color: var(--on-brand); }
 .btn.ghost.inline { width: auto; }
+
+/* Phase 1 fixes: reliable taps on iPhone */
+.dash-tile { border: none; text-align: left; cursor: pointer; width: 100%; font: inherit; color: inherit; min-height: 44px; display: block; -webkit-appearance: none; appearance: none; }
+.dash-tile:active, .list-card:active { opacity: .75; }
+.list-card, .link-btn, .money-tile, .chip, .dash, .btn, .tab, .icon-btn, .job-card { touch-action: manipulation; -webkit-tap-highlight-color: rgba(11, 58, 79, .12); }
+.link-btn.tap { min-height: 44px; padding: 0 8px; }
+.list-card { min-height: 44px; }
