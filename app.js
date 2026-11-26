@@ -727,6 +727,7 @@
 
 
   const ICONS = {
+    home: '<path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-5h-6v5H5a1 1 0 0 1-1-1z"/>',
     jobs: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 5V4h8v1M8 10h8M8 14h5"/>',
     capture: '<path d="M4 8h3l1.4-2h7.2L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.2"/>',
     customers: '<circle cx="9" cy="8" r="3"/><path d="M4 19c0-3 2.2-5 5-5s5 2 5 5"/><circle cx="17" cy="9" r="2.2"/><path d="M16.2 14.2c1.8.4 3.8 1.8 3.8 4.8"/>',
@@ -2169,7 +2170,7 @@
   });
 
   let state = {
-    tab: "jobs",
+    tab: "home",
     filter: "open",
     query: "",
     openJobId: null,
@@ -3245,7 +3246,171 @@
       state.vendorDraft = null; state.sheet = null; showToast("Branch removed"); return true;
     }
     if (name === "exportData") { downloadBackup(); return true; }
+    if (name === "dashToggleProspects") { state._dashAllProspects = !state._dashAllProspects; render(); return true; }
     return false;
+  }
+
+  /* ——— Phase 1: Home dashboard ——— */
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  function daysFromToday(d) { return d ? Math.floor((d.getTime() - startOfTodayLocal().getTime()) / DAY_MS) : null; }
+  function jobPaidDate(job) {
+    if (job.paidDate) { const d = ymdToLocalDate(job.paidDate) || parseLooseDate(job.paidDate); if (d) return d; }
+    const ev = (job.timeline || []).find(function (x) { return x && /paid/i.test(x.title || "") && x.time; });
+    return ev ? parseLooseDate(ev.time) : null;
+  }
+  function lastVisitDate(c) {
+    let best = null;
+    jobsForCustomer(c).forEach(function (j) {
+      if (j.status === "superseded" || j.supersededBy) return;
+      const d = jobScheduleDate(j);
+      if (d && d.getTime() <= Date.now() && (!best || d > best)) best = d;
+    });
+    return best;
+  }
+  function hasActivePlan(cid) {
+    return plansForCustomer(cid).some(function (p) { return p.status === "active" && !/^offer/.test(p.type || ""); });
+  }
+  function dashItem(title, sub, right, actName, arg, tone) {
+    const color = tone === "red" ? "#B42318" : tone === "amber" ? "#9A6700" : "";
+    return '<button class="list-card" ' + act(actName, arg) + ' style="' + (tone === "red" ? "border-left:4px solid #D92D20;" : tone === "amber" ? "border-left:4px solid #D49A12;" : "") + '"><div class="job-body">' +
+      '<div class="row"><div class="job-name" style="font-size:15px">' + esc(title) + "</div>" + (right ? '<div class="meta" style="' + (color ? "color:" + color + ";font-weight:700" : "") + '">' + right + "</div>" : "") + "</div>" +
+      (sub ? '<div class="job-prob"' + (color ? ' style="color:' + color + '"' : "") + ">" + sub + "</div>" : "") + "</div></button>";
+  }
+  function dashEmpty(msg) { return '<div class="muted" style="margin:0 2px 12px">' + esc(msg) + "</div>"; }
+  function dashboardScreen() {
+    const today = startOfTodayLocal();
+    const weekEnd = new Date(today.getTime() + 7 * DAY_MS);
+    const active = (state.jobs || []).filter(isActiveJob);
+    // Upcoming work
+    const upcoming = active.filter(function (j) {
+      if (j.status === "estimate") return false;
+      if (isInProgressWork(j)) return true;
+      if (j.planJob) return false;
+      const d = jobScheduleDate(j);
+      return d && d.getTime() >= today.getTime() && d.getTime() < weekEnd.getTime();
+    }).sort(function (a, b) {
+      const da = jobScheduleDate(a), db = jobScheduleDate(b);
+      return (da ? da.getTime() : 0) - (db ? db.getTime() : 0);
+    });
+    const todays = upcoming.filter(function (j) { const n = daysFromToday(jobScheduleDate(j)); return n === 0; });
+    const weekVisits = (state.visits || []).filter(function (v) {
+      if (visitStatus(v) !== "scheduled") return false;
+      const d = parseStamp(v.scheduledStart);
+      return d && d.getTime() >= today.getTime() && d.getTime() < weekEnd.getTime();
+    });
+    // Parts alerts
+    const partAlerts = [];
+    const onOrder = [];
+    active.forEach(function (j) {
+      const parts = jobParts(j); if (!parts.length) return;
+      const n = daysFromToday(jobScheduleDate(j));
+      const soon = j.status === "progress" || anyOpenEntry(j) || (n != null && n <= 3);
+      const needed = parts.filter(function (p) { return p.status === "needed"; });
+      const ordered = parts.filter(function (p) { return p.status === "ordered"; });
+      if (needed.length) partAlerts.push({ j: j, text: needed.length + " part" + (needed.length > 1 ? "s" : "") + " not ordered", red: soon, n: n });
+      if (ordered.length) {
+        const late = n != null && n <= 1;
+        if (late) partAlerts.push({ j: j, text: ordered.length + " on order, not received yet", red: true, n: n });
+        ordered.forEach(function (p) { onOrder.push({ j: j, p: p }); });
+      }
+    });
+    partAlerts.sort(function (a, b) { return (b.red ? 1 : 0) - (a.red ? 1 : 0) || ((a.n == null ? 999 : a.n) - (b.n == null ? 999 : b.n)); });
+    // Money
+    const estimates = active.filter(function (j) { return j.status === "estimate"; }).map(function (j) {
+      const e = (j.estimates || []).filter(function (x) { return !x.superseded; }).slice(-1)[0];
+      const sent = e && e.createdAt ? parseStamp(e.createdAt) : null;
+      return { j: j, age: sent ? -daysFromToday(sent) : null };
+    });
+    const unpaid = (state.jobs || []).concat(state.moneyJobs || []).filter(isPayable);
+    const unpaidTotal = unpaid.reduce(function (s, j) { return s + invoiceDue(j); }, 0);
+    const estTotal = estimates.reduce(function (s, x) { return s + (Number(x.j.total) || 0); }, 0);
+    // Plans
+    const in30 = new Date(today.getTime() + 30 * DAY_MS);
+    const renewals = (state.plans || []).filter(function (p) {
+      if (p.status !== "active" || !p.renewalDate) return false;
+      const d = ymdToLocalDate(p.renewalDate);
+      return d && d.getTime() < in30.getTime() && d.getTime() >= today.getTime() - 60 * DAY_MS;
+    });
+    const dueVisits = attentionVisits();
+    const noPlan = (state.customers || []).filter(function (c) { return !hasActivePlan(c.id); }).map(function (c) {
+      return { c: c, last: lastVisitDate(c) };
+    }).filter(function (x) { return !!x.last; }).sort(function (a, b) { return b.last - a.last; });
+    const showAll = !!state._dashAllProspects;
+    // This month
+    const now = tzParts(new Date());
+    const monthStart = new Date(Number(now.year), Number(now.month) - 1, 1);
+    const paidThisMonth = (state.jobs || []).concat(state.moneyJobs || []).filter(function (j) {
+      if (j.status !== "paid") return false;
+      const d = jobPaidDate(j);
+      return d && d.getTime() >= monthStart.getTime();
+    });
+    const seen = {};
+    const paidUnique = paidThisMonth.filter(function (j) { if (seen[j.id]) return false; seen[j.id] = true; return true; });
+    const sales = paidUnique.reduce(function (s, j) { return s + (Number(j.total) || 0); }, 0);
+    const estJobs = (state.jobs || []).filter(function (j) { return (j.estimateId || (j.estimates || []).length) && j.status !== "superseded" && !j.supersededBy; });
+    const won = estJobs.filter(function (j) { return ["approved", "progress", "done", "invoiced", "paid"].indexOf(j.status) !== -1; });
+    const hourJobs = (state.jobs || []).filter(function (j) { return loggedHours(j) > 0 && billedLaborHours(j) > 0; });
+    const bidH = hourJobs.reduce(function (s, j) { return s + billedLaborHours(j); }, 0);
+    const actH = hourJobs.reduce(function (s, j) { return s + loggedHours(j); }, 0);
+
+    let h = "";
+    h += '<div class="section">Upcoming work</div>';
+    h += '<div style="display:flex;gap:10px;margin-bottom:10px">' +
+      '<div class="money-tile" style="flex:1"><div class="k-up">Today</div><div class="money-val" style="font-size:22px">' + todays.length + "</div></div>" +
+      '<div class="money-tile" style="flex:1"><div class="k-up">Active / this week</div><div class="money-val" style="font-size:22px">' + (upcoming.length + weekVisits.length) + "</div></div></div>";
+    h += upcoming.length || weekVisits.length ? '<div class="stack" style="margin-bottom:12px">' +
+      upcoming.map(function (j) {
+        const d = jobScheduleDate(j);
+        const when = isInProgressWork(j) ? "In progress" : (d ? formatPrettyDateTime(d.toISOString()) : "");
+        const miss = jobParts(j).some(function (p) { return p.status !== "received"; });
+        return dashItem("#" + j.id + " · " + j.customer, esc(j.problem || "") + (miss ? " · parts not all in" : ""), esc(when), "openJob", j.id, miss && daysFromToday(d) != null && daysFromToday(d) <= 3 ? "red" : "");
+      }).join("") +
+      weekVisits.map(function (v) {
+        const c = getCustomer(v.customerId);
+        return dashItem((c ? c.name : "Customer") + " · Plan visit", esc(v.label || ""), esc(formatPrettyDateTime(v.scheduledStart)), "openVisit", v.id, "");
+      }).join("") + "</div>" : dashEmpty("Nothing scheduled in the next 7 days.");
+    h += '<div class="section">Parts to order or chase</div>';
+    h += partAlerts.length ? '<div class="stack" style="margin-bottom:12px">' + partAlerts.map(function (x) {
+      return dashItem("#" + x.j.id + " · " + x.j.customer, esc(x.text), x.n == null ? "No date" : x.n <= 0 ? "Today" : "In " + x.n + " day" + (x.n > 1 ? "s" : ""), "openJob", x.j.id, x.red ? "red" : "amber");
+    }).join("") + "</div>" : dashEmpty("No parts waiting. Add parts on a job to track them here.");
+    h += '<div class="section">Parts and equipment on order</div>';
+    h += onOrder.length ? '<div class="stack" style="margin-bottom:12px">' + onOrder.map(function (x) {
+      const v = vendorById(x.p.branchId);
+      return dashItem(x.p.name + (Number(x.p.qty) > 1 ? " × " + x.p.qty : ""), esc("#" + x.j.id + " · " + x.j.customer + (x.p.po ? " · PO " + x.p.po : "") + (v ? " · " + v.name : "")), "Ordered", "openJob", x.j.id, "");
+    }).join("") + "</div>" : dashEmpty("Nothing on order.");
+
+    h += '<div class="section">Money</div>';
+    h += '<div style="display:flex;gap:10px;margin-bottom:10px">' +
+      '<button class="money-tile" style="flex:1;text-align:left;border:none;cursor:pointer" ' + act("tab", "money") + '><div class="k-up">Unpaid</div><div class="money-val" style="font-size:22px">' + money(unpaidTotal) + '</div><div class="meta">' + unpaid.length + " invoice" + (unpaid.length === 1 ? "" : "s") + "</div></button>" +
+      '<div class="money-tile" style="flex:1"><div class="k-up">Open estimates</div><div class="money-val" style="font-size:22px">' + money(estTotal) + '</div><div class="meta">' + estimates.length + " to follow up</div></div></div>";
+    if (estimates.length) h += '<div class="stack" style="margin-bottom:12px">' + estimates.map(function (x) {
+      return dashItem("#" + x.j.id + " · " + x.j.customer, esc((x.j.estimateId || "Estimate") + " · " + (x.j.problem || "")), money(Number(x.j.total) || 0) + (x.age != null ? " · " + x.age + "d" : ""), "openJob", x.j.id, x.age != null && x.age >= 7 ? "amber" : "");
+    }).join("") + "</div>";
+    if (unpaid.length) h += '<div class="stack" style="margin-bottom:12px">' + unpaid.slice(0, 6).map(function (j) {
+      return dashItem("#" + j.id + " · " + j.customer, "Balance due", money(invoiceDue(j)), "openJob", j.id, "amber");
+    }).join("") + "</div>";
+
+    h += '<div class="section-row"><div class="section" style="margin:0">Plans</div><button class="link-btn" style="margin:0" ' + act("openPlans") + ">All plan visits</button></div>";
+    h += renewals.length ? '<div class="stack" style="margin-bottom:10px">' + renewals.map(function (p) {
+      const c = getCustomer(p.customerId); const d = ymdToLocalDate(p.renewalDate); const n = daysFromToday(d);
+      return dashItem((c ? c.name : "Customer") + " · renewal", esc(p.name || "Plan") + " · " + esc(formatYmd(p.renewalDate)), n < 0 ? "Past due" : "In " + n + "d", "openCustomer", p.customerId, n < 0 ? "red" : "amber");
+    }).join("") + "</div>" : dashEmpty("No plan renewals due in the next 30 days.");
+    if (dueVisits.length) h += '<div class="muted" style="margin:-6px 2px 10px">' + dueVisits.length + " plan visit" + (dueVisits.length > 1 ? "s" : "") + " due or overdue to schedule.</div>";
+    h += '<div class="section-row"><div class="section" style="margin:0">Past customers without a plan</div><div class="meta">' + noPlan.length + "</div></div>";
+    h += noPlan.length ? '<div class="stack" style="margin-bottom:8px">' + (showAll ? noPlan : noPlan.slice(0, 6)).map(function (x) {
+      return dashItem(x.c.name, esc((x.c.city || "") + (x.c.phone ? " · " + x.c.phone : "")), "Last visit " + esc(formatDate(x.last.toISOString())), "openCustomer", x.c.id, "");
+    }).join("") + "</div>" + (noPlan.length > 6 ? '<button class="link-btn" style="margin:0 2px 14px" ' + act("dashToggleProspects") + ">" + (showAll ? "Show fewer" : "Show all " + noPlan.length) + "</button>" : "") : dashEmpty("Every past customer has a plan.");
+
+    h += '<div class="section">This month</div>';
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">' +
+      '<div class="money-tile"><div class="k-up">Sales (paid)</div><div class="money-val" style="font-size:20px">' + money(sales) + "</div></div>" +
+      '<div class="money-tile"><div class="k-up">Closed jobs</div><div class="money-val" style="font-size:20px">' + paidUnique.length + "</div></div>" +
+      '<div class="money-tile"><div class="k-up">Estimate win rate</div><div class="money-val" style="font-size:20px">' + (estJobs.length ? Math.round(won.length / estJobs.length * 100) + "%" : "—") + '</div><div class="meta">' + (estJobs.length ? won.length + " of " + estJobs.length + " (all time)" : "No estimates yet") + "</div></div>" +
+      '<div class="money-tile"><div class="k-up">Bid vs actual hrs</div><div class="money-val" style="font-size:20px">' + (hourJobs.length ? formatHours(bidH) + " / " + formatHours(actH) : "—") + '</div><div class="meta">' + (hourJobs.length ? hourJobs.length + " job" + (hourJobs.length > 1 ? "s" : "") + " with clocked time" : "Starts once techs clock in on hourly jobs") + "</div></div></div>";
+    return topBar({ kicker: "ReliaTech Services", title: "Home", badge: SHOW_SAMPLE_BADGE, settings: true }) +
+      '<div class="content"><div class="pad pad-fab">' + h + "</div></div>" +
+      '<button class="fab" ' + act("openNewCall") + ' aria-label="New call">' + icon("plus", 28) + "</button>" +
+      tabBar();
   }
 
   /* Phase 1 keyboard fix: while typing, patch the page in place instead of
@@ -3357,7 +3522,7 @@
       "</div>";
   }
   function tabBar() {
-    const tabs = [["jobs", "Jobs", "jobs"], ["customers", "Customers", "customers"], ["pricebook", "Price book", "book"], ["money", "Money", "money"]];
+    const tabs = [["home", "Home", "home"], ["jobs", "Jobs", "jobs"], ["customers", "Customers", "customers"], ["pricebook", "Price book", "book"], ["money", "Money", "money"]];
     return '<div class="tabbar">' + tabs.map(function (t) {
       return '<button class="tab' + (state.tab === t[0] ? " on" : "") + '" ' + act("tab", t[0]) + '>' + icon(t[2], 22) + "<span>" + t[1] + "</span></button>";
     }).join("") + "</div>";
@@ -3385,6 +3550,8 @@
         return j.status === state.filter;
       }
       if (mode === "unpaid") return unpaidBalanceJobs().some(function (u) { return u.id === j.id; });
+      if (j.status === "estimate") return false;
+      if (j.planJob && !isInProgressWork(j)) return false;
       return isBoardJob(j);
     });
     list = mode === "unpaid" && !searching ? unpaidBalanceJobs() : sortJobsList(list);
@@ -3392,11 +3559,16 @@
     let dueHtml = "";
     if (!searching && mode === "board") {
       const prospects = planProspects();
-      dueHtml = '<div class="section-row"><div class="section" style="margin:0">Plan visits due</div>' +
+      dueHtml = '<div class="section-row"><div class="section" style="margin:0">Plan visits – upcoming</div>' +
         '<button class="link-btn" style="margin:0" ' + act("openPlans") + ">See all plan visits</button></div>";
       if (due.length) dueHtml += '<div class="due-list">' + due.map(dueVisitCard).join("") + "</div>";
       else dueHtml += '<div class="muted" style="margin:-4px 0 14px">Nothing overdue or due in the next 14 days. Older and later visits are on See all plan visits and on each customer page.</div>';
-      if (prospects.length) {
+      const openEst = state.jobs.filter(function (j) { return j.status === "estimate" && isActiveJob(j); });
+      if (openEst.length) {
+        dueHtml += '<div class="section-row"><div class="section" style="margin:0">Open estimates</div><div class="meta">Not jobs yet</div></div>' +
+          '<div class="stack" style="margin-bottom:14px">' + openEst.map(jobCard).join("") + "</div>";
+      }
+      if (false && prospects.length) {
         dueHtml += '<div class="section-row"><div class="section" style="margin:0">Plan prospects</div></div>' +
           '<div class="due-list">' + prospects.map(function (pr) { return prospectCard(pr, { showCustomer: true, compact: true, clickable: true }); }).join("") + "</div>";
       }
@@ -3424,8 +3596,8 @@
       unfiledSection() +
       '<div class="jobs-toolbar"><div class="section" style="margin:0">' + heading + "</div>" + links + "</div>" +
       chips +
-      dueHtml +
-      '<div class="stack">' + (list.length ? list.map(jobCard).join("") : '<div class="muted">' + esc(empty) + "</div>") + "</div></div></div>" +
+      '<div class="stack" style="margin-bottom:16px">' + (list.length ? list.map(jobCard).join("") : '<div class="muted">' + esc(empty) + "</div>") + "</div>" +
+      dueHtml + "</div></div>" +
       '<button class="fab" ' + act("openNewCall") + ' aria-label="New call">' + icon("plus", 28) + "</button>" +
       tabBar();
   }
@@ -4898,6 +5070,7 @@
     if (state.tab === "customers") return customersList();
     if (state.tab === "money") return moneyScreen();
     if (state.tab === "pricebook") return priceBookScreen();
+    if (state.tab === "home") return dashboardScreen();
     return jobsList();
   }
 
