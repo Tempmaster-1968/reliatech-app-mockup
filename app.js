@@ -228,14 +228,19 @@
   }
 
   const EQUIPMENT_TYPES = [
-    { id: "furnace", label: "Furnace / air handler" },
+    { id: "furnace", label: "Furnace" },
+    { id: "airhandler", label: "Air handler" },
+    { id: "condenser", label: "Condenser (AC)" },
+    { id: "heatpump", label: "Heat pump" },
+    { id: "package", label: "Package unit" },
+    { id: "minisplit_in", label: "Mini split (indoor)" },
+    { id: "minisplit_out", label: "Mini split (outdoor)" },
     { id: "coil", label: "Evaporator coil" },
-    { id: "condenser", label: "Condenser / heat pump" },
+    { id: "waterheater", label: "Water heater" },
     { id: "thermostat", label: "Thermostat" },
-    { id: "minisplit", label: "Mini split" },
     { id: "other", label: "Other" }
   ];
-  const EQUIPMENT_LOCATIONS = ["Attic", "Garage", "Side yard", "Closet", "Roof", "Crawlspace", "Laundry", "Other"];
+  const EQUIPMENT_LOCATIONS = ["Attic", "Garage", "Closet", "Side yard", "Backyard", "Rooftop", "Crawlspace", "Other"];
   const STORE_KEY = "reliatech-app-state-v1";
 
   function equipmentTypeLabel(a) {
@@ -2523,6 +2528,468 @@
       }).join("") + "</div>";
   }
 
+  /* ——— Equipment record upgrade: pick lists, multi-photo (IndexedDB), unit work, history ——— */
+  const PhotoStore = (function () {
+    let dbp = null;
+    const cache = {};
+    function db() {
+      if (!dbp) dbp = new Promise(function (res, rej) {
+        if (!window.indexedDB) { rej(new Error("IndexedDB not available")); return; }
+        const r = indexedDB.open("reliatech-photos", 1);
+        r.onupgradeneeded = function () { if (!r.result.objectStoreNames.contains("photos")) r.result.createObjectStore("photos", { keyPath: "id" }); };
+        r.onsuccess = function () { res(r.result); };
+        r.onerror = function () { rej(r.error); };
+      });
+      return dbp;
+    }
+    function tx(mode, fn) {
+      return db().then(function (d) {
+        return new Promise(function (res, rej) {
+          const t = d.transaction("photos", mode);
+          const req = fn(t.objectStore("photos"));
+          t.oncomplete = function () { res(req && "result" in req ? req.result : undefined); };
+          t.onerror = function () { rej(t.error); };
+          t.onabort = function () { rej(t.error || new Error("aborted")); };
+        });
+      });
+    }
+    return {
+      put: function (rec) { cache[rec.id] = rec.data; return tx("readwrite", function (s) { return s.put(rec); }); },
+      del: function (id) { delete cache[id]; return tx("readwrite", function (s) { return s.delete(id); }).catch(function () {}); },
+      all: function () { return tx("readonly", function (s) { return s.getAll(); }); },
+      loadAll: function () { return this.all().then(function (list) { (list || []).forEach(function (r) { cache[r.id] = r.data; }); return list || []; }); },
+      get: function (id) { return cache[id] || ""; }
+    };
+  })();
+  window.RTPhotos = PhotoStore;
+  const PHOTO_LABELS = ["Nameplate", "Corner 1", "Corner 2", "Corner 3", "Corner 4", "Disconnect", "Other"];
+  function compressImageFile(file, cb) {
+    const reader = new FileReader();
+    reader.onload = function () {
+      const img = new Image();
+      img.onload = function () {
+        const max = 1600;
+        let w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+        if (w > max || h > max) { const s = Math.min(max / w, max / h); w = Math.round(w * s); h = Math.round(h * s); }
+        const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+        cv.getContext("2d").drawImage(img, 0, 0, w, h);
+        let out = "";
+        try { out = cv.toDataURL("image/jpeg", 0.7); } catch (e) { out = String(reader.result || ""); }
+        cb(out, w, h);
+      };
+      img.onerror = function () { cb("", 0, 0); };
+      img.src = String(reader.result || "");
+    };
+    reader.onerror = function () { cb("", 0, 0); };
+    reader.readAsDataURL(file);
+  }
+  function nextPhotoLabel(list) {
+    const used = (list || []).map(function (p) { return p.label; });
+    if (used.indexOf("Nameplate") === -1) return "Nameplate";
+    for (let i = 1; i <= 4; i++) if (used.indexOf("Corner " + i) === -1) return "Corner " + i;
+    return "Other";
+  }
+  function assetThumbSrc(a) {
+    const ph = (a && a.photos) || [];
+    const np = ph.find(function (p) { return p.label === "Nameplate" && PhotoStore.get(p.id); });
+    const first = np || ph.find(function (p) { return PhotoStore.get(p.id); });
+    if (first) return PhotoStore.get(first.id);
+    return (a && a.photo) || "";
+  }
+  function photoDraftList(ctx) {
+    if (ctx === "uw") return state.uwDraft ? (state.uwDraft.photos = state.uwDraft.photos || []) : [];
+    return state.assetDraft ? (state.assetDraft.photos = state.assetDraft.photos || []) : [];
+  }
+  function photoGridHtml(ctx) {
+    const list = photoDraftList(ctx);
+    const inputs = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">' +
+      '<label class="dash" style="text-align:center;display:flex;align-items:center;justify-content:center;position:relative">Take photo<input type="file" accept="image/*" capture="environment" style="position:absolute;opacity:0;width:1px;height:1px" onchange="RT.addPhotos(\'' + ctx + '\', this)"></label>' +
+      '<label class="dash" style="text-align:center;display:flex;align-items:center;justify-content:center;position:relative">Choose from library<input type="file" accept="image/*" multiple style="position:absolute;opacity:0;width:1px;height:1px" onchange="RT.addPhotos(\'' + ctx + '\', this)"></label></div>';
+    const busy = state._photoBusy ? '<div class="note" style="margin:0 0 10px">Saving ' + state._photoBusy + " photo" + (state._photoBusy > 1 ? "s" : "") + "…</div>" : "";
+    if (!list.length) return inputs + busy + '<div class="muted" style="margin-bottom:12px">No photos yet. Nameplate first, then the four corners so all sides of the unit are on file.</div>';
+    return inputs + busy + '<div class="ph-grid">' + list.map(function (p, i) {
+      const src = PhotoStore.get(p.id);
+      return '<div class="ph-tile">' +
+        (src ? '<button class="ph-img" ' + act("photoView", p.id) + '><img src="' + esc(src) + '" alt="' + esc(p.label) + '"></button>' : '<div class="ph-img ph-missing">Photo not on this device</div>') +
+        '<select aria-label="Photo label" onchange="RT.setPhotoLabel(\'' + ctx + "', " + i + ', this.value)">' + PHOTO_LABELS.map(function (l) { return '<option' + (l === p.label ? " selected" : "") + ">" + l + "</option>"; }).join("") + "</select>" +
+        '<div class="ph-btns"><button ' + act("photoMove", ctx + "|" + i + "|-1") + (i === 0 ? " disabled" : "") + ' aria-label="Move earlier">◀</button><button ' + act("photoMove", ctx + "|" + i + "|1") + (i === list.length - 1 ? " disabled" : "") + ' aria-label="Move later">▶</button><button ' + act("photoDel", ctx + "|" + i) + ' aria-label="Delete photo">✕</button></div></div>';
+    }).join("") + '</div><div class="meta" style="margin:6px 0 12px">The first Nameplate photo (or the first photo) is the thumbnail. Photos are saved on this phone until sync is set up.</div>';
+  }
+  function photoViewHtml() {
+    if (!state.photoViewId) return "";
+    const src = PhotoStore.get(state.photoViewId);
+    return '<div class="ph-view" ' + act("photoViewClose") + '>' + (src ? '<img src="' + esc(src) + '" alt="Photo">' : "") + '<button class="ph-view-x" ' + act("photoViewClose") + ' aria-label="Close">✕</button></div>';
+  }
+  function migrateLegacyPhotos() {
+    const jobs = [];
+    state.customers.forEach(function (c) {
+      serviceAddresses(c).concat([{ assets: c.assets || [] }]).forEach(function (a) {
+        (a.assets || []).forEach(function (x) {
+          if (!x || !x.photo || String(x.photo).indexOf("data:") !== 0) return;
+          const id = "ph-" + x.id + "-legacy";
+          jobs.push(PhotoStore.put({ id: id, data: x.photo, ownerType: "asset", ownerId: x.id, label: "Nameplate", createdAt: isoNow(), uploaded: false }).then(function () {
+            x.photos = [{ id: id, label: "Nameplate", at: isoNow() }].concat((x.photos || []).filter(function (p) { return p.id !== id; }));
+            delete x.photo;
+          }));
+        });
+      });
+    });
+    return Promise.all(jobs).then(function () { if (jobs.length) persist(); return jobs.length; });
+  }
+  PhotoStore.loadAll().then(function () { return migrateLegacyPhotos(); }).catch(function () {}).then(function () { try { render(); } catch (e) {} });
+
+  /* Unit work (per-job incident on one piece of equipment) */
+  const UW_FIELDS = [["supply", "Supply °F"], ["ret", "Return °F"], ["suction", "Suction psi"], ["head", "Liquid/head psi"], ["sh", "Superheat °F"], ["sc", "Subcool °F"], ["amps", "Amps"]];
+  function jobUnitWork(job) { return (job && Array.isArray(job.unitWork)) ? job.unitWork : []; }
+  function jobServiceAddress(job) {
+    if (!job) return null;
+    if (job.addressId) { const a = getAddressById(job.addressId); if (a) return a; }
+    const c = getCustomer(job.customerId);
+    return c ? primaryAddress(c) : null;
+  }
+  function findAssetAnywhere(assetId) {
+    let out = null;
+    state.customers.forEach(function (c) { serviceAddresses(c).forEach(function (a) { (a.assets || []).forEach(function (x) { if (x.id === assetId) out = { customer: c, address: a, asset: x }; }); }); });
+    return out;
+  }
+  function assetShortName(x) {
+    if (!x) return "Unit not found";
+    return [equipmentTypeLabel(x), x.hcpLabel, [x.make, x.model].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+  }
+  function uwReadingText(r) {
+    const vals = UW_FIELDS.filter(function (f) { return r.readingVals && String(r.readingVals[f[0]] || "").trim(); }).map(function (f) { return f[1] + " " + r.readingVals[f[0]]; });
+    return [vals.join(", "), r.readings].filter(Boolean).join(". ");
+  }
+  function buildVisitSummary(job) {
+    return jobUnitWork(job).map(function (r) {
+      const h = findAssetAnywhere(r.assetId);
+      const lines = [assetShortName(h && h.asset) + ":"];
+      if (r.complaint) lines.push("Complaint: " + r.complaint);
+      if (r.findings) lines.push("Findings: " + r.findings);
+      const rd = uwReadingText(r); if (rd) lines.push("Readings: " + rd);
+      if (r.workDone) lines.push("Work done: " + r.workDone);
+      if (r.parts) lines.push("Parts used: " + r.parts);
+      return lines.join("\n");
+    }).join("\n\n");
+  }
+  function refreshVisitSummary(job) { if (job && !job.visitSummaryEdited) job.visitSummary = buildVisitSummary(job); }
+  function unitWorkSectionHtml(job) {
+    const list = jobUnitWork(job);
+    let h = '<div class="section-row"><div class="section" style="margin:0">Unit work</div><div class="meta">' + list.length + " record" + (list.length === 1 ? "" : "s") + "</div></div>";
+    h += list.length ? '<div class="stack" style="margin-bottom:10px">' + list.map(function (r) {
+      const hm = findAssetAnywhere(r.assetId);
+      return '<button class="list-card" ' + act("uwEdit", r.id) + '><div class="job-body"><div class="job-name" style="font-size:15px;margin-top:0">' + esc(assetShortName(hm && hm.asset)) + "</div>" +
+        '<div class="job-prob">' + esc(r.workDone || r.findings || r.complaint || "No notes yet") + "</div>" +
+        '<div class="meta" style="margin-top:2px">' + esc([r.tech, formatDate(r.at), (r.photos || []).length ? (r.photos.length + " photo" + (r.photos.length > 1 ? "s" : "")) : ""].filter(Boolean).join(" · ")) + "</div></div></button>";
+    }).join("") + "</div>" : '<div class="muted" style="margin-bottom:10px">Record what you found and did on each unit. The visit summary builds itself from these.</div>';
+    h += '<button class="dash" style="margin-bottom:14px" ' + act("uwAdd") + ">+ Add unit work</button>";
+    h += '<label class="field"><div class="field-lab">Visit summary' + (job.visitSummaryEdited ? " (edited)" : list.length ? " (built from unit work)" : "") + '</div><textarea id="job-visit-summary" rows="5" placeholder="Builds from unit work. You can edit it." oninput="RT.setVisitSummary(this.value)">' + esc(job.visitSummary || "") + "</textarea></label>";
+    if (job.visitSummaryEdited && list.length) h += '<button class="link-btn tap" style="margin:-6px 0 14px" ' + act("uwRebuildSummary") + ">Rebuild from unit work</button>";
+    return h;
+  }
+  function unitWorkSheet(job) {
+    const d = state.uwDraft; if (!d) return "";
+    const addr = jobServiceAddress(job);
+    const assets = (addr && addr.assets) || [];
+    const techs = (state.techs || []).map(function (x) { return typeof x === "string" ? x : (x && x.name) || ""; }).filter(Boolean);
+    if (d.tech && techs.indexOf(d.tech) === -1) techs.push(d.tech);
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">' + (d.isNew ? "Add unit work" : "Unit work") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="field-lab">Which unit?</div>' +
+      (assets.length ? '<div class="stack" style="margin-bottom:8px">' + assets.map(function (x) {
+        const on = d.assetId === x.id;
+        return '<button class="dash' + (on ? " sel" : "") + '" ' + act("uwPickAsset", x.id) + ">" + (on ? "✓ " : "") + esc(assetShortName(x)) + "</button>";
+      }).join("") + "</div>" : '<div class="muted" style="margin-bottom:8px">No equipment at ' + esc((addr && addr.address) || "this address") + " yet.</div>") +
+      '<button class="link-btn tap" style="margin:0 0 12px" ' + act("uwAddEquipment") + ">+ Add equipment at this address</button>" +
+      [["complaint", "Complaint", 2], ["findings", "Findings / diagnosis", 3]].map(function (f) {
+        return '<label class="field"><div class="field-lab">' + f[1] + '</div><textarea id="uw-' + f[0] + '" rows="' + f[2] + '"' + (f[0] === "complaint" && job.problem ? ' placeholder="Job: ' + esc(job.problem) + '"' : "") + ' oninput="RT.setUw(\'' + f[0] + '\', this.value)">' + esc(d[f[0]] || "") + "</textarea></label>";
+      }).join("") +
+      '<div class="field-lab">Readings (optional)</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">' + UW_FIELDS.map(function (f) {
+        return '<label class="field" style="margin:0"><div class="field-lab">' + f[1] + '</div><input id="uw-r-' + f[0] + '" inputmode="decimal" value="' + esc((d.readingVals || {})[f[0]] || "") + '" oninput="RT.setUwReading(\'' + f[0] + '\', this.value)"></label>';
+      }).join("") + "</div>" +
+      '<label class="field"><div class="field-lab">Other readings / notes</div><textarea id="uw-readings" rows="2" oninput="RT.setUw(\'readings\', this.value)">' + esc(d.readings || "") + "</textarea></label>" +
+      [["workDone", "Work done", 3], ["parts", "Parts used", 2]].map(function (f) {
+        return '<label class="field"><div class="field-lab">' + f[1] + '</div><textarea id="uw-' + f[0] + '" rows="' + f[2] + '" oninput="RT.setUw(\'' + f[0] + '\', this.value)">' + esc(d[f[0]] || "") + "</textarea></label>";
+      }).join("") +
+      '<label class="field"><div class="field-lab">Tech</div><select id="uw-tech" onchange="RT.setUw(\'tech\', this.value)">' + techs.map(function (n) { return "<option" + (n === d.tech ? " selected" : "") + ">" + esc(n) + "</option>"; }).join("") + "</select></label>" +
+      '<div class="field-lab">Photos</div>' + photoGridHtml("uw") +
+      '<button class="btn" ' + act("uwSave") + ">Save unit work</button>" +
+      (!d.isNew ? '<button class="btn ghost" style="margin-top:8px" ' + act("uwDelete") + ">Delete this record</button>" : "")
+    );
+  }
+  function jobTextBlob(j) {
+    return [j.problem].concat((j.lineItems || []).map(function (l) { return l.label; })).concat((j.timeline || []).map(function (t) { return (t.title || "") + " " + (t.body || ""); })).join(" ");
+  }
+  function jobWhen(j) {
+    const c = (j.timeline || []).find(function (t) { return /-created$/.test(t.id || ""); });
+    return c ? c.time : "";
+  }
+  function assetHistoryHtml(asset, addr) {
+    if (!asset || !state.assetEditingId) return '<div class="muted">Save the equipment first. Its history fills in from unit work on jobs.</div>';
+    const recs = [];
+    state.jobs.forEach(function (j) { jobUnitWork(j).forEach(function (r) { if (r.assetId === asset.id) recs.push({ j: j, r: r }); }); });
+    recs.sort(function (a, b) { return String(b.r.at || "").localeCompare(String(a.r.at || "")); });
+    const withUw = {}; recs.forEach(function (x) { withUw[x.j.id] = true; });
+    const mk = normalizeName(asset.model || "").replace(/\s/g, "");
+    const lk = normalizeName(asset.hcpLabel || "").replace(/\s/g, "");
+    const named = [], unrec = [];
+    (addr ? jobsForAddress(addr.id) : []).forEach(function (j) {
+      if (withUw[j.id]) return;
+      const blob = normalizeName(jobTextBlob(j)).replace(/\s/g, "");
+      if ((mk.length >= 5 && blob.indexOf(mk) !== -1) || (lk.length >= 6 && blob.indexOf(lk) !== -1)) named.push(j); else unrec.push(j);
+    });
+    const byIdDesc = function (a, b) { return (parseInt(b.id, 10) || 0) - (parseInt(a.id, 10) || 0); };
+    named.sort(byIdDesc); unrec.sort(byIdDesc);
+    let h = "";
+    h += recs.length ? '<div class="stack" style="margin-bottom:14px">' + recs.map(function (x) {
+      const r = x.r;
+      const thumbs = (r.photos || []).map(function (p) { const s = PhotoStore.get(p.id); return s ? '<img src="' + esc(s) + '" alt="" style="width:44px;height:44px;object-fit:cover;border-radius:8px">' : ""; }).join("");
+      return '<button class="list-card" ' + act("uwOpenJob", x.j.id) + '><div class="job-body"><div class="row"><div class="meta">#' + esc(x.j.id) + " · " + esc(formatDate(r.at)) + "</div><div class=\"meta\">" + esc(r.tech || "") + "</div></div>" +
+        (r.complaint ? '<div class="job-prob"><b>Complaint:</b> ' + esc(r.complaint) + "</div>" : "") +
+        (r.findings ? '<div class="job-prob"><b>Findings:</b> ' + esc(r.findings) + "</div>" : "") +
+        (uwReadingText(r) ? '<div class="job-prob"><b>Readings:</b> ' + esc(uwReadingText(r)) + "</div>" : "") +
+        (r.workDone ? '<div class="job-prob"><b>Work done:</b> ' + esc(r.workDone) + "</div>" : "") +
+        (r.parts ? '<div class="job-prob"><b>Parts:</b> ' + esc(r.parts) + "</div>" : "") +
+        (thumbs ? '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">' + thumbs + "</div>" : "") + "</div></button>";
+    }).join("") + "</div>" : '<div class="muted" style="margin-bottom:12px">No unit work recorded on this unit yet. Use “Add unit work” on a job.</div>';
+    function jobRow(j, tag) {
+      return '<button class="list-card" ' + act("uwOpenJob", j.id) + '><div class="job-body"><div class="row"><div class="meta">#' + esc(j.id) + (jobWhen(j) ? " · " + esc(jobWhen(j)) : "") + "</div>" + (tag ? '<div class="meta">' + tag + "</div>" : "") + '</div><div class="job-prob">' + esc(j.problem || "") + "</div></div></button>";
+    }
+    if (named.length) h += '<div class="section">Jobs that name this unit</div><div class="stack" style="margin-bottom:14px">' + named.map(function (j) { return jobRow(j, "from job text"); }).join("") + "</div>";
+    if (unrec.length) h += '<div class="section">Visits at this address (unit not recorded)</div><div class="stack" style="margin-bottom:14px">' + unrec.map(function (j) { return jobRow(j, ""); }).join("") + "</div>";
+    return h;
+  }
+  function equipmentSheetV2() {
+    const d = state.assetDraft || emptyAsset();
+    const editing = !!state.assetEditingId;
+    const tab = state.assetTab || "details";
+    const addr = state.assetAddressId ? getAddressById(state.assetAddressId) : null;
+    const locOther = !!d.locOther || !!(d.location && EQUIPMENT_LOCATIONS.indexOf(d.location) === -1);
+    const typeKnown = EQUIPMENT_TYPES.some(function (t) { return t.id === d.type; });
+    const thumb = assetThumbSrc(d);
+    const tabs = '<div class="seg" style="margin-bottom:12px">' + [["details", "Details"], ["photos", "Photos" + ((d.photos || []).length ? " (" + d.photos.length + ")" : "")], ["history", "History"]].map(function (x) {
+      return '<button class="seg-btn' + (tab === x[0] ? " on" : "") + '" ' + act("assetTab", x[0]) + ">" + x[1] + "</button>";
+    }).join("") + "</div>";
+    let body = "";
+    if (tab === "details") {
+      const fields = [
+        ["hcpLabel", "Unit label", "text", "e.g. FAU upstairs, Master suite CU"],
+        ["make", "Make", "text", "Carrier, Rheem, Payne…"], ["model", "Model", "text", "From the nameplate"], ["serial", "Serial", "text", "From the nameplate"],
+        ["installDate", "Install date", "date", ""], ["manufactureDate", "Manufacture date", "date", ""],
+        ["capacity", "Tonnage or BTU", "text", "e.g. 3 ton or 80,000 BTU"], ["refrigerant", "Refrigerant", "text", "e.g. R-410A"],
+        ["filterSize", "Filter size", "text", "e.g. 16x25x1"], ["warranty", "Warranty", "text", "Parts, labor, or remaining term"],
+        ["lastServiced", "Last serviced", "text", "e.g. 10/31/2026"]
+      ];
+      body = (thumb ? '<button class="eq-hero" ' + act("assetTab", "photos") + '><img src="' + esc(thumb) + '" alt="Thumbnail"></button>' : "") +
+        '<label class="field"><div class="field-lab">Type</div><select id="eq-type" onchange="RT.setAssetType(this.value)">' +
+        (typeKnown ? "" : '<option value="other" selected>Other</option>') +
+        EQUIPMENT_TYPES.map(function (t) { return '<option value="' + t.id + '"' + (d.type === t.id ? " selected" : "") + ">" + esc(t.id === "other" ? "Other…" : t.label) + "</option>"; }).join("") + "</select></label>" +
+        (d.type === "other" || !typeKnown ? '<label class="field"><div class="field-lab">Type name</div><input id="eq-typeOther" value="' + esc(d.typeOther || "") + '" placeholder="e.g. Humidifier" oninput="RT.setAsset(\'typeOther\', this.value)"></label>' : "") +
+        '<label class="field"><div class="field-lab">Location</div><select id="eq-locsel" onchange="RT.setAssetLoc(this.value)">' +
+        '<option value=""' + (!d.location && !locOther ? " selected" : "") + ">Pick a location</option>" +
+        EQUIPMENT_LOCATIONS.filter(function (l) { return l !== "Other"; }).map(function (l) { return "<option" + (d.location === l && !d.locOther ? " selected" : "") + ">" + l + "</option>"; }).join("") +
+        '<option value="__other"' + (locOther ? " selected" : "") + ">Other…</option></select></label>" +
+        (locOther ? '<label class="field"><div class="field-lab">Location (type it)</div><input id="eq-location" value="' + esc(d.location || "") + '" placeholder="e.g. Hall closet upstairs" oninput="RT.setAsset(\'location\', this.value)"></label>' : "") +
+        fields.map(function (f) {
+          return '<label class="field"><div class="field-lab">' + esc(f[1]) + '</div><input id="eq-' + f[0] + '" type="' + f[2] + '" value="' + esc(d[f[0]] || "") + '" placeholder="' + esc(f[3]) + '" oninput="RT.setAsset(\'' + f[0] + '\', this.value)"></label>';
+        }).join("") +
+        '<label class="field"><div class="field-lab">Notes</div><textarea id="eq-notes" rows="3" placeholder="Condition, access, anything to remember" oninput="RT.setAsset(\'notes\', this.value)">' + esc(d.notes || "") + "</textarea></label>" +
+        (d.source === "HCP" ? '<div class="meta" style="margin-bottom:10px">Imported from Housecall Pro.</div>' : "") +
+        '<button class="dash' + (d.sample ? " sel" : "") + '" style="margin-bottom:14px" ' + act("toggleAssetSample") + ">" + (d.sample ? "Marked as example only — not a real unit" : "Mark as example only (not a real unit)") + "</button>";
+    } else if (tab === "photos") {
+      body = photoGridHtml("asset");
+    } else {
+      body = assetHistoryHtml(d, addr);
+    }
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">' + (editing ? esc(assetShortName(d)) : "Add equipment") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      tabs + body +
+      (tab !== "history" ? '<div class="note" style="margin-top:0;margin-bottom:12px">Saved on this phone only until sync is set up.</div>' +
+        '<button class="btn" ' + act("saveEquipment") + ">" + (editing ? "Save equipment" : "Add equipment") + "</button>" +
+        (editing ? '<button class="btn ghost" style="margin-top:8px" ' + act("removeEquipment") + ">Remove</button>" : "") : "")
+    );
+  }
+  (function migrateEquipTypes20261126() {
+    state.customers.forEach(function (c) {
+      serviceAddresses(c).forEach(function (a) {
+        (a.assets || []).forEach(function (x) {
+          if (!x || x.typeMap2) return;
+          const lab = String(x.hcpLabel || "");
+          const other = String(x.typeOther || "").trim();
+          if (x.type === "minisplit") { x.type = "other"; x.typeOther = other || "Mini split"; }
+          else if (x.type === "furnace" && /\bahu\b|air handler/i.test(lab + " " + other)) x.type = "airhandler";
+          else if (x.type === "condenser" && /\bhp\b|heat pump/i.test(lab)) x.type = "heatpump";
+          else if (x.type === "other") {
+            const map = [[/^package unit$/i, "package"], [/^air handler$/i, "airhandler"], [/^heat pump$/i, "heatpump"], [/^water heater$/i, "waterheater"], [/^furnace$/i, "furnace"], [/^(condenser|ac|a\/c)$/i, "condenser"], [/^(evap(orator)? coil|coil)$/i, "coil"], [/^thermostat$/i, "thermostat"]];
+            const m = map.find(function (p) { return p[0].test(other); });
+            if (m) { x.type = m[1]; x.typeOther = ""; }
+          }
+          if (x.location === "Roof") x.location = "Rooftop";
+          x.typeMap2 = 1;
+        });
+      });
+    });
+  })();
+  function cleanupDraftPhotos(keepAdded) {
+    const added = state._photoAdded || [], removed = state._photoRemoved || [];
+    if (keepAdded) removed.forEach(function (id) { PhotoStore.del(id); });
+    else added.forEach(function (id) { PhotoStore.del(id); });
+    state._photoAdded = []; state._photoRemoved = [];
+  }
+  const RT_EQUIP = ({
+    setAssetType: function (v) { state.assetDraft.type = v; if (v !== "other") state.assetDraft.typeOther = ""; render(); if (v === "other") { const el = document.getElementById("eq-typeOther"); if (el) try { el.focus({ preventScroll: true }); } catch (e) {} } },
+    setAssetLoc: function (v) {
+      const d = state.assetDraft;
+      if (v === "__other") { d.locOther = true; if (EQUIPMENT_LOCATIONS.indexOf(d.location) !== -1) d.location = ""; }
+      else { d.locOther = false; d.location = v; }
+      render();
+      if (v === "__other") { const el = document.getElementById("eq-location"); if (el) try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); } }
+    },
+    addPhotos: function (ctx, el) {
+      const files = Array.prototype.slice.call((el && el.files) || []);
+      el.value = "";
+      if (!files.length) return;
+      const ownerId = ctx === "uw" ? (state.uwDraft && state.uwDraft.id) : (state.assetDraft && state.assetDraft.id);
+      state._photoBusy = (state._photoBusy || 0) + files.length; render();
+      let chain = Promise.resolve();
+      files.forEach(function (f, k) {
+        chain = chain.then(function () {
+          return new Promise(function (res) {
+            compressImageFile(f, function (data, w, h) {
+              state._photoBusy = Math.max(0, (state._photoBusy || 1) - 1);
+              if (!data) { showToast("Couldn’t read one photo"); res(); return; }
+              const id = "ph-" + Date.now() + "-" + k + "-" + Math.random().toString(36).slice(2, 6);
+              const list = photoDraftList(ctx);
+              const label = nextPhotoLabel(list);
+              PhotoStore.put({ id: id, data: data, w: w, h: h, ownerType: ctx === "uw" ? "unitWork" : "asset", ownerId: ownerId, label: label, createdAt: isoNow(), uploaded: false }).then(function () {
+                photoDraftList(ctx).push({ id: id, label: label, at: isoNow() });
+                (state._photoAdded = state._photoAdded || []).push(id);
+                render(); res();
+              }).catch(function () { showToast("Photo storage isn’t available in this browser"); render(); res(); });
+            });
+          });
+        });
+      });
+    },
+    setPhotoLabel: function (ctx, i, v) { const l = photoDraftList(ctx); if (l[i]) l[i].label = v; render(); },
+    setUw: function (k, v) { if (state.uwDraft) state.uwDraft[k] = v; },
+    setUwReading: function (k, v) { if (state.uwDraft) { state.uwDraft.readingVals = state.uwDraft.readingVals || {}; state.uwDraft.readingVals[k] = v; } },
+    setVisitSummary: function (v) { const j = getJob(state.openJobId); if (!j) return; j.visitSummary = v; j.visitSummaryEdited = true; persist(); }
+  });
+  function handleEquipV2(name, arg) {
+    const job = getJob(state.openJobId);
+    if (name === "addEquipment" || name === "openAsset") { state.assetTab = "details"; state._photoAdded = []; state._photoRemoved = []; return false; }
+    if (name === "assetTab") { state.assetTab = arg; render(); return true; }
+    if (name === "photoView") { state.photoViewId = arg; render(); return true; }
+    if (name === "photoViewClose") { state.photoViewId = null; render(); return true; }
+    if (name === "photoMove") {
+      const p = String(arg).split("|"); const l = photoDraftList(p[0]); const i = Number(p[1]), j = i + Number(p[2]);
+      if (l[i] && l[j]) { const tmp = l[i]; l[i] = l[j]; l[j] = tmp; }
+      render(); return true;
+    }
+    if (name === "photoDel") {
+      const p = String(arg).split("|"); const l = photoDraftList(p[0]); const i = Number(p[1]);
+      if (!l[i] || !window.confirm("Delete this " + l[i].label + " photo?")) return true;
+      const id = l.splice(i, 1)[0].id;
+      const added = state._photoAdded || [];
+      if (added.indexOf(id) !== -1) { PhotoStore.del(id); state._photoAdded = added.filter(function (x) { return x !== id; }); }
+      else (state._photoRemoved = state._photoRemoved || []).push(id);
+      render(); return true;
+    }
+    if (name === "closeSheet" && (state.sheet === "equipment" || state.sheet === "unitWork")) {
+      if (state.sheet === "equipment" && state._uwReturn) {
+        cleanupDraftPhotos(false);
+        state._uwReturn = false; state.sheet = "unitWork"; state._photoAdded = state._uwPhotoAdded || []; state._photoRemoved = state._uwPhotoRemoved || [];
+        render(); return true;
+      }
+      cleanupDraftPhotos(false);
+      state.photoViewId = null;
+      return false;
+    }
+    if (name === "saveEquipment") {
+      if (state.assetDraft) { delete state.assetDraft.photo; if (!state.assetDraft.photos) state.assetDraft.photos = []; }
+      cleanupDraftPhotos(true);
+      state._savedAssetId = state.assetDraft && state.assetDraft.id;
+      return false;
+    }
+    if (name === "removeEquipment") {
+      if (!window.confirm("Remove this equipment and its photos from this phone?")) return true;
+      (state.assetDraft && state.assetDraft.photos || []).forEach(function (p) { PhotoStore.del(p.id); });
+      cleanupDraftPhotos(false);
+      return false;
+    }
+    if (name === "uwAdd" || name === "uwEdit") {
+      if (!job) return true;
+      let d;
+      if (name === "uwAdd") {
+        const addr = jobServiceAddress(job);
+        const assets = (addr && addr.assets) || [];
+        d = { id: "uw" + Date.now(), isNew: true, assetId: assets.length === 1 ? assets[0].id : "", complaint: "", findings: "", readings: "", readingVals: {}, workDone: "", parts: "", photos: [], tech: state.currentTech || DEFAULT_TECH, at: isoNow() };
+      } else {
+        const r = jobUnitWork(job).find(function (x) { return x.id === arg; }); if (!r) return true;
+        d = JSON.parse(JSON.stringify(r)); d.isNew = false;
+      }
+      state.uwDraft = d; state._photoAdded = []; state._photoRemoved = []; state.sheet = "unitWork"; render(); return true;
+    }
+    if (name === "uwPickAsset") { if (state.uwDraft) state.uwDraft.assetId = arg; render(); return true; }
+    if (name === "uwAddEquipment") {
+      if (!job) return true;
+      const addr = jobServiceAddress(job);
+      state._uwReturn = true; state._uwPhotoAdded = state._photoAdded || []; state._uwPhotoRemoved = state._photoRemoved || [];
+      const keepC = state.openCustomerId, keepA = state.openAddressId;
+      _handleV1("addEquipment", job.customerId + (addr ? "|" + addr.id : ""));
+      state.openCustomerId = keepC; state.openAddressId = keepA; render();
+      return true;
+    }
+    if (name === "uwSave") {
+      const d = state.uwDraft; if (!job || !d) return true;
+      if (!d.assetId) { showToast("Pick the unit first"); return true; }
+      const rec = JSON.parse(JSON.stringify(d)); delete rec.isNew;
+      const list = jobUnitWork(job).slice();
+      const i = list.findIndex(function (x) { return x.id === rec.id; });
+      if (i >= 0) list[i] = rec; else list.push(rec);
+      job.unitWork = list;
+      cleanupDraftPhotos(true);
+      refreshVisitSummary(job);
+      state.uwDraft = null; state.sheet = null;
+      showToast("Unit work saved"); return true;
+    }
+    if (name === "uwDelete") {
+      const d = state.uwDraft; if (!job || !d) return true;
+      if (!window.confirm("Delete this unit work record and its photos?")) return true;
+      (d.photos || []).forEach(function (p) { PhotoStore.del(p.id); });
+      job.unitWork = jobUnitWork(job).filter(function (x) { return x.id !== d.id; });
+      refreshVisitSummary(job);
+      state.uwDraft = null; state.sheet = null; state._photoAdded = []; state._photoRemoved = [];
+      showToast("Unit work deleted"); return true;
+    }
+    if (name === "uwRebuildSummary") { if (job) { job.visitSummaryEdited = false; refreshVisitSummary(job); render(); } return true; }
+    if (name === "uwOpenJob") { cleanupDraftPhotos(false); state.sheet = null; state.photoViewId = null; state.openCustomerId = null; state.openAddressId = null; state.openJobId = arg; render(); return true; }
+    if (name === "exportData") { exportBackupWithPhotos(); return true; }
+    return false;
+  }
+  function postHandleEquipV2(name) {
+    if (name === "saveEquipment" && state._uwReturn && state.uwDraft) {
+      state._uwReturn = false;
+      state.uwDraft.assetId = state._savedAssetId || state.uwDraft.assetId;
+      state._photoAdded = state._uwPhotoAdded || []; state._photoRemoved = state._uwPhotoRemoved || [];
+      state.sheet = "unitWork"; render();
+    }
+  }
+  function exportBackupWithPhotos() {
+    PhotoStore.all().then(function (list) {
+      list = list || [];
+      const bytes = list.reduce(function (s, p) { return s + String(p.data || "").length; }, 0);
+      const mb = Math.round(bytes / 1048576);
+      if (bytes > 60 * 1048576) {
+        if (window.confirm("Photos add about " + mb + " MB, which is too big for one backup file on a phone. Save the backup WITHOUT photos? (Photos stay on this phone.)")) downloadBackup([]);
+        return;
+      }
+      downloadBackup(list);
+      if (list.length) showToast("Backup includes " + list.length + " photo" + (list.length > 1 ? "s" : "") + " (" + Math.max(1, mb) + " MB)");
+    }).catch(function () { downloadBackup([]); showToast("Photos couldn’t be read; backup saved without them"); });
+  }
+
   function snapshotState() {
     return {
         v: 1,
@@ -2554,6 +3021,7 @@
     toastTimer = setTimeout(function () { state.toast = ""; render(); }, 2600);
   }
   function closeSheet() {
+    if (typeof handleEquipV2 === "function" && state.sheet && handleEquipV2("closeSheet")) return;
     state.sheet = null;
     state.compareIds = [];
     state.voiceConfirm = null;
@@ -3342,9 +3810,9 @@
       '<label class="btn ghost" style="display:flex;margin-bottom:8px;cursor:pointer">Import backup file<input type="file" accept=".json,application/json" style="display:none" onchange="RT.importFile(this)"></label>' +
       (r ? '<div class="note" style="margin-bottom:16px">' + esc(r) + "</div>" : '<div style="margin-bottom:16px"></div>');
   }
-  function downloadBackup() {
+  function downloadBackup(photos) {
     const snap = snapshotState();
-    const payload = { app: "reliatech", kind: "backup", exportedAt: new Date().toISOString(), device: navigator.userAgent, data: snap };
+    const payload = { app: "reliatech", kind: "backup", exportedAt: new Date().toISOString(), device: navigator.userAgent, data: snap, photos: Array.isArray(photos) ? photos : [] };
     const json = JSON.stringify(payload);
     const name = "reliatech-backup-" + todayYmd() + ".json";
     try {
@@ -3450,7 +3918,12 @@
       const reader = new FileReader();
       reader.onload = function () {
         try {
-          state.importReport = importBackup(JSON.parse(String(reader.result || "")));
+          const parsed = JSON.parse(String(reader.result || ""));
+          state.importReport = importBackup(parsed);
+          const pics = (parsed && Array.isArray(parsed.photos)) ? parsed.photos.filter(function (x) { return x && x.id && x.data; }) : [];
+          if (pics.length) {
+            Promise.all(pics.map(function (x) { return PhotoStore.put(x).catch(function () {}); })).then(function () { state.importReport += " " + pics.length + " photo" + (pics.length > 1 ? "s" : "") + " restored."; render(); });
+          }
           showToast("Import finished");
         } catch (e) {
           state.importReport = "That file isn’t a ReliaTech backup. Nothing was changed.";
@@ -4679,6 +5152,7 @@
       '<button class="quick-btn" ' + act("sheet", "reading") + ">" + icon("reading") + "<span>Reading</span></button>" +
       "</div>" +
       readingsSection(job) +
+      unitWorkSectionHtml(job) +
       '<div class="section">Timeline</div><div class="timeline">' + (job.timeline || []).map(timelineItemHtml).join("") + "</div>" +
       '<div id="job-estimates" style="scroll-margin-top:12px"></div>' +
       estimateHistoryHtml(job) +
@@ -4749,7 +5223,7 @@
   }
   function assetCard(a, customerId, compact) {
     return '<button class="eq-card" ' + act("openAsset", (customerId || state.openCustomerId || "") + "|" + a.id) + ">" +
-      (a.photo ? '<img class="eq-thumb" src="' + esc(a.photo) + '" alt="Nameplate">' : '<div class="eq-thumb ph">' + icon("photo", 18) + "</div>") +
+      (assetThumbSrc(a) ? '<img class="eq-thumb" src="' + esc(assetThumbSrc(a)) + '" alt="Nameplate">' : '<div class="eq-thumb ph">' + icon("photo", 18) + "</div>") +
       '<div class="eq-body"><div class="eq-type">' + esc(equipmentTypeLabel(a)) + (a.sample ? ' · Example only' : "") + "</div>" +
       '<div class="h2">' + esc([a.make, a.model].filter(Boolean).join(" · ") || "Make and model not entered") + "</div>" +
       (assetSub(a) ? '<div class="muted" style="margin-top:2px">' + esc(assetSub(a)) + "</div>" : "") +
@@ -5074,7 +5548,7 @@
       '<label class="field"><div class="field-lab">Refrigerant</div><input id="np-refrigerant" type="text" value="' + esc(np.refrigerant || "") + '" oninput="RT.setNameplate(\'refrigerant\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Filter size</div><input id="np-filterSize" type="text" value="' + esc(np.filterSize || "") + '" oninput="RT.setNameplate(\'filterSize\', this.value)"></label>' +
       '<div class="nameplate">' + (np.photo ? '<img src="' + esc(np.photo) + '" alt="Nameplate photo">' : '<div class="nameplate-empty">' + icon("photo", 22) + "<span>Nameplate photo</span></div>") +
-      '<input type="file" accept="image/*" capture="environment" aria-label="Nameplate photo" onchange="RT.setNameplatePhoto(this)"></div>' +
+      '<input type="file" accept="image/*" aria-label="Nameplate photo" onchange="RT.setNameplatePhoto(this)"></div>' +
       (np.photo ? '<button class="link-btn" style="margin-bottom:12px" ' + act("clearNpPhoto") + ">Remove photo</button>" : "");
     return backdrop(
       '<div class="sheet-head"><div class="sheet-title">Add a note</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
@@ -5092,7 +5566,7 @@
       (d.data
         ? '<img class="cap-thumb" alt="Preview" src="' + d.data + '">'
         : '<div class="photo-ph">' + icon("photo", 28) + "<span>Take a photo or choose one from the library</span></div>") +
-      '<label class="btn ghost" style="display:block;text-align:center;margin:8px 0 12px">Take or choose a photo<input type="file" accept="image/*" capture="environment" aria-label="Job photo" style="position:absolute;opacity:0;width:0;height:0" onchange="RT.setPhotoFile(this)"></label>' +
+      '<label class="btn ghost" style="display:block;text-align:center;margin:8px 0 12px">Take or choose a photo<input type="file" accept="image/*" aria-label="Job photo" style="position:absolute;opacity:0;width:0;height:0" onchange="RT.setPhotoFile(this)"></label>' +
       '<label class="field"><div class="field-lab">Caption (optional)</div><input id="photo-cap" value="' + esc(d.caption || "") + '" oninput="RT.setPhotoCaption(this.value)"></label>' +
       (d.data ? '<button class="btn" ' + act("savePhoto") + ">Save photo to this job</button>" : ""));
   }
@@ -5886,7 +6360,8 @@
     const s = state.sheet;
     if (!s) return "";
     if (s === "newCall") return newCallSheet();
-    if (s === "equipment") return equipmentSheet();
+    if (s === "equipment") return equipmentSheetV2();
+    if (s === "unitWork") { const j = getJob(state.openJobId); return j ? unitWorkSheet(j) : ""; }
     if (s === "address") return addressSheet();
     if (s === "moveAddress") return moveAddressSheet();
     if (s === "billTo") { const j = getJob(state.openJobId); return j ? billToSheet(j) : ""; }
@@ -5990,7 +6465,7 @@
     const toast = state.toast ? '<div class="toast">' + esc(state.toast) + "</div>" : "";
     const key = [state.tab, state.screen, state.openJobId, state.openCustomerId, state.openAddressId, state.sheet, state.viewEstimateId, state.dashListKey].join("|");
     const keep = renderScrollKeep(root);
-    root.innerHTML = mainHtml() + sheetHtml() + toast;
+    root.innerHTML = mainHtml() + sheetHtml() + photoViewHtml() + toast;
     if (key === state._viewKey) renderScrollRestore(root, keep);
     state._viewKey = key;
     applyInputHints(root);
@@ -5999,6 +6474,7 @@
   }
 
   function handle(name, arg) {
+    if (handleEquipV2(name, arg)) return;
     if (handlePrePhase2(name, arg)) return;
     if (handlePhase1(name, arg)) return;
     if (name === "tab") { state.tab = arg; state.openJobId = null; state.openCustomerId = null; state.openAddressId = null; state.screen = null; state.query = ""; render(); return; }
@@ -7368,6 +7844,9 @@
       try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
     }
   }
+  Object.assign(window.RT, RT_EQUIP);
+  const _handleV1 = handle;
+  handle = function (n, a) { _handleV1(n, a); postHandleEquipV2(n); if (n === "saveNote") migrateLegacyPhotos().then(function (k) { if (k) render(); }).catch(function () {}); };
   const _render0 = render;
   render = function () {
     _render0();
