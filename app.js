@@ -11,8 +11,9 @@
     approved: { label: "Approved", short: "Appr.", step: 3, bar: "#2F8F4E", bg: "#E5F6EA", text: "#1B5C30", bgDark: "#163322", textDark: "#8FDBA8" },
     progress: { label: "In progress", short: "Work", step: 4, bar: ACCENT, bg: "#FDE8DC", text: "#A43A0A", bgDark: "#3A2218", textDark: "#F5B089" },
     done: { label: "Work done", short: "Work", step: 4, bar: "#6B5CE0", bg: "#EEEDFB", text: "#3D3399", bgDark: "#26224A", textDark: "#C0B8F5" },
-    invoiced: { label: "Invoiced", short: "Inv.", step: 5, bar: "#C45C1A", bg: "#FAE8DB", text: "#8A3A0C", bgDark: "#3A2418", textDark: "#F0B090" },
+    invoiced: { label: "Awaiting payment", short: "Await.", step: 5, bar: "#C45C1A", bg: "#FAE8DB", text: "#8A3A0C", bgDark: "#3A2418", textDark: "#F0B090" },
     paid: { label: "Paid", short: "Paid", step: 6, bar: "#1F7A4D", bg: "#E3F5EC", text: "#145C38", bgDark: "#143326", textDark: "#8FDBB0" },
+    posted: { label: "Posted", short: "Posted", step: 6, bar: "#1F4D3A", bg: "#E1ECE6", text: "#123A2A", bgDark: "#12261D", textDark: "#9FD1B8" },
     superseded: { label: "Replaced", short: "Repl.", step: 2, bar: "#6B7280", bg: "#EEF0F2", text: "#4B5563", bgDark: "#2A2E32", textDark: "#C5CBD1" }
   };
   const PIPELINE = [
@@ -21,7 +22,7 @@
   ];
   const FILTERS = [
     ["open", "Open"], ["all", "All"], ["new", "New call"], ["diagnosis", "Diagnosis"], ["estimate", "Estimate sent"],
-    ["approved", "Approved"], ["progress", "In progress"], ["done", "Work done"], ["invoiced", "Invoiced"], ["paid", "Paid"]
+    ["approved", "Approved"], ["progress", "In progress"], ["done", "Work done"], ["invoiced", "Awaiting payment"], ["paid", "Paid"]
   ];
   const MODE_META = { cooling: { label: "Cooling", short: "Cooling" }, furnace: { label: "Heating · furnace", short: "Furnace" }, heatPumpHeat: { label: "Heating · heat pump", short: "Heat pump" } };
   const REPORT_CHIPS = ["No cool", "No heat", "Noise", "Leak", "Maintenance", "Thermostat", "Estimate request"];
@@ -3342,6 +3343,273 @@
     return false;
   }
 
+  /* ——— Phase 2 · Multi-invoice (progress billing), T&M invoices, job closeout ———
+     Default stays one invoice due on completion. Nothing here sends anything to a customer. */
+  const CA_7159_NOTE = "California B&P Code §7159: on a home improvement contract the down payment may not exceed $1,000 or 10% of the contract price, whichever is less, and each progress payment may not exceed the value of the work performed or materials delivered. Bill this only when the equipment is delivered to the site, and keep the payment schedule in the signed contract. (Warning only; this does not block.)";
+  function invList(job) { return job && Array.isArray(job.invoices) ? job.invoices : []; }
+  function ensureInvoices(job) {
+    if (!Array.isArray(job.invoices)) {
+      job.invoices = [];
+      if (job.invoiceId) {
+        const paid = job.status === "paid";
+        job.invoices.push({ id: String(job.invoiceId), kind: "single", title: "Invoice", lines: (job.lineItems || []).map(function (l) { return { label: l.label || l.name || "Item", amount: Number(l.amount) || 0 }; }),
+          total: Number(job.total) || 0, due: paid ? 0 : (invoiceDue(job) || Number(job.total) || 0), status: paid ? "paid" : "open", paidMethod: job.paidMethod || "", paidDate: job.paidDate || "", legacy: true, createdAt: "" });
+      }
+    }
+    return job.invoices;
+  }
+  function activeInvoice(job) {
+    const l = invList(job); if (!l.length) return null;
+    return l.find(function (i) { return i.id === job.activeInvoiceId; }) || l.find(function (i) { return i.status !== "paid"; }) || l[l.length - 1];
+  }
+  function setActiveInvoice(job, inv) { job.activeInvoiceId = inv.id; job.invoiceId = inv.id; job.dueAmount = inv.status === "paid" ? 0 : (Number(inv.due) || 0); }
+  function nextInvoiceId(job) { const n = invList(job).length + 1; return job.id + "-" + (n < 10 ? "0" : "") + n; }
+  function ptNow() { return new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) + " PT"; }
+  function r2(x) { return Math.round((Number(x) || 0) * 100) / 100; }
+  function invKindLabel(inv) { return inv.kind === "deposit" ? "Progress 1 · equipment delivery" : inv.kind === "final" ? "Final · balance" : inv.kind === "tm" ? "Time & materials" : "Invoice"; }
+  function isInstallJob(job) {
+    if (!job) return false;
+    if (job.billingMode === "progress") return true;
+    return (job.lineItems || []).some(function (l) { return (l.builder && ["replacement", "retrofit", "acadd"].indexOf(l.builder.kind) !== -1) || /replacement|retrofit|AC add|system install|changeout|change-out/i.test(l.label || ""); });
+  }
+  function jobMoney(job) {
+    const l = invList(job);
+    const billed = l.reduce(function (t, i) { return t + (Number(i.total) || 0); }, 0);
+    const paid = l.reduce(function (t, i) { return t + (i.status === "paid" ? (Number(i.total) || 0) : 0); }, 0);
+    return { billed: r2(billed), paid: r2(paid), open: r2(l.reduce(function (t, i) { return t + (i.status === "paid" ? 0 : (Number(i.due) || 0)); }, 0)) };
+  }
+  /* T&M: one labor line per visit date (from completed clock-ins) at $85/hr, truck $65 per visit (toggle), parts at price book GP */
+  function ptDate(iso) { const ms = parseStamp(iso); if (!ms) return ""; return new Date(ms).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "2-digit", day: "2-digit", year: "numeric" }); }
+  function tmLines(job, opts) {
+    opts = opts || {};
+    const byDate = {}, order = [];
+    completedTimeEntries(job).forEach(function (e) { const d = ptDate(e.clockIn); if (!d) return; if (!byDate[d]) { byDate[d] = { hrs: 0, techs: [] }; order.push(d); } byDate[d].hrs += entryHours(e); if (byDate[d].techs.indexOf(e.tech) === -1) byDate[d].techs.push(e.tech); });
+    order.sort(function (a, b) { return new Date(a) - new Date(b); });
+    const lines = [], flags = [];
+    order.forEach(function (d) {
+      const h = Math.round(byDate[d].hrs * 100) / 100;
+      lines.push({ label: "Labor " + d + " · " + h + " hr @ $85/hr" + (byDate[d].techs.length > 1 ? " (" + byDate[d].techs.join(", ") + ")" : ""), amount: r2(h * 85), tm: "labor", date: d, hours: h });
+      if (opts.truck !== false) lines.push({ label: "Truck / trip " + d, amount: 65, tm: "truck", date: d });
+    });
+    if (!order.length) flags.push("No completed clock-ins on this job; labor lines are empty");
+    jobParts(job).filter(function (p) { return ["returned", "cancelled", "canceled"].indexOf(p.status) === -1; }).forEach(function (p) {
+      const qty = Number(p.qty) > 0 ? Number(p.qty) : 1;
+      const cost = p.cost != null && p.cost !== "" ? Number(p.cost) : null;
+      const refr = /refrigerant|r-?22|r-?410|r-?407|r-?454|r-?32/i.test(p.name || "");
+      let each = 0;
+      if (cost != null && cost > 0) each = refr ? Math.round(cost * 2.25) : rbRoundSell(cost * 1.1025 / 0.6);
+      else flags.push((p.name || "Part") + ": no cost, enter a price");
+      lines.push({ label: (p.name || "Part") + (qty !== 1 ? " × " + qty : ""), amount: r2(each * qty), tm: "part", partId: p.id });
+    });
+    flags.push("Parts at cost × 1.1025 tax ÷ 0.60 (40% GP); refrigerant at cost × 2.25 (pricing.md). Tax 10.25% is assumed.");
+    return { lines: lines, total: r2(lines.reduce(function (t, l) { return t + l.amount; }, 0)), flags: flags, visits: order.length };
+  }
+  function buildFinalInvoice(job, mode, opts) {
+    ensureInvoices(job);
+    const dep = invList(job).filter(function (i) { return i.kind === "deposit"; });
+    let inv = invList(job).find(function (i) { return i.kind !== "deposit" && i.status !== "paid"; });
+    let lines, total, kind, title;
+    if (mode === "tm") {
+      const t = tmLines(job, opts); lines = t.lines; total = t.total; kind = "tm"; title = "Time & materials invoice";
+      if (job.totalBeforeTm == null) job.totalBeforeTm = Number(job.total) || 0;
+      job.total = total;
+    } else {
+      lines = (job.lineItems || []).map(function (l) { return { label: l.label || l.name || "Item", amount: Number(l.amount) || 0 }; });
+      total = Number(job.total) || 0; kind = dep.length ? "final" : "single"; title = dep.length ? "Final invoice" : "Invoice";
+    }
+    let due = total;
+    dep.forEach(function (d) { lines.push({ label: "Less progress payment " + d.id + (d.status === "paid" ? " (paid)" : " (billed)"), amount: -(Number(d.total) || 0) }); due -= Number(d.total) || 0; });
+    due = r2(due);
+    const rec = { id: inv ? inv.id : nextInvoiceId(job), legacy: false, kind: kind, title: title, lines: lines, total: dep.length ? due : r2(total), due: due, status: "open", draft: true, dueNote: "Due on completion", createdAt: ptNow() };
+    if (inv) Object.assign(inv, rec); else { job.invoices.push(rec); inv = rec; }
+    setActiveInvoice(job, inv);
+    return inv;
+  }
+  function closeoutBannerHtml(job) {
+    const calls = (job.callbackJobIds || []);
+    const links = (job.callbackOf ? '<div class="meta" style="margin-top:4px">' + esc(job.callbackKind === "warranty" ? "Warranty" : "Callback") + ' for <button class="chip" style="padding:2px 8px;min-height:0" ' + act("openLinkedJob", job.callbackOf) + ">#" + esc(job.callbackOf) + "</button></div>" : "") +
+      (calls.length ? '<div class="meta" style="margin-top:4px">Callback / warranty jobs: ' + calls.map(function (id) { return '<button class="chip" style="padding:2px 8px;min-height:0" ' + act("openLinkedJob", id) + ">#" + esc(id) + "</button>"; }).join(" ") + "</div>" : "");
+    const m = jobMoney(job);
+    const money3 = invList(job).length ? '<div class="meta" style="margin-top:4px">Invoiced ' + money(m.billed) + " · paid " + money(m.paid) + " · open " + money(m.open) + "</div>" : "";
+    if (job.posted) return '<div class="note" style="margin-bottom:12px"><b>Posted · locked</b> ' + esc(job.posted.at || "") + (job.posted.auto ? " (paid in full)" : "") + money3 + links +
+      '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn ghost" style="flex:1;margin:0" ' + act("reopenOpen") + ">Reopen</button><button class=\"btn ghost\" style=\"flex:1;margin:0\" " + act("callbackOpen") + ">Callback / warranty</button></div></div>";
+    if (job.workComplete) return '<div class="note" style="margin-bottom:12px"><b>Work complete · awaiting payment</b> ' + esc(job.workComplete.at || "") + money3 + links +
+      '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn ghost" style="flex:1;margin:0" ' + act("reopenOpen") + ">Reopen</button><button class=\"btn ghost\" style=\"flex:1;margin:0\" " + act("postJob") + ">Post now</button><button class=\"btn ghost\" style=\"flex:1;margin:0\" " + act("callbackOpen") + ">Callback</button></div></div>";
+    if (job.status === "paid" || job.status === "done") return '<div style="margin-bottom:12px">' + money3 + links + '<div style="display:flex;gap:8px;margin-top:6px">' + (job.status === "paid" ? '<button class="btn ghost" style="flex:1;margin:0" ' + act("postJob") + ">Post (lock) job</button>" : "") + '<button class="btn ghost" style="flex:1;margin:0" ' + act("callbackOpen") + ">Callback / warranty</button></div></div>";
+    return (money3 || links) ? '<div style="margin-bottom:12px">' + money3 + links + "</div>" : "";
+  }
+  function closeoutActionsHtml(job) {
+    if (job.posted || job.workComplete) return "";
+    let h = "";
+    if (["approved", "progress", "done"].indexOf(job.status) !== -1) {
+      if (isInstallJob(job) && !job.invoiceId && !invList(job).some(function (i) { return i.kind === "deposit"; })) h += '<button class="btn ghost" ' + act("progressOpen") + ">Progress billing · 50% at equipment delivery</button>";
+      h += '<button class="btn teal" ' + act("closeoutOpen") + ">Work complete</button>";
+    }
+    return h;
+  }
+  function progressSheet(job) {
+    const amt = r2((Number(job.total) || 0) * 0.5);
+    const id = invList(job).length ? nextInvoiceId(job) : job.id + "-01";
+    return backdrop('<div class="sheet-head"><div class="sheet-title">Progress billing</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="muted" style="margin-bottom:10px">Two invoices instead of one: ' + esc(id) + " for 50% when the equipment is delivered, then a final invoice for the balance when you tap Work complete. Use this only if you want it; the default is one invoice due on completion.</div>" +
+      '<div class="doc"><div class="k-up">Invoice ' + esc(id) + " · due on equipment delivery</div>" +
+      '<div class="row" style="margin-top:6px"><div>Progress payment 1 of 2: equipment delivery (50% of ' + money(job.total) + ")</div><div>" + money(amt) + "</div></div></div>" +
+      '<div class="warn-banner" style="margin-top:10px">' + esc(CA_7159_NOTE) + "</div>" +
+      (!(Number(job.total) > 0) ? '<div class="warn-banner">This job has no total yet. Save or approve the estimate first.</div>' : "") +
+      '<button class="btn teal" ' + act("progressCreate") + ">Create " + esc(id) + " · " + money(amt) + "</button>" +
+      '<div class="hint">Creating the invoice does not send it. Use Send invoice when the equipment is delivered.</div>');
+  }
+  function closeoutSheet(job) {
+    const d = state.coDraft || { mode: "single", truck: true };
+    const prog = invList(job).some(function (i) { return i.kind === "deposit"; });
+    const open = jobTimeEntries(job).filter(function (e) { return e.clockIn && !e.clockOut; });
+    let body = "";
+    if (prog) {
+      const dep = invList(job).filter(function (i) { return i.kind === "deposit"; });
+      const depT = dep.reduce(function (t, i) { return t + (Number(i.total) || 0); }, 0);
+      body = '<div class="doc"><div class="k-up">Final invoice · balance</div><div class="row" style="margin-top:6px"><div>Contract total</div><div>' + money(job.total) + "</div></div>" +
+        dep.map(function (i) { return '<div class="row"><div>Less ' + esc(i.id) + (i.status === "paid" ? " (paid)" : " (billed, unpaid)") + "</div><div>−" + money(i.total) + "</div></div>"; }).join("") +
+        '<div class="row" style="font-weight:750;margin-top:6px"><div>Balance due</div><div>' + money(r2((Number(job.total) || 0) - depT)) + "</div></div></div>";
+    } else {
+      body = '<div class="chips"><button class="chip' + (d.mode !== "tm" ? " on" : "") + '" ' + act("coMode", "single") + ">One invoice (estimate price)</button><button class=\"chip" + (d.mode === "tm" ? " on" : "") + '" ' + act("coMode", "tm") + ">Time & materials</button></div>";
+      if (d.mode === "tm") {
+        const t = tmLines(job, d);
+        body += '<div class="chips"><button class="chip' + (d.truck !== false ? " on" : "") + '" ' + act("coTruck") + ">Truck $65 per visit</button></div>" +
+          '<div class="doc"><div class="k-up">T&M · ' + t.visits + " visit" + (t.visits === 1 ? "" : "s") + "</div>" + t.lines.map(function (l) { return '<div class="row" style="margin-top:6px"><div style="min-width:0">' + esc(l.label) + "</div><div>" + money(l.amount) + "</div></div>"; }).join("") +
+          '<div class="row" style="font-weight:750;margin-top:8px"><div>Total</div><div>' + money(t.total) + "</div></div></div>" +
+          '<div class="meta" style="margin-top:6px">' + t.flags.map(esc).join(" · ") + "</div>" +
+          (open.length ? '<div class="meta">Open clock-ins will be closed now and included.</div>' : "");
+      } else {
+        body += '<div class="doc"><div class="k-up">Invoice ' + esc(invList(job).length ? nextInvoiceId(job) : job.id + "-01") + "</div>" + (job.lineItems || []).map(function (l) { return '<div class="row" style="margin-top:6px"><div>' + esc(l.label) + "</div><div>" + money(l.amount) + "</div></div>"; }).join("") +
+          '<div class="row" style="font-weight:750;margin-top:8px"><div>Total</div><div>' + money(job.total) + "</div></div></div>";
+      }
+    }
+    return backdrop('<div class="sheet-head"><div class="sheet-title">Work complete</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="muted" style="margin-bottom:10px">This ' + (open.length ? "clocks out " + open.length + " open time entr" + (open.length === 1 ? "y" : "ies") + ", " : "") + "stops clock-in, writes the final invoice draft, and moves the job to Awaiting payment. Nothing is sent.</div>" +
+      body + '<button class="btn teal" style="margin-top:12px" ' + act("workComplete") + ">Work complete · write invoice draft</button>");
+  }
+  function invoicesSheet(job) {
+    const inv = activeInvoice(job);
+    const l = invList(job), m = jobMoney(job);
+    return backdrop('<div class="sheet-head"><div class="sheet-title">Invoices</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      (l.length > 1 ? '<div class="chips">' + l.map(function (i) { return '<button class="chip' + (i === inv ? " on" : "") + '" ' + act("pickInvoice", i.id) + ">" + esc(i.id) + " · " + (i.status === "paid" ? "paid" : money(i.due)) + "</button>"; }).join("") + "</div>" : "") +
+      '<div class="doc"><div class="k-up">Invoice ' + esc(inv.id) + " · " + esc(invKindLabel(inv)) + (inv.draft && inv.status !== "paid" ? " · draft" : "") + "</div>" +
+      docBlocksHtml(job, { showReferred: true }) +
+      inv.lines.map(function (x) { return '<div class="row" style="margin-top:6px"><div style="min-width:0">' + esc(x.label) + "</div><div>" + money(x.amount) + "</div></div>"; }).join("") +
+      '<div class="row" style="margin-top:10px;font-weight:750"><div>' + (inv.status === "paid" ? "Paid" : "Amount due") + "</div><div>" + money(inv.status === "paid" ? inv.total : inv.due) + "</div></div>" +
+      '<div class="meta">' + esc(inv.dueNote || "") + (inv.paidDate ? " · paid " + esc(inv.paidDate) + " · " + esc(inv.paidMethod || "") : "") + "</div></div>" +
+      (inv.kind === "deposit" ? '<div class="warn-banner" style="margin-top:10px">' + esc(CA_7159_NOTE) + "</div>" : "") +
+      (l.length > 1 ? '<div class="meta" style="margin-top:8px">Job: invoiced ' + money(m.billed) + " · paid " + money(m.paid) + " · open " + money(m.open) + "</div>" : "") +
+      (inv.kind === "single" || inv.kind === "final" ? (showTimeOnInvoice(job) ? timeOnSiteTable(job) : "") : "") +
+      (inv.status !== "paid" ? '<button class="btn teal" ' + act("sheet", "pay") + ">Pay now</button>" : "") +
+      '<button class="btn teal" ' + act("sheet", "send") + ">Send invoice " + esc(inv.id) + "</button>" +
+      (inv.status !== "paid" && !job.posted ? '<button class="btn accent" ' + act("sheet", "paid") + ">Mark " + esc(inv.id) + " paid</button>" : "") +
+      '<button class="btn ghost" ' + act("closeSheet") + ">Done</button>");
+  }
+  function reasonSheet(job, kind) {
+    const d = state.reasonDraft || { text: "", cb: "callback" };
+    return backdrop('<div class="sheet-head"><div class="sheet-title">' + (kind === "reopen" ? "Reopen job" : "Callback / warranty") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      (kind === "reopen" ? '<div class="muted" style="margin-bottom:10px">Unlocks job #' + esc(job.id) + " so you can clock in and edit again. The reason is logged on the job. Invoices and payments are kept.</div>"
+        : '<div class="muted" style="margin-bottom:10px">Creates a new job linked to #' + esc(job.id) + " for the same customer and address.</div>" +
+          '<div class="chips"><button class="chip' + (d.cb !== "warranty" ? " on" : "") + '" ' + act("cbKind", "callback") + ">Callback</button><button class=\"chip" + (d.cb === "warranty" ? " on" : "") + '" ' + act("cbKind", "warranty") + ">Warranty</button></div>") +
+      '<label class="field"><div class="field-lab">Reason (required)</div><textarea id="reason-text" rows="3" oninput="RT.setReason(this.value)">' + esc(d.text) + "</textarea></label>" +
+      '<button class="btn ' + (kind === "reopen" ? "accent" : "teal") + '" ' + act(kind === "reopen" ? "reopenJob" : "callbackCreate") + ">" + (kind === "reopen" ? "Reopen job" : "Create linked job") + "</button>");
+  }
+  RT_RB._testJob = function (id) { return getJob(id); };
+  RT_RB._render = function () { render(); };
+  RT_RB.setReason = function (v) { state.reasonDraft = state.reasonDraft || { text: "", cb: "callback" }; state.reasonDraft.text = v; };
+  const LOCKED_ACTS = ["clockIn", "clockOut", "openPriceBook", "rbOpen", "rpOpen", "svOpen", "saveEstimate", "makeInvoice", "addPart", "editPart", "deletePart", "partStatus", "savePart", "partsFromEstimate", "editTime", "requestCorrection", "uwAdd", "uwEdit", "uwDelete", "uwSave", "toggleTimeOnInvoice", "workComplete", "closeoutOpen", "progressOpen", "progressCreate", "markPaid", "postJob"];
+  function handleCloseout(name, arg) {
+    const job = getJob(state.openJobId);
+    if (job && job.posted && (LOCKED_ACTS.indexOf(name) !== -1 || (name === "sheet" && ["photo", "voiceMemo", "note", "reading", "paid"].indexOf(arg) !== -1))) { showToast("Job #" + job.id + " is posted and locked. Tap Reopen to change it."); return true; }
+    if (job && job.workComplete && name === "clockIn") { showToast("Work is marked complete. Reopen the job to clock in."); return true; }
+    if (name === "sheet" && arg === "invoice" && job && !invList(job).length && !job.invoiceId) { state.coDraft = { mode: "single", truck: true }; state.sheet = "closeout"; render(); return true; }
+    if (name === "progressOpen") { if (job) { state.sheet = "progress"; render(); } return true; }
+    if (name === "progressCreate") {
+      if (!job) return true;
+      if (!(Number(job.total) > 0)) { showToast("No job total yet"); return true; }
+      ensureInvoices(job);
+      if (invList(job).some(function (i) { return i.kind === "deposit"; })) { showToast("Progress invoice already exists"); return true; }
+      const amt = r2(Number(job.total) * 0.5);
+      const inv = { id: nextInvoiceId(job), kind: "deposit", title: "Progress invoice", lines: [{ label: "Progress payment 1 of 2: equipment delivery (50% of " + money(job.total) + " contract)", amount: amt }], total: amt, due: amt, status: "open", dueNote: "Due on equipment delivery", createdAt: ptNow() };
+      job.invoices.push(inv); job.billingMode = "progress"; setActiveInvoice(job, inv);
+      job.timeline = [{ id: "inv" + Date.now(), kind: "system", time: "Just now", title: "Progress invoice " + inv.id, body: money(amt) + " (50%) due on equipment delivery. Not sent." }].concat(job.timeline || []);
+      state.sheet = "invoice"; showToast("Invoice " + inv.id + " created · not sent"); return true;
+    }
+    if (name === "closeoutOpen") { if (job) { state.coDraft = { mode: job.billingMode === "tm" ? "tm" : "single", truck: true }; state.sheet = "closeout"; render(); } return true; }
+    if (name === "coMode") { state.coDraft = Object.assign({ truck: true }, state.coDraft || {}, { mode: arg }); render(); return true; }
+    if (name === "coTruck") { state.coDraft = state.coDraft || { mode: "tm" }; state.coDraft.truck = state.coDraft.truck === false; render(); return true; }
+    if (name === "workComplete") {
+      if (!job) return true;
+      const d = state.coDraft || { mode: "single", truck: true };
+      let guard = 0, e;
+      while ((e = anyOpenEntry(job)) && guard++ < 20) clockOutJob(job, e.tech);
+      const prog = invList(job).some(function (i) { return i.kind === "deposit"; });
+      const mode = prog ? "progress" : (d.mode === "tm" ? "tm" : "single");
+      if (mode === "tm") job.billingMode = "tm";
+      if (mode !== "tm" && !(Number(job.total) > 0)) { showToast("This job has no total. Save an estimate or choose Time & materials."); return true; }
+      const inv = buildFinalInvoice(job, mode, d);
+      job.workComplete = { at: ptNow(), by: actingAs() };
+      job.status = "invoiced";
+      job.timeline = [{ id: "wc" + Date.now(), kind: "system", time: "Just now", title: "Work complete", body: "Clock-in stopped. Final invoice draft " + inv.id + " for " + money(inv.due) + " written. Not sent." }].concat(job.timeline || []);
+      state.coDraft = null; state.sheet = "invoice"; showToast("Awaiting payment · " + inv.id + " draft"); return true;
+    }
+    if (name === "pickInvoice") { const inv = invList(job).find(function (i) { return i.id === arg; }); if (inv) setActiveInvoice(job, inv); render(); return true; }
+    if (name === "markPaid" && job && invList(job).length) {
+      const d = state.paidDraft || emptyPaidDraft();
+      const method = d.method || "Card/Stripe", date = d.date || todayYmd();
+      if (PAY_METHODS.indexOf(method) === -1) { showToast("Choose a payment method"); return true; }
+      const inv = activeInvoice(job); if (!inv || inv.status === "paid") { showToast("This invoice is already paid"); return true; }
+      const amt = inv.due;
+      inv.status = "paid"; inv.due = 0; inv.paidMethod = method; inv.paidDate = date; inv.draft = false;
+      job.paidMethod = method; job.paidDate = date;
+      const open = invList(job).filter(function (i) { return i.status !== "paid"; });
+      let body = "Invoice " + inv.id + " marked paid, " + money(amt) + ", " + method + " on " + date + ".";
+      if (open.length) { setActiveInvoice(job, open[0]); }
+      else {
+        job.dueAmount = 0;
+        if (job.workComplete) { job.status = "paid"; job.posted = { at: ptNow(), by: actingAs(), auto: true }; body += " Paid in full; job posted and locked."; }
+        else body += " Work is not complete yet.";
+      }
+      job.timeline = [{ id: "pay" + Date.now(), kind: "system", time: "Just now", title: "Paid", body: body }].concat(job.timeline || []);
+      state.sheet = null; showToast("Marked paid · " + method + (job.posted ? " · posted" : "")); return true;
+    }
+    if (name === "postJob") {
+      if (!job) return true;
+      if (!window.confirm("Post job #" + job.id + "? Posting locks it. You can reopen it later with a reason.")) return true;
+      job.posted = { at: ptNow(), by: actingAs(), auto: false };
+      job.timeline = [{ id: "post" + Date.now(), kind: "system", time: "Just now", title: "Posted", body: "Posted and locked by " + actingAs() + "." }].concat(job.timeline || []);
+      showToast("Job posted · locked"); return true;
+    }
+    if (name === "reopenOpen") { state.reasonDraft = { text: "", cb: "callback" }; state.sheet = "reopen"; render(); return true; }
+    if (name === "callbackOpen") { state.reasonDraft = { text: "", cb: "callback" }; state.sheet = "callback"; render(); return true; }
+    if (name === "cbKind") { state.reasonDraft = state.reasonDraft || { text: "" }; state.reasonDraft.cb = arg; render(); return true; }
+    if (name === "reopenJob") {
+      const reason = String((state.reasonDraft || {}).text || "").trim();
+      if (!job) return true; if (!reason) { showToast("Enter a reason to reopen"); return true; }
+      if (!window.confirm("Reopen job #" + job.id + "?")) return true;
+      job.reopenLog = (job.reopenLog || []).concat([{ at: ptNow(), by: actingAs(), reason: reason, wasPosted: !!job.posted }]);
+      job.posted = null; job.workComplete = null;
+      if (job.status === "invoiced") job.status = "progress";
+      job.timeline = [{ id: "ro" + Date.now(), kind: "system", time: "Just now", title: "Reopened", body: actingAs() + ": " + reason }].concat(job.timeline || []);
+      state.reasonDraft = null; state.sheet = null; showToast("Job reopened"); return true;
+    }
+    if (name === "callbackCreate") {
+      const d = state.reasonDraft || {}; const reason = String(d.text || "").trim();
+      if (!job) return true; if (!reason) { showToast("Enter the reason for the callback"); return true; }
+      const nid = nextJobId(state.jobs), kind = d.cb === "warranty" ? "warranty" : "callback";
+      const nj = { id: nid, customerId: job.customerId, customer: job.customer, address: job.address, city: job.city, phone: job.phone, addressId: job.addressId, billToCustomerId: job.billToCustomerId,
+        problem: (kind === "warranty" ? "Warranty: " : "Callback: ") + reason, status: "new", lineItems: [], total: 0, readingSets: [], timeline: [{ id: "cb" + Date.now(), kind: "system", time: "Just now", title: kind === "warranty" ? "Warranty job" : "Callback job", body: "Linked to job #" + job.id + ". " + reason }],
+        estimates: [], linkedFromJobId: job.id, callbackOf: job.id, callbackKind: kind, customerRef: "", referredBy: "" };
+      state.jobs = [nj].concat(state.jobs);
+      job.callbackJobIds = (job.callbackJobIds || []).concat([nid]);
+      job.linkedJobIds = (job.linkedJobIds || []).concat([nid]);
+      job.timeline = [{ id: "cbl" + Date.now(), kind: "system", time: "Just now", title: (kind === "warranty" ? "Warranty" : "Callback") + " job #" + nid, body: reason }].concat(job.timeline || []);
+      state.reasonDraft = null; state.sheet = null; state.openJobId = nid; showToast("Job #" + nid + " created"); return true;
+    }
+    return false;
+  }
+
   function snapshotState() {
     return {
         v: 1,
@@ -3414,6 +3682,8 @@
     return invoiceDue(job) > 0;
   }
   function stripeLinkFor(job) {
+    const ai = activeInvoice(job);
+    if (ai && !ai.legacy && !(ai.kind === "single" && Math.abs((Number(ai.due) || 0) - (Number(job.total) || 0)) < 0.01)) return ai.stripeUrl || PAYMENT.stripeReusableUrl || "";
     if (job && job.stripePaymentUrl) return job.stripePaymentUrl;
     if (job && PAYMENT.links && PAYMENT.links[job.id]) return PAYMENT.links[job.id];
     return PAYMENT.stripeReusableUrl || "";
@@ -3466,7 +3736,7 @@
     return {
       invoiceId: inv,
       customerName: party.name,
-      lineItems: (job.lineItems || []).map(function (l) {
+      lineItems: ((activeInvoice(job) && activeInvoice(job).lines) || job.lineItems || []).map(function (l) {
         return { label: l.label || l.name || "Item", amount: Number(l.amount) || 0 };
       }),
       amount: due,
@@ -3479,7 +3749,7 @@
     return btoa(unescape(encodeURIComponent(json))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
   }
   function customerPayUrl(job) {
-    const slug = payFileId(job);
+    const slug = invList(job).length && !(activeInvoice(job) || {}).legacy ? "" : payFileId(job);
     if (slug) return PUBLIC_PAY_BASE + "pay/" + encodeURIComponent(slug) + "/";
     return PUBLIC_PAY_BASE + "pay.html?d=" + encodePayPayload(invoicePayload(job));
   }
@@ -5089,7 +5359,7 @@
       return jobItem(j, esc(j.problem || "") + (d ? " · paid " + esc(formatDate(d.toISOString())) : ""), money(Number(j.total) || 0), "invoice", "");
     }) };
     L.estJobs = { title: "Estimates (all time)", empty: "No estimates yet.", items: D.estJobs.map(function (j) {
-      const st = STATUS[j.status] || STATUS.new;
+      const st = STATUS[j.posted && j.status === "paid" ? "posted" : j.status] || STATUS.new;
       return jobItem(j, esc((j.estimateId || "") + " · " + (j.problem || "")), esc(st.label), "estimate", D.won.indexOf(j) !== -1 ? "" : "amber");
     }) };
     L.hours = { title: "Bid vs actual hours", empty: "No jobs with both bid hours and clocked time yet. This fills in once techs clock in on hourly jobs.", items: D.hourJobs.map(function (j) {
@@ -5296,7 +5566,7 @@
       tabBar();
   }
   function jobCard(job) {
-    const st = STATUS[job.status] || STATUS.new, col = sc(job.status || "new");
+    const st = STATUS[job.posted && job.status === "paid" ? "posted" : job.status] || STATUS.new, col = sc(job.posted && job.status === "paid" ? "posted" : (job.status || "new"));
     return '<button class="job-card" ' + act("openJob", job.id) + ">" +
       '<div class="stripe" style="background:' + col.bar + '"></div>' +
       '<div class="job-body"><div class="row"><div class="meta">#' + job.id + " · " + job.city + "</div>" + jobStatusPill(job, st, col) + "</div>" +
@@ -5485,13 +5755,15 @@
   }
 
   function jobDetail(job) {
-    const st = STATUS[job.status], col = sc(job.status);
+    const stKey = job.posted && job.status === "paid" ? "posted" : job.status;
+    const st = STATUS[stKey] || STATUS.new, col = sc(stKey);
     return topBar({ back: "closeJob", title: "Job " + job.id, badge: SHOW_SAMPLE_BADGE }) +
       '<div class="content screen"><div class="pad">' +
       jobPartiesHeader(job) +
       '<div class="h1">' + esc(job.problem) + "</div>" +
       (job.phone ? '<div class="teal">' + esc(job.phone) + "</div>" : "") +
       '<div style="margin-bottom:16px">' + pill(st.label, col.text, col.bg) + (job.schedule ? '<span class="muted" style="margin-left:8px;font-size:12px">' + esc(job.schedule) + "</span>" : "") + "</div>" +
+      closeoutBannerHtml(job) +
       jobEquipmentSection(job) +
       timeSection(job) +
       partsSection(job) +
@@ -5511,7 +5783,7 @@
       '<div class="actions">' +
       '<button class="btn" ' + act("openPriceBook") + ">Build estimate</button>" +
       (job.estimateId ? '<button class="btn ghost" ' + act("viewEstimate", job.estimateId) + ">" + (job.approvedEstimateId === job.estimateId ? "Estimate " + job.estimateId + " · approved" : "Approve / send · " + job.estimateId) + "</button>" : "") +
-      (job.status === "done" || job.status === "approved" || job.status === "progress" ? '<button class="btn teal" ' + act("sheet", "invoice") + ">Make invoice</button>" : "") +
+      closeoutActionsHtml(job) +
       (job.status === "invoiced" || job.status === "paid" || job.invoiceId ? '<button class="btn ghost" ' + act("sheet", "invoice") + ">View invoice</button>" : "") +
       (isPayable(job) ? '<button class="btn teal" ' + act("sheet", "pay") + ">Pay now</button>" : "") +
       (job.invoiceId || job.status === "invoiced" || job.status === "paid" || isPayable(job) ? '<button class="btn" ' + act("sheet", "send") + ">Send invoice</button>" : "") +
@@ -5961,7 +6233,7 @@
       (existing && isPayable(job) ? '<button class="btn teal" ' + act("sheet", "pay") + ">Pay now</button>" : "") +
       (existing ? '<button class="btn teal" ' + act("sheet", "send") + ">Send invoice</button>" : "") +
       (existing && (isPayable(job) || job.status === "invoiced") ? '<button class="btn accent" ' + act("sheet", "paid") + ">Mark paid</button>" : "") +
-      (existing ? '<button class="btn' + (isPayable(job) ? " ghost" : "") + '" ' + act("closeSheet") + ">Done</button>" : '<button class="btn teal" ' + act("makeInvoice") + ">Create invoice</button>"));
+      (existing ? '<button class="btn' + (isPayable(job) ? " ghost" : "") + '" ' + act("closeSheet") + ">Done</button>" : '<button class="btn teal" ' + act("closeoutOpen") + ">Work complete · write invoice</button>"));
   }
 
   function paySheet(job) {
@@ -6744,7 +7016,11 @@
     if (s === "reading") return job ? readingSheet(job) : "";
     if (s === "ask") return job ? askSheet(job) : "";
     if (s === "approval") return job ? approvalSheet(job) : "";
-    if (s === "invoice") return job ? invoiceSheet(job) : "";
+    if (s === "invoice") return job ? (invList(job).length ? invoicesSheet(job) : invoiceSheet(job)) : "";
+    if (s === "progress") return job ? progressSheet(job) : "";
+    if (s === "closeout") return job ? closeoutSheet(job) : "";
+    if (s === "reopen") return job ? reasonSheet(job, "reopen") : "";
+    if (s === "callback") return job ? reasonSheet(job, "callback") : "";
     if (s === "pay") return job ? paySheet(job) : "";
     if (s === "send") return job ? sendSheet(job) : "";
     if (s === "paid") return job ? paidSheet(job) : "";
@@ -6831,6 +7107,7 @@
   }
 
   function handle(name, arg) {
+    if (handleCloseout(name, arg)) return;
     if (handleRepairBuilder(name, arg)) return;
     if (handleReplacementBuilder(name, arg)) return;
     if (handleEquipV2(name, arg)) return;
@@ -7348,7 +7625,8 @@
       job.dueAmount = 0;
       job.paidMethod = method;
       job.paidDate = date;
-      job.timeline = [{ id: "pay" + Date.now(), kind: "system", time: "Just now", title: "Paid", body: "Invoice " + job.invoiceId + " marked paid, " + money(due) + ", " + method + " on " + date + "." }].concat(job.timeline);
+      job.posted = { at: ptNow(), by: actingAs(), auto: true };
+      job.timeline = [{ id: "pay" + Date.now(), kind: "system", time: "Just now", title: "Paid", body: "Invoice " + job.invoiceId + " marked paid, " + money(due) + ", " + method + " on " + date + ". Paid in full; job posted and locked." }].concat(job.timeline);
       state.sheet = null; showToast("Marked paid · " + method); return;
     }
     if (name === "pickTech") {
