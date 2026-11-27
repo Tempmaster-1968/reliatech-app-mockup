@@ -884,3 +884,5 @@ input.hr-in, .sheet input.hr-in { width: 72px !important; text-align: right; fon
   .pp-scroll { overflow: visible !important; padding: 0 !important; }
   .pp-page { max-width: none; padding: 0; border-radius: 0; }
 }
+.pp-bar .btn.pp-busy { opacity: 0.75; }
+.pp-frame { flex: 1; width: 100%; border: 0; background: #fff; }

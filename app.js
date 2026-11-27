@@ -3813,15 +3813,133 @@
       '<div class="pp-foot"><div>ReliaTech Services</div><div>Estimate ' + esc(rec.id) + "</div></div>";
     return h;
   }
+  /* ——— Proposal PDF (p2k): built in the page with html2canvas + jsPDF (vendored), no window.print.
+     Pre-built when the proposal opens so the tap can call navigator.share inside the user gesture. ——— */
+  const ppPdf = { key: "", status: "idle", file: null, blob: null, url: "", name: "", err: "", view: "" };
+  function ppKey(job, rec, sc) { return [job.id, rec.id, sc.v, sc.finalAt || sc.at || "", rec.total || ""].join("|"); }
+  function ppToken() { const el = document.querySelector('script[src*="app.js"]'); const m = el && /[?&]v=([^&]+)/.exec(el.getAttribute("src") || ""); return m ? m[1] : String(Date.now()); }
+  function ppLoad(src, test) {
+    return new Promise(function (res, rej) {
+      if (test()) return res();
+      const el = document.createElement("script"); el.src = src + "?v=" + ppToken(); el.async = true;
+      el.onload = function () { test() ? res() : rej(new Error("PDF tools did not load")); };
+      el.onerror = function () { rej(new Error("Could not load PDF tools (offline?)")); };
+      document.head.appendChild(el);
+    });
+  }
+  function ppIsMobile() { return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1); }
+  function ppBtnLabel() {
+    if (ppPdf.status === "building") return "Building PDF…";
+    if (ppPdf.status === "ready") return (ppCanShare() ? "Share PDF ⬆︎" : "Save PDF");
+    if (ppPdf.status === "error") return "Retry PDF";
+    return "Save PDF";
+  }
+  function ppCanShare() { try { return !!(ppPdf.file && navigator.share && navigator.canShare && navigator.canShare({ files: [ppPdf.file] })); } catch (e) { return false; } }
+  function ppRefreshButtons() { document.querySelectorAll(".pp-pdf-btn").forEach(function (b) { b.textContent = ppBtnLabel(); b.classList.toggle("pp-busy", ppPdf.status === "building"); }); }
+  function ppBreaks(page, pagePx) {
+    const top0 = page.getBoundingClientRect().top, total = page.scrollHeight;
+    const big = [], small = [];
+    Array.prototype.forEach.call(page.children, function (el) { const r = el.getBoundingClientRect(); big.push(r.bottom - top0); small.push(r.top - top0); });
+    page.querySelectorAll(".pp-ln, .pp-gap, .pp-item, .pp-svc, .pp-tot, .pp-lines > div, .pp-small, .pp-price, .pp-opt").forEach(function (el) { const r = el.getBoundingClientRect(); small.push(r.bottom - top0); });
+    const cuts = []; let s = 0;
+    while (total - s > pagePx) {
+      const lim = s + pagePx;
+      let c = Math.max.apply(null, big.concat([0]).filter(function (y) { return y > s + pagePx * 0.45 && y <= lim; }));
+      if (!(c > s)) c = Math.max.apply(null, small.concat([0]).filter(function (y) { return y > s + 40 && y <= lim; }));
+      if (!(c > s)) c = lim;
+      c = Math.ceil(c + 2); cuts.push([s, c]); s = c;
+    }
+    cuts.push([s, total]);
+    return cuts;
+  }
+  function ppBuild(job, rec, sc) {
+    const key = ppKey(job, rec, sc);
+    if (ppPdf.key === key && (ppPdf.status === "building" || ppPdf.status === "ready")) return ppPdf.promise;
+    if (ppPdf.url) { try { URL.revokeObjectURL(ppPdf.url); } catch (e) {} }
+    Object.assign(ppPdf, { key: key, status: "building", file: null, blob: null, url: "", err: "", name: "ReliaTech Estimate " + rec.id + ".pdf" });
+    ppRefreshButtons();
+    const W = 720; let holder = null;
+    ppPdf.promise = ppLoad("vendor/html2canvas.min.js", function () { return typeof window.html2canvas === "function"; })
+      .then(function () { return ppLoad("vendor/jspdf.umd.min.js", function () { return !!(window.jspdf && window.jspdf.jsPDF); }); })
+      .then(function () {
+        holder = document.createElement("div");
+        holder.setAttribute("aria-hidden", "true");
+        holder.style.cssText = "position:absolute;left:-12000px;top:0;width:" + W + "px;background:#fff;";
+        holder.innerHTML = '<div class="pp-page pp-pdf" style="width:' + W + 'px;max-width:none;margin:0;padding:0;border-radius:0">' + proposalHtml(job, rec, sc) + "</div>";
+        document.body.appendChild(holder);
+        const page = holder.firstChild;
+        const pagePx = Math.floor(W * (10 / 7.5));
+        const cuts = ppBreaks(page, pagePx);
+        const H = page.scrollHeight;
+        const scale = Math.max(1.5, Math.min(2.5, Math.sqrt(14000000 / (W * H))));
+        return window.html2canvas(page, { scale: scale, backgroundColor: "#ffffff", logging: false, useCORS: true, width: W, height: H, windowWidth: W + 40 }).then(function (canvas) { return { canvas: canvas, cuts: cuts, scale: scale }; });
+      })
+      .then(function (r) {
+        const doc = new window.jspdf.jsPDF({ unit: "pt", format: "letter", orientation: "portrait", compress: true });
+        const k = 540 / W;
+        r.cuts.forEach(function (c, i) {
+          const hp = Math.max(1, Math.round((c[1] - c[0]) * r.scale));
+          const pc = document.createElement("canvas"); pc.width = r.canvas.width; pc.height = hp;
+          const g = pc.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, pc.width, pc.height);
+          g.drawImage(r.canvas, 0, Math.round(c[0] * r.scale), r.canvas.width, hp, 0, 0, pc.width, hp);
+          if (i) doc.addPage("letter", "portrait");
+          doc.addImage(pc.toDataURL("image/jpeg", 0.93), "JPEG", 36, 36, 540, (c[1] - c[0]) * k, undefined, "FAST");
+          if (r.cuts.length > 1) { doc.setFontSize(8); doc.setTextColor(140); doc.text("Page " + (i + 1) + " of " + r.cuts.length, 576, 770, { align: "right" }); }
+        });
+        doc.setProperties({ title: ppPdf.name.replace(/\.pdf$/, ""), author: "ReliaTech Services", creator: "ReliaTech" });
+        const blob = doc.output("blob");
+        if (ppPdf.key !== key) return;
+        ppPdf.blob = blob;
+        try { ppPdf.file = new File([blob], ppPdf.name, { type: "application/pdf" }); } catch (e) { ppPdf.file = null; }
+        ppPdf.url = URL.createObjectURL(blob);
+        ppPdf.status = "ready";
+        ppRefreshButtons();
+        if (ppPdf.wanted) { ppPdf.wanted = false; showToast("PDF ready. Tap " + ppBtnLabel().replace(" ⬆︎", "") + "."); }
+      })
+      .catch(function (e) {
+        if (ppPdf.key !== key) return;
+        ppPdf.status = "error"; ppPdf.err = (e && e.message) || "unknown error"; ppRefreshButtons();
+        showToast("PDF failed: " + ppPdf.err + ". Tap Retry PDF.");
+      })
+      .then(function () { if (holder && holder.parentNode) holder.parentNode.removeChild(holder); });
+    return ppPdf.promise;
+  }
+  function ppDownload() {
+    const a = document.createElement("a");
+    if (!("download" in a) || !ppPdf.url) return false;
+    a.href = ppPdf.url; a.download = ppPdf.name; a.rel = "noopener"; a.style.display = "none";
+    document.body.appendChild(a); a.click(); setTimeout(function () { if (a.parentNode) a.parentNode.removeChild(a); }, 1000);
+    return true;
+  }
+  function ppDeliver() {
+    if (ppCanShare()) {
+      navigator.share({ files: [ppPdf.file], title: ppPdf.name.replace(/\.pdf$/, "") }).catch(function (e) {
+        if (e && e.name === "AbortError") return;
+        if (ppDownload()) { showToast("Share didn't open, so the PDF was downloaded instead."); return; }
+        ppPdf.view = ppPdf.url; render();
+      });
+      return;
+    }
+    if (ppDownload()) { showToast("PDF saved: " + ppPdf.name + (ppIsMobile() ? ". Check Downloads in Files." : "")); return; }
+    ppPdf.view = ppPdf.url; render();
+  }
+  RT_RB._pdfState = function () { return { status: ppPdf.status, name: ppPdf.name, err: ppPdf.err, size: ppPdf.blob ? ppPdf.blob.size : 0, canShare: ppCanShare() }; };
+  RT_RB._pdfDataUrl = function () { return new Promise(function (res) { if (!ppPdf.blob) return res(""); const fr = new FileReader(); fr.onload = function () { res(fr.result); }; fr.readAsDataURL(ppPdf.blob); }); };
   function proposalScreen() {
     const pv = state.proposal; const job = pv && getJob(pv.jobId); const rec = job && currentEstimateRec(job, pv.estId); const sc = rec && latestScope(rec, true);
     if (!rec || !sc) { state.proposal = null; return ""; }
-    return '<div class="pp-bar no-print"><button class="btn ghost" ' + act("proposalBack") + ">‹ Back to job</button>" +
-      '<button class="btn accent" ' + act("proposalPrint") + ">Save PDF / Print</button></div>" +
-      '<div class="pp-hint no-print">In the print screen, tap Share ⬆︎ then Save to Files to keep the PDF. Tap Back to job when you’re done.</div>' +
+    if (ppPdf.key !== ppKey(job, rec, sc) || ppPdf.status === "idle") setTimeout(function () { if (state.proposal) ppBuild(job, rec, sc); }, 60);
+    const btns = function () { return '<button class="btn ghost" ' + act("proposalBack") + ">‹ Back to job</button>" +
+      '<button class="btn accent pp-pdf-btn' + (ppPdf.status === "building" ? " pp-busy" : "") + '" ' + act("proposalPrint") + ">" + ppBtnLabel() + "</button>"; };
+    if (ppPdf.view) {
+      return '<div class="pp-bar no-print">' + btns() + "</div>" +
+        '<div class="pp-hint no-print">Here is the PDF. Use Share ⬆︎ in the viewer, or tap Back to job.</div>' +
+        '<iframe class="pp-frame" title="' + esc(ppPdf.name) + '" src="' + esc(ppPdf.view) + '"></iframe>';
+    }
+    return '<div class="pp-bar no-print">' + btns() + "</div>" +
+      '<div class="pp-hint no-print">Tap ' + (ppCanShare() ? "Share PDF, then Save to Files, Google Drive or Messages" : "Save PDF to get the file") + '. Tap Back to job when you\u2019re done.</div>' +
       '<div class="pp-scroll"><div class="pp-page" id="proposal">' + proposalHtml(job, rec, sc) + "</div>" +
-      '<div class="pp-bar pp-bar-bottom no-print"><button class="btn ghost" ' + act("proposalBack") + ">‹ Back to job</button>" +
-      '<button class="btn accent" ' + act("proposalPrint") + ">Save PDF / Print</button></div></div>";
+      '<div class="pp-bar pp-bar-bottom no-print">' + btns() + "</div></div>";
   }
   function customerEstimateText(job, rec) {
     const who = (billToCustomer(job) || {}).name || job.customer;
@@ -3869,14 +3987,20 @@
     if (name === "estShareCopyLink") { const rec = job && state.estShare && currentEstimateRec(job, state.estShare.estId); if (rec && rec.pdfUrl) copyText(rec.pdfUrl, "Drive link copied. Nothing was sent."); return true; }
     if (name === "estShareAdv") { if (state.estShare) state.estShare.adv = !state.estShare.adv; render(); return true; }
     if (name === "estShareBack") { const d = state.estShare; state.estShare = null; if (d) { state.viewEstimateId = d.estId; state.sheet = "viewEstimate"; } else state.sheet = null; render(); return true; }
-    if (name === "proposalBack") { const p = state.proposal; state.proposal = null; if (p) { state.openJobId = p.jobId; state.viewEstimateId = p.estId; state.sheet = "viewEstimate"; } document.title = "ReliaTech"; render(); return true; }
+    if (name === "proposalBack") { if (ppPdf.view) { ppPdf.view = ""; } const p = state.proposal; state.proposal = null; if (p) { state.openJobId = p.jobId; state.viewEstimateId = p.estId; state.sheet = "viewEstimate"; } document.title = "ReliaTech"; render(); return true; }
     if (name === "proposalPrint") {
       const p = state.proposal; if (!p) return true;
-      const old = document.title; document.title = "ReliaTech Estimate " + p.estId;
-      const restore = function () { document.title = old || "ReliaTech"; window.removeEventListener("afterprint", restore); };
-      window.addEventListener("afterprint", restore);
-      setTimeout(function () { try { window.print(); } catch (e) {} setTimeout(restore, 1500); }, 50);
-      return true;
+      const pj = getJob(p.jobId); const rec = pj && currentEstimateRec(pj, p.estId); const sc = rec && latestScope(rec, true);
+      if (!rec || !sc) return true;
+      if (ppPdf.key === ppKey(pj, rec, sc) && ppPdf.status === "ready") { ppDeliver(); return true; }
+      if (ppPdf.key === ppKey(pj, rec, sc) && ppPdf.status === "building") { ppPdf.wanted = true; showToast("Building PDF… one moment"); return true; }
+      if (ppPdf.status === "error" && !ppIsMobile() && ppPdf.key === ppKey(pj, rec, sc) && ppPdf.retried) {
+        const old = document.title; document.title = "ReliaTech Estimate " + p.estId;
+        setTimeout(function () { try { window.print(); } catch (e) {} setTimeout(function () { document.title = old || "ReliaTech"; }, 1500); }, 50);
+        return true;
+      }
+      if (ppPdf.status === "error") { ppPdf.retried = true; ppPdf.status = "idle"; }
+      ppPdf.wanted = true; ppBuild(pj, rec, sc); showToast("Building PDF… one moment"); return true;
     }
     return false;
   }
