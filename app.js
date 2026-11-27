@@ -6024,7 +6024,11 @@
         '<span style="color:' + (step === 1 ? TEAL : "var(--muted)") + '">1. Report</span>' +
         '<span style="color:' + (step === 2 ? TEAL : "var(--muted)") + '">2. Customer</span>' +
         '<span style="color:' + (step === 3 ? TEAL : "var(--muted)") + '">3. Confirm</span></div>';
-    const head = '<div class="sheet-head"><div class="sheet-title">' + (fromCust ? "New job" : "New call") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" + steps;
+    const head0 = '<div class="sheet-head"><div class="sheet-title">' + (fromCust ? "New job" : "New call") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" + steps;
+    function ncNav(info, sub, btn) {
+      return '<div class="nc-nav"><div class="nc-nav-info">' + (info ? '<div class="nc-nav-name">' + info + "</div>" : "") + (sub ? '<div class="nc-nav-sub">' + sub + "</div>" : "") + "</div>" + btn + "</div>";
+    }
+    let head = head0;
     if (step === 1) {
       const lockedCust = fromCust ? getCustomer(nc.customerId) : null;
       const locked = lockedCust
@@ -6033,6 +6037,7 @@
           (lockedCust.phone ? '<div class="teal" style="margin:4px 0 0">' + esc(lockedCust.phone) + "</div>" : "") + "</div>" +
           addressPickerHtml(lockedCust, nc.addressId, "pickAddress")
         : "";
+      head = head0 + ncNav(nc.chips.length ? esc(nc.chips.join(", ")) : "", nc.chips.length ? "" : "Pick what’s going on", '<button class="btn" ' + act("ncNext") + ">" + (fromCust ? "Next · Confirm" : "Next · Customer") + "</button>");
       return backdrop(head + locked +
         '<div class="muted" style="margin-bottom:10px">What\'s going on? Pick one or more, then add a little detail.</div>' +
         '<div class="chips">' + REPORT_CHIPS.map(function (c) {
@@ -6044,8 +6049,7 @@
         URGENCY.map(function (u) {
           const on = nc.urgency === u.id;
           return '<button class="list-card" style="margin-bottom:8px;padding:12px;display:block;border:' + (on ? "1.5px solid " + TEAL : "1.5px solid transparent") + '" ' + act("urgency", u.id) + "><div style=\"font-weight:750\">" + esc(u.label) + '</div><div class="muted">' + esc(u.hint) + "</div></button>";
-        }).join("") +
-        '<button class="btn" ' + act("ncNext") + ">" + (fromCust ? "Next · Confirm" : "Next · Customer") + "</button>");
+        }).join(""));
     }
     if (step === 2) {
       const q = (nc.custQuery || "").trim().toLowerCase();
@@ -6060,8 +6064,9 @@
           '<label class="field"><div class="field-lab">Phone</div><input id="nc-newPhone" type="tel" value="' + esc(nc.newPhone) + '" oninput="RT.setNew(\'newPhone\', this.value)"></label>' +
           '<label class="field"><div class="field-lab">Address</div><input id="nc-newAddress" value="' + esc(nc.newAddress) + '" oninput="RT.setNew(\'newAddress\', this.value)"></label>' +
           '<label class="field"><div class="field-lab">City</div><input id="nc-newCity" value="' + esc(nc.newCity) + '" oninput="RT.setNew(\'newCity\', this.value)"></label>' +
-          '<label class="field"><div class="field-lab">Email (optional)</div><input id="nc-newEmail" type="email" value="' + esc(nc.newEmail) + '" oninput="RT.setNew(\'newEmail\', this.value)"></label>' +
-          '<button class="btn"' + (nc.newName.trim() && nc.newPhone.trim() && nc.newAddress.trim() ? "" : " disabled") + ' ' + act("ncNext") + ">Next · Confirm</button>";
+          '<label class="field"><div class="field-lab">Email (optional)</div><input id="nc-newEmail" type="email" value="' + esc(nc.newEmail) + '" oninput="RT.setNew(\'newEmail\', this.value)"></label>';
+        const okNew = !!(nc.newName.trim() && nc.newPhone.trim() && nc.newAddress.trim());
+        head = head0 + ncNav(nc.newName.trim() ? "New: " + esc(nc.newName.trim()) : "", okNew ? "" : "Enter name, phone and address", '<button class="btn"' + (okNew ? "" : " disabled") + " " + act("ncNext") + ">Next ›</button>");
       } else {
         body = '<div class="search">' + icon("search", 16) + '<input id="nc-q" type="search" placeholder="Search name, address, or phone" value="' + esc(nc.custQuery) + '" oninput="RT.setCustQuery(this.value)"></div>' +
           (none ? '<button class="btn accent" style="margin-bottom:12px" ' + act("ncAddQuery") + ">Add “" + esc(nc.custQuery.trim()) + "” as a new customer</button>" : "") +
@@ -6073,8 +6078,9 @@
               '<div class="job-body"><div class="job-name" style="margin-top:0">' + esc(c.name) + "</div><div class=\"muted\">" + esc(c.address) + ", " + esc(c.city) + "</div><div class=\"muted\">" + esc(c.phone) + "</div>" +
               (preview ? '<div class="meta" style="margin-top:4px">' + esc(preview) + "</div>" : "") + "</div></button>";
           }).join("") + "</div>" +
-          (nc.customerId ? addressPickerHtml(state.customers.find(function (x) { return x.id === nc.customerId; }), nc.addressId, "pickAddress") : "") +
-          (nc.customerId ? '<div style="height:12px"></div><button class="btn" ' + act("ncNext") + ">Next · Confirm</button>" : "");
+          (nc.customerId ? addressPickerHtml(state.customers.find(function (x) { return x.id === nc.customerId; }), nc.addressId, "pickAddress") : "");
+        const selC = nc.customerId ? state.customers.find(function (x) { return x.id === nc.customerId; }) : null;
+        head = head0 + ncNav(selC ? "✓ " + esc(selC.name) : "", selC ? esc(formatAddrLine(selC.address, selC.city) || "") : "No customer picked yet", '<button class="btn"' + (selC ? "" : " disabled") + " " + act("ncNext") + ">Next ›</button>");
       }
       return backdrop(head + body);
     }
@@ -6104,14 +6110,14 @@
         equipmentHtml = '<div class="muted" style="margin-bottom:12px">No equipment on this customer profile yet. You can add it from the customer page.</div>';
       }
     }
+    head = head0 + ncNav(esc(custName), "Job #" + jobId, '<button class="btn accent" ' + act("createJob") + ">Create job</button>");
     return backdrop(head +
       '<div class="panel" style="margin-bottom:12px;box-shadow:none;background:var(--field)">' +
       '<div class="k-up">Next job</div><div class="h1" style="margin:4px 0">#' + jobId + "</div>" +
       '<div class="h2">' + esc(custName) + "</div><div class=\"muted\">" + esc(custAddr) + "</div><div class=\"teal\">" + esc(custPhone) + "</div>" +
       '<div style="margin-top:10px">' + esc(report) + "</div></div>" +
       equipmentHtml +
-      '<div class="note" style="margin-top:0;margin-bottom:12px">This job is saved on this phone only. It is not uploaded to a shared server.</div>' +
-      '<button class="btn accent" ' + act("createJob") + ">Create job</button>");
+      '<div class="note" style="margin-top:0;margin-bottom:12px">This job is saved on this phone only. It is not uploaded to a shared server.</div>');
   }
 
   function noteSheet() {

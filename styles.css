@@ -827,3 +827,9 @@ a.btn.teal { color: var(--on-brand); }
 .field select { width: 100%; }
 /* Replacement builder per-line hour inputs: same colors as the other dark/light inputs (iOS dark mode fix) */
 .hr-in { width: 72px; text-align: right; font-size: 16px; line-height: 22px; padding: 8px 10px; border: none; outline: none; border-radius: 10px; background: var(--field); color: var(--text); -webkit-appearance: none; appearance: none; }
+/* New call sheet: Next / Create job pinned at the top */
+.nc-nav { position: sticky; top: -10px; z-index: 5; display: flex; align-items: center; gap: 10px; margin: 0 -16px 12px; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--line, rgba(127,127,127,0.25)); }
+.nc-nav-info { flex: 1; min-width: 0; }
+.nc-nav-name { font-weight: 750; font-size: 15px; color: var(--teal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nc-nav-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nc-nav .btn { width: auto; flex: 0 0 auto; min-width: 120px; padding: 0 18px; margin: 0; }
