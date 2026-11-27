@@ -479,13 +479,15 @@
   function billingInfo(customer, job) {
     if (!customer) return { name: "", address: "", city: "", phone: "", email: "" };
     if (customer.billingSameAsService === false && (customer.billingAddress || customer.billingCity)) {
-      return { name: customer.name, address: customer.billingAddress || "", city: customer.billingCity || "", phone: customer.phone || "", email: customer.email || "" };
+      return { name: customer.name, address: customer.billingAddress || "", city: customer.billingCity || "", state: customer.billingState || "", zip: customer.billingZip || "", phone: customer.phone || "", email: customer.email || "" };
     }
     const loc = job ? serviceAddressOf(job) : primaryAddress(customer);
     return {
       name: customer.name,
       address: loc ? loc.address : (customer.address || ""),
       city: loc ? loc.city : (customer.city || ""),
+      state: loc ? (loc.state || "") : (customer.state || ""),
+      zip: loc ? (loc.zip || "") : (customer.zip || ""),
       phone: customer.phone || "",
       email: customer.email || ""
     };
@@ -3747,8 +3749,27 @@
   function proposalLinesHtml(arr) {
     return arr.map(function (x) {
       if (!x) return '<div class="pp-gap"></div>';
+      const b = /^(\s*)[-•*]\s+(.*)$/.exec(x);
+      if (b) return '<div class="pp-bul' + (b[1].length >= 2 ? " pp-bul2" : "") + '">' + esc(b[2]) + "</div>";
       return '<div class="pp-ln' + (/^\s*note:/i.test(x) ? " pp-note" : "") + '">' + esc(x) + "</div>";
     }).join("");
+  }
+  /* City line: "City, CA 90803" when a ZIP is on file, otherwise the city alone. */
+  function ppCityLine(city, st, zip) {
+    city = String(city || "").trim(); zip = String(zip || "").trim();
+    if (!zip) return city;
+    return (city ? city + ", " : "") + (String(st || "").trim() || "CA") + " " + zip;
+  }
+  /* Terms. Payment is COD (Steve, Nov 27 2026). Warranty and payment methods are not on file yet:
+     they print only when state.settings.termsWarranty / termsPaymentMethods are filled in later. */
+  function ppTermsLines(exp) {
+    const st = state.settings || {};
+    return [
+      "Prices are all-in for the work listed and are valid through " + propDate(exp) + ".",
+      "Work not listed is not included.",
+      "Payment: " + (st.termsPayment || "due on completion (COD).")
+    ].concat(st.termsWarranty ? ["Warranty: " + st.termsWarranty] : [])
+     .concat(st.termsPaymentMethods ? ["Accepted payment: " + st.termsPaymentMethods] : []);
   }
   function proposalHtml(job, rec, sc) {
     const payer = billToCustomer(job); const bill = billingInfo(payer, job);
@@ -3769,11 +3790,15 @@
         '<div class="pp-form">ESTIMATE</div><div class="pp-formno">#' + esc(rec.id) + "</div>" +
         '<div class="pp-small">Date: ' + propDate(issued) + '</div><div class="pp-small">Expires: ' + propExp(exp) + "</div></div></div>";
     };
-    const addrLines = function (a, c) { return [a, c].filter(Boolean).map(esc).join("<br>"); };
+    const sv = loc || { address: job.address || "", city: job.city || "", state: "", zip: "" };
+    const bCity = ppCityLine(bill.city, bill.state, bill.zip), sCity = ppCityLine(sv.city, sv.state, sv.zip);
+    const nrm = function (x) { return String(x || "").toLowerCase().replace(/[^a-z0-9]/g, ""); };
+    const same = nrm(bill.address) === nrm(sv.address) && nrm(bill.city) === nrm(sv.city) && (!bill.zip || !sv.zip || nrm(bill.zip) === nrm(sv.zip));
+    const lines2 = function (a, c) { return [a, c].filter(Boolean).map(esc).join("<br>"); };
     let h = head() +
-      '<div class="pp-lab">BILL TO</div><div class="pp-strong">' + esc(bill.name || job.customer || "") + "</div><div>" + addrLines(bill.address, bill.city) + "</div>" +
-      (bill.phone ? '<div class="pp-sm2">' + esc(bill.phone) + "</div>" : "") + (bill.email ? '<div class="pp-sm2">' + esc(bill.email) + "</div>" : "") +
-      '<div class="pp-lab" style="margin-top:8px">SERVICE LOCATION</div><div>' + addrLines(loc ? loc.address : job.address, loc ? loc.city : job.city) + "</div>";
+      '<div class="pp-addr"><div><div class="pp-lab">BILL TO</div><div class="pp-strong">' + esc(bill.name || job.customer || "") + "</div><div>" + lines2(bill.address, bCity) + "</div>" +
+      ((bill.phone || bill.email) ? '<div class="pp-sm2">' + [bill.phone, bill.email].filter(Boolean).map(esc).join(" · ") + "</div>" : "") + "</div>" +
+      '<div><div class="pp-lab">SERVICE LOCATION</div><div>' + (same ? "Same as bill-to" : lines2(sv.address, sCity)) + "</div></div></div>";
     const used = {};
     const pick = function (o, i) { const k = P.sec[i + 1] && !used[i + 1] ? i + 1 : (P.sec[o.n] && !used[o.n] ? o.n : null); if (k == null) return null; used[k] = true; return P.sec[k]; };
     const introCard = P.intro.length && (P.found || opts.length > 1);
@@ -3800,19 +3825,24 @@
       h += '<div class="pp-card"><div class="pp-svc">Scope of work</div><div class="pp-body">' + proposalLinesHtml(arr) + "</div></div>";
     }
     if (!shown && sc && String(sc.text || "").trim()) h += '<div class="pp-card"><div class="pp-svc">Scope of work</div><div class="pp-body" style="white-space:pre-wrap">' + esc(String(sc.text).replace(/\r\n?|\u2028|\u2029/g, "\n")) + "</div></div>";
-    {
-      const together = Math.round((opts.reduce(function (t, o) { return t + o.amount; }, 0) + feeSum + disc.reduce(function (t, l) { return t + Number(l.amount); }, 0)) * 100) / 100;
-      h += '<div class="pp-card pp-sum">' + (opts.length > 1 ? '<div class="pp-svc2">' + (opts.length > 2 ? "If all options are approved" : "If both options are approved") + "</div>" : "") +
-        (opts.length > 1 ? opts.map(function (o) { return '<div class="pp-tot"><div>' + esc(o.ppTitle) + "</div><div>" + money(o.ppPrice) + "</div></div>"; }).join("") : "") +
-        disc.map(function (l) { return '<div class="pp-tot"><div>' + esc(l.label) + "</div><div>−" + money(Math.abs(Number(l.amount))) + "</div></div>"; }).join("") +
-        '<div class="pp-tot pp-total"><div>' + (opts.length > 2 ? "All options together" : opts.length > 1 ? "Both options together" : "Total") + "</div><div>" + money(together) + "</div></div></div>";
+    const together = Math.round((opts.reduce(function (t, o) { return t + o.amount; }, 0) + feeSum + disc.reduce(function (t, l) { return t + Number(l.amount); }, 0)) * 100) / 100;
+    h += '<div class="pp-sum">' +
+      (opts.length > 1 ? opts.map(function (o) { return '<div class="pp-tot"><div>' + esc(o.ppTitle) + "</div><div>" + money(o.ppPrice) + "</div></div>"; }).join("") : "") +
+      disc.map(function (l) { return '<div class="pp-tot pp-save"><div>' + esc(l.label) + "</div><div>−" + money(Math.abs(Number(l.amount))) + "</div></div>"; }).join("") +
+      '<div class="pp-tot pp-total"><div>' + (opts.length > 2 ? "All options together" : opts.length > 1 ? "Both options together" : "Total") + "</div><div>" + money(together) + "</div></div></div>";
+    if (opts.length > 1) {
+      h += '<div class="pp-break"></div><div class="pp-slim"><div><b>ReliaTech Services</b> · Estimate #' + esc(rec.id) + "</div><div>" + esc([bill.name || job.customer || "", sv.address].filter(Boolean).join(" · ")) + "</div></div>";
     }
-    h += '<div class="pp-card pp-sign"><div class="pp-svc2">Customer approval</div><div class="pp-small">To approve, sign below and note the option(s) you are choosing, or reply to Steve by text or email.</div>' +
-      '<div class="pp-lines"><div>Option(s) approved: ________________</div><div>Signature: ______________________________</div><div>Date: ____________</div></div></div>' +
-      '<div class="pp-center"><div class="pp-strong">Not what you were looking for?</div><div class="pp-small">Please let us know if you\'d like to request some changes. We\'d love to win your business.</div>' +
-      '<div class="pp-blue">Contact us</div><div class="pp-small">' + BIZ.phone + " · " + BIZ.email + "</div></div>" +
-      '<div class="pp-thanks">Thank you for your business. We know there many choices when it comes to your home comfort, and we appreciate you chose us. If you have any questions, please don\'t hesitate to reach out to us in any form.<br><br>Thanks again.</div>' +
-      '<div class="pp-foot"><div>ReliaTech Services</div><div>Estimate ' + esc(rec.id) + "</div></div>";
+    const box = '<span class="pp-box"></span>';
+    h += '<div class="pp-ap"><div class="pp-aph">Approval: check what you\u2019d like us to do</div>' +
+      opts.map(function (o) { return '<div class="pp-tot pp-chk"><div>' + box + esc(o.ppTitle) + "</div><div>" + money(o.ppPrice) + "</div></div>"; }).join("") +
+      (opts.length > 1 && disc.length ? '<div class="pp-tot pp-chk"><div>' + box + "<b>" + (opts.length > 2 ? "All options" : "Both options") + "</b> (bundle discount applied)</div><div><b>" + money(together) + "</b></div></div>" : "") +
+      '<div class="pp-sig"><div>Printed name</div><div>Signature</div><div>Date</div></div>' +
+      '<div class="pp-small" style="margin-top:8px">Or simply reply to Steve\u2019s text with the option you choose.</div></div>' +
+      '<div class="pp-terms"><div class="pp-termsh">Terms</div>' + ppTermsLines(exp).map(function (t) { return '<div class="pp-bul">' + esc(t) + "</div>"; }).join("") + "</div>" +
+      '<div class="pp-contact">Questions or changes? <span class="pp-blue2">Call or text Steve at ' + BIZ.phone + "</span> · " + BIZ.email +
+      '<div class="pp-small" style="margin-top:4px">Thank you for choosing ReliaTech Services.</div></div>' +
+      '<div class="pp-foot"><div>ReliaTech Services · Estimate #' + esc(rec.id) + "</div></div>";
     return h;
   }
   /* ——— Proposal PDF (p2k): built in the page with html2canvas + jsPDF (vendored), no window.print.
@@ -3843,9 +3873,12 @@
     const big = [], small = [];
     Array.prototype.forEach.call(page.children, function (el) { const r = el.getBoundingClientRect(); big.push(r.bottom - top0); small.push(r.top - top0); });
     page.querySelectorAll(".pp-ln, .pp-gap, .pp-item, .pp-svc, .pp-tot, .pp-lines > div, .pp-small, .pp-ohead").forEach(function (el) { const r = el.getBoundingClientRect(); small.push(r.bottom - top0); });
+    const forced = Array.prototype.map.call(page.querySelectorAll(".pp-break"), function (el) { return el.getBoundingClientRect().top - top0; });
     const cuts = []; let s = 0;
-    while (total - s > pagePx) {
+    while (total - s > pagePx || forced.some(function (y) { return y > s + 4 && y < total - 4; })) {
       const lim = s + pagePx;
+      const f = forced.filter(function (y) { return y > s + 4 && y <= lim; })[0];
+      if (f != null) { const fc = Math.ceil(f); cuts.push([s, fc]); s = fc; continue; }
       let c = Math.max.apply(null, big.concat([0]).filter(function (y) { return y > s + pagePx * 0.45 && y <= lim; }));
       if (!(c > s)) c = Math.max.apply(null, small.concat([0]).filter(function (y) { return y > s + 40 && y <= lim; }));
       if (!(c > s)) c = lim;
@@ -3886,7 +3919,8 @@
           g.drawImage(r.canvas, 0, Math.round(c[0] * r.scale), r.canvas.width, hp, 0, 0, pc.width, hp);
           if (i) doc.addPage("letter", "portrait");
           doc.addImage(pc.toDataURL("image/jpeg", 0.93), "JPEG", 36, 36, 540, (c[1] - c[0]) * k, undefined, "FAST");
-          if (r.cuts.length > 1) { doc.setFontSize(8); doc.setTextColor(140); doc.text("Page " + (i + 1) + " of " + r.cuts.length, 576, 770, { align: "right" }); }
+          doc.setDrawColor(221); doc.setLineWidth(0.5); doc.line(36, 760, 576, 760);
+          doc.setFontSize(8); doc.setTextColor(120); doc.text("ReliaTech Services · Estimate #" + rec.id + " · Page " + (i + 1) + " of " + r.cuts.length, 36, 771);
         });
         doc.setProperties({ title: ppPdf.name.replace(/\.pdf$/, ""), author: "ReliaTech Services", creator: "ReliaTech" });
         const blob = doc.output("blob");
@@ -4546,7 +4580,7 @@
       const c = getCustomer(state.openCustomerId);
       if (!c) return;
       c[k] = v;
-      renderKeepFocus(k === "billingAddress" ? "bill-address" : "bill-city");
+      renderKeepFocus({ billingAddress: "bill-address", billingCity: "bill-city", billingState: "bill-state", billingZip: "bill-zip" }[k] || "bill-city");
     },
     setAddressField: function (k, v) {
       if (!state.addressDraft) state.addressDraft = emptyAddress();
@@ -6309,7 +6343,9 @@
       "</button>" +
       (same ? '<div class="muted" style="margin:-4px 0 14px">' + esc(billLine) + "</div>" :
         '<label class="field"><div class="field-lab">Billing address</div><input id="bill-address" value="' + esc(c.billingAddress || "") + '" oninput="RT.setBilling(\'billingAddress\', this.value)"></label>' +
-        '<label class="field"><div class="field-lab">City</div><input id="bill-city" value="' + esc(c.billingCity || "") + '" oninput="RT.setBilling(\'billingCity\', this.value)"></label>') +
+        '<label class="field"><div class="field-lab">City</div><input id="bill-city" value="' + esc(c.billingCity || "") + '" oninput="RT.setBilling(\'billingCity\', this.value)"></label>' +
+        '<div style="display:grid;grid-template-columns:1fr 1.4fr;gap:10px"><label class="field"><div class="field-lab">State</div><input id="bill-state" autocapitalize="characters" maxlength="2" placeholder="CA" value="' + esc(c.billingState || "CA") + '" oninput="RT.setBilling(\'billingState\', this.value)"></label>' +
+        '<label class="field"><div class="field-lab">ZIP (optional)</div><input id="bill-zip" inputmode="numeric" maxlength="10" value="' + esc(c.billingZip || "") + '" oninput="RT.setBilling(\'billingZip\', this.value)"></label></div>') +
       '<div class="section-row"><div class="section" style="margin:0">Service addresses</div></div>' +
       (addrs.length ? '<div class="stack" style="margin:10px 0 8px">' + addrs.map(function (a) { return addressCard(a, c); }).join("") + "</div>" :
         '<div class="muted" style="margin:10px 0">No service address yet. Add one for the house you work on.</div>') +
@@ -7014,6 +7050,8 @@
       '<div class="sheet-head"><div class="sheet-title">' + (editing ? "Edit service address" : "Add service address") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
       '<label class="field"><div class="field-lab">Street address</div><input id="ad-address" value="' + esc(d.address || "") + '" oninput="RT.setAddressField(\'address\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">City</div><input id="ad-city" value="' + esc(d.city || "") + '" oninput="RT.setAddressField(\'city\', this.value)"></label>' +
+      '<div style="display:grid;grid-template-columns:1fr 1.4fr;gap:10px"><label class="field"><div class="field-lab">State</div><input id="ad-state" autocapitalize="characters" maxlength="2" placeholder="CA" value="' + esc(d.state || "CA") + '" oninput="RT.setAddressField(\'state\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">ZIP (optional)</div><input id="ad-zip" inputmode="numeric" maxlength="10" value="' + esc(d.zip || "") + '" oninput="RT.setAddressField(\'zip\', this.value)"></label></div>' +
       '<label class="field"><div class="field-lab">Label (optional)</div><input id="ad-label" placeholder="e.g. Unit B or listing on Elm" value="' + esc(d.label || "") + '" oninput="RT.setAddressField(\'label\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">On-site contact name</div><input id="ad-onsiteName" placeholder="Tenant, homeowner, or seller" value="' + esc(d.onsiteName || "") + '" oninput="RT.setAddressField(\'onsiteName\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">On-site phone</div><input id="ad-onsitePhone" type="tel" value="' + esc(d.onsitePhone || "") + '" oninput="RT.setAddressField(\'onsitePhone\', this.value)"></label>' +
