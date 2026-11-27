@@ -3713,6 +3713,103 @@
     return false;
   }
 
+  /* ——— Customer proposal view (ReliaTech estimate format), shown in-app with a Back button.
+     Replaces the old pop-up window + auto print, which stranded the home-screen app. ——— */
+  const BIZ = { name: "ReliaTech Services", addr: "5991 East Pacific Coast Highway, #5, Long Beach, CA 90803", phone: "(562) 487-8750", phoneRaw: "5624878750", email: "steveseguine51@gmail.com" };
+  function propDate(d) { return d.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "long", day: "numeric", year: "numeric" }); }
+  function propExp(d) { return d.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "short", month: "short", day: "numeric", year: "numeric" }).replace(/,(?=[^,]*,)/, ""); }
+  function proposalSections(text, nOpts) {
+    const sec = {}, intro = [], lines = String(text || "").split(/\r?\n/);
+    let cur = null;
+    lines.forEach(function (raw) {
+      const t = raw.trim();
+      const m = t.match(/^Option\s*#?\s*(\d+)\b/i);
+      if (m) { cur = Number(m[1]); sec[cur] = sec[cur] || []; return; }
+      if (!t) return;
+      if (/^(bundle discount|both options|all options|issued\b|expires\b|price shown for each option|discount:|scope of work\b)/i.test(t)) { if (!cur && !/^scope of work/i.test(t)) intro.push(t); return; }
+      const clean = t.replace(/^[-•*]\s*/, "");
+      if (cur) sec[cur].push(clean); else intro.push(clean);
+    });
+    return { sec: sec, intro: intro, found: Object.keys(sec).length > 0 };
+  }
+  function proposalHtml(job, rec, sc) {
+    const payer = billToCustomer(job); const bill = billingInfo(payer, job);
+    const loc = serviceAddressOf(job);
+    const created = rec.createdAt && parseStamp(rec.createdAt) ? new Date(parseStamp(rec.createdAt)) : new Date();
+    const issued = (sc && sc.finalAt && parseStamp(sc.finalAt)) ? new Date(parseStamp(sc.finalAt)) : created;
+    const exp = new Date(issued.getTime() + 30 * DAY_MS);
+    const all = estimateOptions(rec);
+    const fees = all.filter(function (o) { const l = rec.lineItems[o.idx] || {}; return !l.builder && scopeIsFeeLine(o.label); });
+    let opts = all.filter(function (o) { return fees.indexOf(o) === -1; });
+    if (!opts.length) { opts = all; }
+    const feeSum = opts === all ? 0 : fees.reduce(function (t, o) { return t + o.amount; }, 0);
+    const disc = estimateDiscounts(rec);
+    const P = proposalSections(sc ? sc.text : "", opts.length);
+    const head = function (first) {
+      return '<div class="pp-head"><div><div class="pp-biz">' + BIZ.name + "</div><div class=\"pp-small\">" + BIZ.addr + "<br>" + BIZ.phoneRaw + " &nbsp;|&nbsp; " + BIZ.email + "</div>" +
+        (first ? "" : '<div class="pp-small">Estimate #' + esc(rec.id) + "</div>") + "</div>" +
+        (window.RT_LOGO ? '<img class="pp-logo" src="' + window.RT_LOGO + '" alt="ReliaTech Services">' : "") + "</div>";
+    };
+    const addrLines = function (a, c) { return [a, c].filter(Boolean).map(esc).join("<br>"); };
+    let h = head(true) +
+      '<div class="pp-small" style="margin-top:6px">Estimate #' + esc(rec.id) + "</div>" +
+      '<div class="pp-title">Estimate for ' + esc(bill.name || job.customer || "") + "</div>" +
+      '<div class="pp-row pp-small"><div>Date: ' + propDate(issued) + "</div><div>Expires on: " + propExp(exp) + "</div></div>" +
+      '<div class="pp-lab">BILL TO</div><div class="pp-strong">' + esc(bill.name || job.customer || "") + "</div><div>" + addrLines(bill.address, bill.city) + "</div>" +
+      (bill.phone ? '<div class="pp-sm2">' + esc(bill.phone) + "</div>" : "") + (bill.email ? '<div class="pp-sm2">' + esc(bill.email) + "</div>" : "") +
+      '<div class="pp-lab" style="margin-top:8px">SERVICE LOCATION</div><div>' + addrLines(loc ? loc.address : job.address, loc ? loc.city : job.city) + "</div>";
+    opts.forEach(function (o, i) {
+      const price = Math.round((o.amount + feeSum) * 100) / 100;
+      let body = P.found ? (P.sec[o.n] || []) : (i === 0 ? P.intro : []);
+      const note = body.filter(function (x) { return /^note:/i.test(x); });
+      body = body.filter(function (x) { return !/^note:/i.test(x); });
+      h += '<div class="pp-card"><div class="pp-opt">Option #' + (i + 1) + '</div><div class="pp-price">' + money(price) + '</div><div class="pp-svc">Services</div>' +
+        '<div class="pp-item">' + esc(scopeCleanLabel(o.label)) + "</div>" + body.map(function (x) { return "<div>" + esc(x) + "</div>"; }).join("") +
+        (note.length ? '<div class="pp-note">' + note.map(esc).join("<br>") + "</div>" : "") +
+        '<div class="pp-tot pp-sub"><div>Subtotal</div><div>' + money(price) + '</div></div><div class="pp-tot pp-total"><div>Total</div><div>' + money(price) + "</div></div></div>";
+    });
+    if (!P.found && opts.length > 1 && P.intro.length) h += '<div class="pp-card"><div class="pp-svc">Scope of work</div>' + P.intro.map(function (x) { return "<div>" + esc(x) + "</div>"; }).join("") + "</div>";
+    if (opts.length > 1 || disc.length) {
+      const together = Math.round((opts.reduce(function (t, o) { return t + o.amount; }, 0) + feeSum + disc.reduce(function (t, l) { return t + Number(l.amount); }, 0)) * 100) / 100;
+      h += '<div class="pp-card"><div class="pp-svc2">' + (opts.length > 2 ? "If all options are approved" : opts.length > 1 ? "If both options are approved" : "Discount") + "</div>" +
+        disc.map(function (l) { return '<div class="pp-tot"><div>' + esc(l.label) + "</div><div>−" + money(Math.abs(Number(l.amount))) + "</div></div>"; }).join("") +
+        '<div class="pp-tot pp-total"><div>' + (opts.length > 2 ? "All options together" : opts.length > 1 ? "Both options together" : "Total") + "</div><div>" + money(together) + "</div></div></div>";
+    }
+    h += '<div class="pp-card pp-sign"><div class="pp-svc2">Customer approval</div><div class="pp-small">To approve, sign below and note the option(s) you are choosing, or reply to Steve by text or email.</div>' +
+      '<div class="pp-lines"><div>Option(s) approved: ________________</div><div>Signature: ______________________________</div><div>Date: ____________</div></div></div>' +
+      '<div class="pp-center"><div class="pp-strong">Not what you were looking for?</div><div class="pp-small">Please let us know if you\'d like to request some changes. We\'d love to win your business.</div>' +
+      '<div class="pp-blue">Contact us</div><div class="pp-small">' + BIZ.phone + " · " + BIZ.email + "</div></div>" +
+      '<div class="pp-thanks">Thank you for your business. We know there many choices when it comes to your home comfort, and we appreciate you chose us. If you have any questions, please don\'t hesitate to reach out to us in any form.<br><br>Thanks again.</div>' +
+      '<div class="pp-foot"><div>ReliaTech Services</div><div>Estimate ' + esc(rec.id) + "</div></div>";
+    return h;
+  }
+  function proposalScreen() {
+    const pv = state.proposal; const job = pv && getJob(pv.jobId); const rec = job && currentEstimateRec(job, pv.estId); const sc = rec && latestScope(rec, true);
+    if (!rec || !sc) { state.proposal = null; return ""; }
+    return '<div class="pp-bar no-print"><button class="btn ghost" ' + act("proposalBack") + ">‹ Back to job</button>" +
+      '<button class="btn" ' + act("proposalPrint") + ">Save PDF / Print</button></div>" +
+      '<div class="pp-hint no-print">In the print screen, tap Share ⬆︎ then Save to Files to keep the PDF. Tap Back to job when you’re done.</div>' +
+      '<div class="pp-scroll"><div class="pp-page" id="proposal">' + proposalHtml(job, rec, sc) + "</div></div>";
+  }
+  function handleProposal(name, arg) {
+    const job = getJob(state.openJobId);
+    if (name === "printEstimate") {
+      const rec = job && currentEstimateRec(job, arg); const sc = rec && latestScope(rec, true);
+      if (!sc) { showToast("Mark a version Final first"); return true; }
+      state.proposal = { jobId: job.id, estId: rec.id }; state.sheet = null; render(); return true;
+    }
+    if (name === "proposalBack") { const p = state.proposal; state.proposal = null; if (p) { state.openJobId = p.jobId; state.viewEstimateId = p.estId; state.sheet = "viewEstimate"; } document.title = "ReliaTech"; render(); return true; }
+    if (name === "proposalPrint") {
+      const p = state.proposal; if (!p) return true;
+      const old = document.title; document.title = "ReliaTech Estimate " + p.estId;
+      const restore = function () { document.title = old || "ReliaTech"; window.removeEventListener("afterprint", restore); };
+      window.addEventListener("afterprint", restore);
+      setTimeout(function () { try { window.print(); } catch (e) {} setTimeout(restore, 1500); }, 50);
+      return true;
+    }
+    return false;
+  }
+
   function snapshotState() {
     return {
         v: 1,
@@ -7197,6 +7294,7 @@
   }
 
   function mainHtml() {
+    if (state.proposal) { const ph = proposalScreen(); if (ph) return ph; }
     if (state.screen === "settings") return settingsScreen();
     if (state.screen === "dashList") return dashListScreen();
     if (state.screen === "plans") return plansScreen();
@@ -7246,6 +7344,7 @@
   }
 
   function handle(name, arg) {
+    if (handleProposal(name, arg)) return;
     if (handleScopeStep(name, arg)) return;
     if (handleCloseout(name, arg)) return;
     if (handleRepairBuilder(name, arg)) return;

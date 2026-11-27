@@ -839,3 +839,42 @@ input.hr-in, .sheet input.hr-in { width: 72px !important; text-align: right; fon
 /* Primary action pinned at the top of sheets (same bar as the New call sheet) */
 .pin-bar { gap: 8px; }
 .pin-bar .btn, .pin-bar a.btn { flex: 1 1 auto; width: auto; min-width: 0; min-height: 46px; margin: 0 !important; padding: 0 14px; display: flex; align-items: center; justify-content: center; text-decoration: none; }
+/* Customer proposal view (ReliaTech estimate format) */
+.pp-bar { position: sticky; top: 0; z-index: 20; display: flex; gap: 8px; padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px; background: var(--brand); }
+.pp-bar .btn { flex: 1; margin: 0; min-height: 46px; }
+.pp-bar .btn.ghost { background: rgba(255,255,255,0.14); color: #fff; }
+.pp-hint { font-size: 12px; color: var(--muted); padding: 8px 14px 0; }
+.pp-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 8px 40px; }
+.pp-page { background: #fff; color: #222; font-family: Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.45; max-width: 760px; margin: 0 auto; padding: 28px 26px; border-radius: 6px; color-scheme: light; }
+.pp-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.pp-biz { font-weight: 700; font-size: 13px; color: #222; }
+.pp-small { font-size: 11px; color: #666; }
+.pp-logo { width: 84px; height: auto; }
+.pp-title { font-size: 22px; font-weight: 700; color: #222; margin: 2px 0 12px; line-height: 1.2; }
+.pp-row { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.pp-lab { font-size: 9px; font-weight: 700; color: #555; letter-spacing: .3px; margin-top: 4px; }
+.pp-strong { font-weight: 700; font-size: 13px; color: #222; }
+.pp-sm2 { font-size: 11px; color: #333; }
+.pp-card { border: 1px solid #d6d9dc; border-radius: 8px; padding: 14px 16px 18px; margin-top: 18px; page-break-inside: avoid; break-inside: avoid; }
+.pp-opt { font-size: 17px; font-weight: 700; color: #222; }
+.pp-price { font-size: 15px; font-weight: 700; color: #222; margin: 4px 0 10px; }
+.pp-svc { font-weight: 700; font-size: 12px; padding-bottom: 5px; border-bottom: 1px solid #ddd; margin-bottom: 8px; color: #222; }
+.pp-svc2 { font-weight: 700; font-size: 13px; margin-bottom: 6px; color: #222; }
+.pp-item { margin-bottom: 2px; }
+.pp-note { font-size: 10.5px; color: #666; margin-top: 8px; }
+.pp-tot { display: flex; justify-content: space-between; gap: 10px; padding-top: 6px; }
+.pp-sub { border-top: 1px solid #ddd; margin-top: 10px; padding-top: 8px; font-size: 11px; }
+.pp-total { font-weight: 700; font-size: 13px; color: #222; }
+.pp-card .pp-tot.pp-total:not(:nth-child(2)) { border-top: 1px solid #e3e3e3; margin-top: 6px; }
+.pp-lines { display: flex; flex-wrap: wrap; gap: 14px 24px; margin-top: 14px; font-size: 12px; }
+.pp-center { text-align: center; margin-top: 16px; }
+.pp-blue { color: #1C6FD1; font-weight: 700; margin-top: 6px; }
+.pp-thanks { text-align: center; color: #666; font-size: 11px; border-top: 1px solid #ddd; margin-top: 12px; padding-top: 10px; }
+.pp-foot { display: flex; justify-content: space-between; color: #777; font-size: 10px; border-top: 1px solid #ddd; margin-top: 22px; padding-top: 6px; }
+@media print {
+  @page { size: letter; margin: 0.5in; }
+  html, body, .shell, .phone { background: #fff !important; height: auto !important; min-height: 0 !important; overflow: visible !important; display: block !important; box-shadow: none !important; }
+  .no-print, .toast { display: none !important; }
+  .pp-scroll { overflow: visible !important; padding: 0 !important; }
+  .pp-page { max-width: none; padding: 0; border-radius: 0; }
+}
