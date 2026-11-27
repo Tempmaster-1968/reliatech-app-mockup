@@ -3261,7 +3261,7 @@
     const d = state.rpDraft; if (!d) return "";
     const c = rpCalc(d, job);
     function inp(k, lab, ph) { return '<label class="field"><div class="field-lab">' + lab + '</div><input id="rp-' + k + '" inputmode="decimal" value="' + esc(d[k] == null ? "" : d[k]) + '" placeholder="' + esc(ph || "") + '" oninput="RT.setRp(\'' + k + '\', this.value)"></label>'; }
-    function hrInp(id, val) { return '<input id="rp-h-' + id + '" inputmode="decimal" style="width:68px;text-align:right;font-size:16px;padding:6px 8px;border:1px solid #cfd8dc;border-radius:8px;background:#f4f6f8" value="' + esc(String(val)) + '" oninput="RT.setRpHr(\'' + id + '\', this.value)">'; }
+    function hrInp(id, val) { return '<input id="rp-h-' + id + '" inputmode="decimal" class="hr-in" value="' + esc(String(val)) + '" oninput="RT.setRpHr(\'' + id + '\', this.value)">'; }
     function seg(k, opts) { return '<div class="chips">' + opts.map(function (o) { return '<button class="chip' + (d[k] === o[0] ? " on" : "") + '" ' + act("rpSet", k + "|" + o[0]) + ">" + esc(o[1]) + "</button>"; }).join("") + "</div>"; }
     const done = c.missing.length === 0;
     return backdrop(
@@ -3278,7 +3278,7 @@
       '<div class="row"><div>' + esc(c.base.label) + "</div><div>" + hrInp("base", c.baseHours) + " hr</div></div>" +
       c.adders.map(function (a) { return '<div class="row"><div style="min-width:0">' + esc(a.label) + (a.note ? '<div class="meta">' + esc(a.note) + "</div>" : "") + "</div><div>" + hrInp(a.id, a.hours) + " hr</div></div>"; }).join("") +
       (c.adders.length ? "" : '<div class="meta">Adders come from the site survey answers.</div>') +
-      '<div class="row"><div>Manual hours (other)</div><div><input id="rp-manualHours" inputmode="decimal" style="width:68px;text-align:right;font-size:16px;padding:6px 8px;border:1px solid #cfd8dc;border-radius:8px;background:#f4f6f8" value="' + esc(d.manualHours) + '" oninput="RT.setRp(\'manualHours\', this.value)"> hr</div></div>' +
+      '<div class="row"><div>Manual hours (other)</div><div><input id="rp-manualHours" inputmode="decimal" class="hr-in" value="' + esc(d.manualHours) + '" oninput="RT.setRp(\'manualHours\', this.value)"> hr</div></div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">' + inp("gp", "Equipment/materials GP %", "40") + inp("tax", "Purchase tax % (assumed)", "10.25") + "</div>" +
       (done ? '<div class="doc"><div class="k-up">Customer sees</div><div class="row" style="font-weight:750;margin-top:6px"><div>' + esc(d.label || rpKindLabel(d)) + "</div><div>" + money(c.total) + "</div></div></div>" +
         builderInternalHtml({ rows: c.rows, total: c.total, cost: c.cost, gpPct: c.gpPct, flags: c.flags, survey: c.survey }) +
