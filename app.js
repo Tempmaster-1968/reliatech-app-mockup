@@ -8509,3 +8509,20 @@
   applyHash();
   render();
 })();
+
+/* Stale-page guard: GitHub Pages lets Safari cache index.html for 10 minutes, and a home-screen app can resume an old page.
+   On open and when the app comes back to the foreground, compare the deployed token with this page's token and reload once if newer. */
+(function () {
+  function curToken() { const s = document.querySelector('script[src*="app.js?v="]'); const m = s && s.getAttribute("src").match(/v=([^&]+)/); return m ? m[1] : ""; }
+  function check() {
+    const cur = curToken(); if (!cur || !window.fetch || location.protocol.indexOf("http") !== 0) return;
+    fetch("index.html?check=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : ""; }).then(function (t) {
+      const m = t && t.match(/app\.js\?v=([^"&]+)/); if (!m || m[1] === cur) return;
+      const key = "rt-reloaded-for-" + m[1];
+      try { if (sessionStorage.getItem(key)) return; sessionStorage.setItem(key, "1"); } catch (e) {}
+      location.reload();
+    }).catch(function () {});
+  }
+  setTimeout(check, 1500);
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") check(); });
+})();
