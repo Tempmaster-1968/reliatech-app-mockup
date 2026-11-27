@@ -840,9 +840,15 @@ input.hr-in, .sheet input.hr-in { width: 72px !important; text-align: right; fon
 .pin-bar { gap: 8px; }
 .pin-bar .btn, .pin-bar a.btn { flex: 1 1 auto; width: auto; min-width: 0; min-height: 46px; margin: 0 !important; padding: 0 14px; display: flex; align-items: center; justify-content: center; text-decoration: none; }
 /* Customer proposal view (ReliaTech estimate format) */
-.pp-bar { position: sticky; top: 0; z-index: 20; display: flex; gap: 8px; padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px; background: var(--brand); }
-.pp-bar .btn { flex: 1; margin: 0; min-height: 46px; }
-.pp-bar .btn.ghost { background: rgba(255,255,255,0.14); color: #fff; }
+.pp-bar { position: relative; flex-shrink: 0; z-index: 30; display: flex; gap: 10px; padding: calc(12px + max(env(safe-area-inset-top, 0px), 0px)) 12px 12px; background: var(--brand); border-bottom: 2px solid var(--accent); }
+.pp-bar .btn { flex: 1; margin: 0; min-height: 48px; font-size: 16px; font-weight: 750; border-radius: 12px; }
+.pp-bar .btn.ghost { background: #FFFFFF !important; color: #0B3A4F !important; -webkit-text-fill-color: #0B3A4F; border: none; }
+.pp-bar .btn.accent { background: var(--accent) !important; color: #FFFFFF !important; -webkit-text-fill-color: #FFFFFF; border: none; }
+.pp-bar-bottom { border-bottom: none; border-top: 2px solid var(--accent); border-radius: 12px; margin: 14px 0 0; padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0px)); }
+.pp-body { margin-top: 2px; }
+.pp-ln { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pp-gap { height: 8px; }
+.share-box { width: 100%; box-sizing: border-box; border: 1.5px solid var(--border); border-radius: 12px; padding: 10px 12px; font-size: 15px; line-height: 21px; resize: none; background: var(--field); color: var(--text); -webkit-text-fill-color: var(--text); }
 .pp-hint { font-size: 12px; color: var(--muted); padding: 8px 14px 0; }
 .pp-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 8px 40px; }
 .pp-page { background: #fff; color: #222; font-family: Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.45; max-width: 760px; margin: 0 auto; padding: 28px 26px; border-radius: 6px; color-scheme: light; }
@@ -861,7 +867,7 @@ input.hr-in, .sheet input.hr-in { width: 72px !important; text-align: right; fon
 .pp-svc { font-weight: 700; font-size: 12px; padding-bottom: 5px; border-bottom: 1px solid #ddd; margin-bottom: 8px; color: #222; }
 .pp-svc2 { font-weight: 700; font-size: 13px; margin-bottom: 6px; color: #222; }
 .pp-item { margin-bottom: 2px; }
-.pp-note { font-size: 10.5px; color: #666; margin-top: 8px; }
+.pp-note { font-size: 10.5px; color: #666; margin-top: 4px; }
 .pp-tot { display: flex; justify-content: space-between; gap: 10px; padding-top: 6px; }
 .pp-sub { border-top: 1px solid #ddd; margin-top: 10px; padding-top: 8px; font-size: 11px; }
 .pp-total { font-weight: 700; font-size: 13px; color: #222; }

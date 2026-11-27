@@ -3694,7 +3694,7 @@
       '<div style="display:flex;gap:8px"><button class="btn ghost" style="flex:1;margin:0" ' + act("scopeRedraft") + ">Re-draft from lines</button><button class=\"btn ghost\" style=\"flex:1;margin:0\" " + act("scopeBack") + ">‹ Back to lines</button></div>");
   }
   RT_RB.setScopeBuild = function (v) { state.scopeBuild = state.scopeBuild || {}; state.scopeBuild.text = v; state.scopeBuild.edited = true; };
-  RT_RB._sheetOpen = function () { return !!state.sheet; };
+  RT_RB._sheetOpen = function () { return !!state.sheet || !!state.proposal; };
   function handleScopeStep(name, arg) {
     const job = getJob(state.openJobId);
     if (name === "scopeStep") {
@@ -3718,19 +3718,37 @@
   const BIZ = { name: "ReliaTech Services", addr: "5991 East Pacific Coast Highway, #5, Long Beach, CA 90803", phone: "(562) 487-8750", phoneRaw: "5624878750", email: "steveseguine51@gmail.com" };
   function propDate(d) { return d.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "long", day: "numeric", year: "numeric" }); }
   function propExp(d) { return d.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "short", month: "short", day: "numeric", year: "numeric" }).replace(/,(?=[^,]*,)/, ""); }
+  /* Free-text safe: keeps every line, its bullets and blank lines. Handles iOS paste line separators (U+2028)
+     and headings like "Scope of Work – Option 1: Title". Drops only the app's own auto-draft boilerplate and
+     price trailer lines that the option cards and bundle box already show. */
+  const PP_HEAD = /^(?:scope\s+of\s+work\s*[-–—:·|]*\s*)?option\s*#?\s*(\d+)\b\s*[:.\-–—·)|]*\s*(.*)$/i;
+  function proposalTitleClean(t) { return String(t || "").replace(/\s*[·|:\-–—]\s*\$\s?[\d,]+(\.\d+)?.*$/, "").replace(/\s*\$\s?[\d,]+(\.\d+)?\s*(all-in.*)?$/i, "").trim(); }
+  function proposalDropLine(t) {
+    if (/^scope of work\s*·\s*job\s*#/i.test(t) || /^price shown for each option is all-in/i.test(t) || /^scope of work\s*:?$/i.test(t)) return true;
+    if (/\$\s?[\d,]/.test(t) && /^(bundle discount|both options together|all options together|discount:|if both|if all)/i.test(t)) return true;
+    if (/^issued\b.*\bexpires\b/i.test(t)) return true;
+    return false;
+  }
   function proposalSections(text, nOpts) {
-    const sec = {}, intro = [], lines = String(text || "").split(/\r?\n/);
+    const sec = {}, order = [], intro = [];
+    const lines = String(text || "").replace(/\r\n?|\u2028|\u2029|\u0085/g, "\n").split("\n");
     let cur = null;
     lines.forEach(function (raw) {
-      const t = raw.trim();
-      const m = t.match(/^Option\s*#?\s*(\d+)\b/i);
-      if (m) { cur = Number(m[1]); sec[cur] = sec[cur] || []; return; }
-      if (!t) return;
-      if (/^(bundle discount|both options|all options|issued\b|expires\b|price shown for each option|discount:|scope of work\b)/i.test(t)) { if (!cur && !/^scope of work/i.test(t)) intro.push(t); return; }
-      const clean = t.replace(/^[-•*]\s*/, "");
-      if (cur) sec[cur].push(clean); else intro.push(clean);
+      const line = raw.replace(/\s+$/, ""), t = line.trim();
+      const m = t.match(PP_HEAD);
+      if (m) { cur = Number(m[1]); if (!sec[cur]) { sec[cur] = { title: proposalTitleClean(m[2]), lines: [] }; order.push(cur); } return; }
+      if (t && proposalDropLine(t)) return;
+      (cur ? sec[cur].lines : intro).push(line);
     });
-    return { sec: sec, intro: intro, found: Object.keys(sec).length > 0 };
+    const tidy = function (arr) { const o = []; arr.forEach(function (l) { if (!l.trim()) { if (o.length && o[o.length - 1] !== "") o.push(""); } else o.push(l); }); while (o.length && o[o.length - 1] === "") o.pop(); return o; };
+    order.forEach(function (k) { sec[k].lines = tidy(sec[k].lines); });
+    return { sec: sec, order: order, intro: tidy(intro), found: order.length > 0 };
+  }
+  function proposalLinesHtml(arr) {
+    return arr.map(function (x) {
+      if (!x) return '<div class="pp-gap"></div>';
+      return '<div class="pp-ln' + (/^\s*note:/i.test(x) ? " pp-note" : "") + '">' + esc(x) + "</div>";
+    }).join("");
   }
   function proposalHtml(job, rec, sc) {
     const payer = billToCustomer(job); const bill = billingInfo(payer, job);
@@ -3758,17 +3776,29 @@
       '<div class="pp-lab">BILL TO</div><div class="pp-strong">' + esc(bill.name || job.customer || "") + "</div><div>" + addrLines(bill.address, bill.city) + "</div>" +
       (bill.phone ? '<div class="pp-sm2">' + esc(bill.phone) + "</div>" : "") + (bill.email ? '<div class="pp-sm2">' + esc(bill.email) + "</div>" : "") +
       '<div class="pp-lab" style="margin-top:8px">SERVICE LOCATION</div><div>' + addrLines(loc ? loc.address : job.address, loc ? loc.city : job.city) + "</div>";
+    const used = {};
+    const pick = function (o, i) { const k = P.sec[i + 1] && !used[i + 1] ? i + 1 : (P.sec[o.n] && !used[o.n] ? o.n : null); if (k == null) return null; used[k] = true; return P.sec[k]; };
+    const introCard = P.intro.length && (P.found || opts.length > 1);
+    if (introCard && P.found) h += '<div class="pp-card"><div class="pp-svc">Scope of work</div><div class="pp-body">' + proposalLinesHtml(P.intro) + "</div></div>";
+    let shown = introCard ? P.intro.length : 0;
     opts.forEach(function (o, i) {
       const price = Math.round((o.amount + feeSum) * 100) / 100;
-      let body = P.found ? (P.sec[o.n] || []) : (i === 0 ? P.intro : []);
-      const note = body.filter(function (x) { return /^note:/i.test(x); });
-      body = body.filter(function (x) { return !/^note:/i.test(x); });
+      const s1 = P.found ? pick(o, i) : null;
+      const body = P.found ? (s1 ? s1.lines : []) : (opts.length === 1 ? P.intro : []);
+      shown += body.length;
+      const title = (s1 && s1.title) || scopeCleanLabel(o.label);
       h += '<div class="pp-card"><div class="pp-opt">Option #' + (i + 1) + '</div><div class="pp-price">' + money(price) + '</div><div class="pp-svc">Services</div>' +
-        '<div class="pp-item">' + esc(scopeCleanLabel(o.label)) + "</div>" + body.map(function (x) { return "<div>" + esc(x) + "</div>"; }).join("") +
-        (note.length ? '<div class="pp-note">' + note.map(esc).join("<br>") + "</div>" : "") +
+        '<div class="pp-item">' + esc(title) + '</div><div class="pp-body">' + proposalLinesHtml(body) + "</div>" +
         '<div class="pp-tot pp-sub"><div>Subtotal</div><div>' + money(price) + '</div></div><div class="pp-tot pp-total"><div>Total</div><div>' + money(price) + "</div></div></div>";
     });
-    if (!P.found && opts.length > 1 && P.intro.length) h += '<div class="pp-card"><div class="pp-svc">Scope of work</div>' + P.intro.map(function (x) { return "<div>" + esc(x) + "</div>"; }).join("") + "</div>";
+    if (introCard && !P.found) h += '<div class="pp-card"><div class="pp-svc">Scope of work</div><div class="pp-body">' + proposalLinesHtml(P.intro) + "</div></div>";
+    const left = P.order.filter(function (k) { return !used[k]; });
+    if (left.length) {
+      const arr = []; left.forEach(function (k) { arr.push("Option " + k + (P.sec[k].title ? ": " + P.sec[k].title : "")); P.sec[k].lines.forEach(function (l) { arr.push(l); }); arr.push(""); });
+      shown += arr.length;
+      h += '<div class="pp-card"><div class="pp-svc">Scope of work</div><div class="pp-body">' + proposalLinesHtml(arr) + "</div></div>";
+    }
+    if (!shown && sc && String(sc.text || "").trim()) h += '<div class="pp-card"><div class="pp-svc">Scope of work</div><div class="pp-body" style="white-space:pre-wrap">' + esc(String(sc.text).replace(/\r\n?|\u2028|\u2029/g, "\n")) + "</div></div>";
     if (opts.length > 1 || disc.length) {
       const together = Math.round((opts.reduce(function (t, o) { return t + o.amount; }, 0) + feeSum + disc.reduce(function (t, l) { return t + Number(l.amount); }, 0)) * 100) / 100;
       h += '<div class="pp-card"><div class="pp-svc2">' + (opts.length > 2 ? "If all options are approved" : opts.length > 1 ? "If both options are approved" : "Discount") + "</div>" +
@@ -3787,9 +3817,36 @@
     const pv = state.proposal; const job = pv && getJob(pv.jobId); const rec = job && currentEstimateRec(job, pv.estId); const sc = rec && latestScope(rec, true);
     if (!rec || !sc) { state.proposal = null; return ""; }
     return '<div class="pp-bar no-print"><button class="btn ghost" ' + act("proposalBack") + ">‹ Back to job</button>" +
-      '<button class="btn" ' + act("proposalPrint") + ">Save PDF / Print</button></div>" +
+      '<button class="btn accent" ' + act("proposalPrint") + ">Save PDF / Print</button></div>" +
       '<div class="pp-hint no-print">In the print screen, tap Share ⬆︎ then Save to Files to keep the PDF. Tap Back to job when you’re done.</div>' +
-      '<div class="pp-scroll"><div class="pp-page" id="proposal">' + proposalHtml(job, rec, sc) + "</div></div>";
+      '<div class="pp-scroll"><div class="pp-page" id="proposal">' + proposalHtml(job, rec, sc) + "</div>" +
+      '<div class="pp-bar pp-bar-bottom no-print"><button class="btn ghost" ' + act("proposalBack") + ">‹ Back to job</button>" +
+      '<button class="btn accent" ' + act("proposalPrint") + ">Save PDF / Print</button></div></div>";
+  }
+  function customerEstimateText(job, rec) {
+    const who = (billToCustomer(job) || {}).name || job.customer;
+    const addr = String(job.address || "").replace(/[()]/g, "").trim();
+    return "Hi " + firstName(who) + ",\n\nHere is your ReliaTech estimate " + rec.id + (addr ? " for " + addr : "") + ". Please review the options and reply with the option you'd like to approve.\n\nThank you,\nSteve\nReliaTech Services";
+  }
+  RT_RB.setEstShareLink = function (v) { if (state.estShare) state.estShare.link = v; };
+  function estShareSheet(job) {
+    const d = state.estShare; const rec = d && currentEstimateRec(job, d.estId); if (!rec) return "";
+    const box = function (txt, rows) { return '<textarea class="share-box" readonly rows="' + rows + '">' + esc(txt) + "</textarea>"; };
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Text the customer · ' + esc(rec.id) + '</div><button class="icon-btn ghost" ' + act("estShareBack") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="muted" style="margin-bottom:10px">Nothing is sent by the app. Copy box 1 into a text, then send box 2 as its own text so iMessage shows the PDF preview.</div>' +
+      '<div class="field-lab">Box 1 · Message</div>' + box(customerEstimateText(job, rec), 9) +
+      '<button class="btn" style="margin:8px 0 16px" ' + act("estShareCopyMsg") + ">Copy message</button>" +
+      '<div class="field-lab">Box 2 · Drive link to “ReliaTech Estimate ' + esc(rec.id) + '”</div>' +
+      (rec.pdfUrl ? box(rec.pdfUrl, 2) + '<button class="btn" style="margin:8px 0 12px" ' + act("estShareCopyLink") + ">Copy Drive link</button>"
+        : '<div class="note" style="margin:0 0 8px">Save the PDF to the job\u2019s Drive folder, or ask ReliaTech to upload it, then paste the link here.</div>') +
+      '<label class="field"><div class="field-lab">' + (rec.pdfUrl ? "Change Drive link" : "Paste Drive share link") + '</div><input id="es-link" type="url" autocomplete="off" autocapitalize="off" placeholder="https://drive.google.com/…" value="' + esc(d.link || "") + '" oninput="RT.setEstShareLink(this.value)"></label>' +
+      '<button class="dash" style="margin-bottom:16px" ' + act("estShareSaveLink") + ">Save Drive link to " + esc(rec.id) + "</button>" +
+      '<div class="note" style="margin:0 0 12px">When the customer replies with their choice, record it with Approve… and pick Text (or Phone / In person).</div>' +
+      '<button class="link-btn tap" style="margin:0 0 8px" ' + act("estShareAdv") + ">" + (d.adv ? "▾" : "▸") + " Online approval link (advanced)</button>" +
+      (d.adv ? '<div class="note" style="margin:0 0 8px">Long link to the online approval page. Not part of the normal text.</div><button class="dash" style="margin-bottom:12px" ' + act("copyApprovalLink", rec.id) + ">Copy online approval link</button>" : "") +
+      '<button class="btn ghost" style="margin-top:4px" ' + act("estShareBack") + ">‹ Back to estimate</button>"
+    );
   }
   function handleProposal(name, arg) {
     const job = getJob(state.openJobId);
@@ -3798,6 +3855,20 @@
       if (!sc) { showToast("Mark a version Final first"); return true; }
       state.proposal = { jobId: job.id, estId: rec.id }; state.sheet = null; render(); return true;
     }
+    if (name === "openEstShare" || name === "shareApprovalLink") {
+      const rec = job && currentEstimateRec(job, arg); if (!rec) return true;
+      state.estShare = { estId: rec.id, link: rec.pdfUrl || "", adv: false }; state.viewEstimateId = rec.id; state.sheet = "estShare"; render(); return true;
+    }
+    if (name === "estShareCopyMsg") { const rec = job && state.estShare && currentEstimateRec(job, state.estShare.estId); if (rec) copyText(customerEstimateText(job, rec), "Message copied. Nothing was sent."); return true; }
+    if (name === "estShareSaveLink") {
+      const d = state.estShare; const rec = job && d && currentEstimateRec(job, d.estId); if (!rec) return true;
+      const v = String(d.link || "").trim();
+      if (v && !/^https?:\/\/\S+$/i.test(v)) { showToast("That doesn't look like a link"); return true; }
+      rec.pdfUrl = v; render(); showToast(v ? "Drive link saved" : "Drive link removed"); return true;
+    }
+    if (name === "estShareCopyLink") { const rec = job && state.estShare && currentEstimateRec(job, state.estShare.estId); if (rec && rec.pdfUrl) copyText(rec.pdfUrl, "Drive link copied. Nothing was sent."); return true; }
+    if (name === "estShareAdv") { if (state.estShare) state.estShare.adv = !state.estShare.adv; render(); return true; }
+    if (name === "estShareBack") { const d = state.estShare; state.estShare = null; if (d) { state.viewEstimateId = d.estId; state.sheet = "viewEstimate"; } else state.sheet = null; render(); return true; }
     if (name === "proposalBack") { const p = state.proposal; state.proposal = null; if (p) { state.openJobId = p.jobId; state.viewEstimateId = p.estId; state.sheet = "viewEstimate"; } document.title = "ReliaTech"; render(); return true; }
     if (name === "proposalPrint") {
       const p = state.proposal; if (!p) return true;
@@ -4989,10 +5060,8 @@
     } else {
       h += '<div class="muted" style="margin:-4px 0 8px">Awaiting approval. Scope, PDF link, and parts move to the job only after approval.</div>' +
         '<button class="btn teal" style="margin-bottom:8px" ' + act("openApproveEst", rec.id) + ">Approve…</button>" +
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">' +
-        '<button class="dash" ' + act("copyApprovalLink", rec.id) + ">Copy customer approval link</button>" +
-        '<button class="dash" ' + act("shareApprovalLink", rec.id) + ">Text / share link…</button></div>" +
-        '<div class="note" style="margin:-4px 0 12px">Nothing is sent by the app. The link opens a page where the customer picks options, types their name, and texts or emails you an approval code. Paste that message into Approve… › Customer link to record it.</div>';
+        '<button class="dash" style="margin-bottom:8px" ' + act("openEstShare", rec.id) + ">Text / share…</button>" +
+        '<div class="note" style="margin:-4px 0 12px">Nothing is sent by the app. You get a short message and the Drive PDF link to copy. When the customer replies, record it with Approve….</div>';
     }
     h += '<div class="section">Estimate PDF</div>';
     h += rec.pdfUrl ? '<a class="btn ghost" style="display:flex;text-decoration:none;margin-bottom:12px" href="' + esc(rec.pdfUrl) + '" target="_blank" rel="noopener">Open PDF</a>'
@@ -7231,6 +7300,7 @@
     if (s === "billTo") { const j = getJob(state.openJobId); return j ? billToSheet(j) : ""; }
     if (s === "viewEstimate") { const j = getJob(state.openJobId); return j ? viewEstimateSheet(j) : ""; }
     if (s === "approveEst") { const j = getJob(state.openJobId); return j ? approveEstSheet(j) : ""; }
+    if (s === "estShare") { const j = getJob(state.openJobId); return j ? estShareSheet(j) : ""; }
     if (s === "scopeEdit") { const j = getJob(state.openJobId); return j ? scopeEditSheet(j) : ""; }
     if (s === "ask") { const j = getJob(state.openJobId); return j ? askSheetHandoff(j) : ""; }
     const job = getJob(state.openJobId);
