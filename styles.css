@@ -891,3 +891,9 @@ input.hr-in, .sheet input.hr-in { width: 72px !important; text-align: right; fon
 .pp-oprice { font-size: 15px; font-weight: 700; color: #222; white-space: nowrap; }
 .pp-sum .pp-tot:not(.pp-total) { font-size: 12px; }
 .pp-sum .pp-tot.pp-total:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+.pp-head { margin-bottom: 14px; }
+.pp-hl { flex: 1; min-width: 0; }
+.pp-hr { text-align: right; flex-shrink: 0; }
+.pp-hr .pp-logo { display: block; margin: 0 0 6px auto; }
+.pp-form { font-size: 18px; font-weight: 800; letter-spacing: 1px; color: #222; line-height: 1.1; }
+.pp-formno { font-size: 12px; font-weight: 700; color: #222; margin: 1px 0 3px; }

@@ -3763,16 +3763,14 @@
     const feeSum = opts === all ? 0 : fees.reduce(function (t, o) { return t + o.amount; }, 0);
     const disc = estimateDiscounts(rec);
     const P = proposalSections(sc ? sc.text : "", opts.length);
-    const head = function (first) {
-      return '<div class="pp-head"><div><div class="pp-biz">' + BIZ.name + "</div><div class=\"pp-small\">" + BIZ.addr + "<br>" + BIZ.phone + " &nbsp;|&nbsp; " + BIZ.email + "</div>" +
-        (first ? "" : '<div class="pp-small">Estimate #' + esc(rec.id) + "</div>") + "</div>" +
-        (window.RT_LOGO ? '<img class="pp-logo" src="' + window.RT_LOGO + '" alt="ReliaTech Services">' : "") + "</div>";
+    const head = function () {
+      return '<div class="pp-head"><div class="pp-hl"><div class="pp-biz">' + BIZ.name + "</div><div class=\"pp-small\">" + BIZ.addr + "<br>" + BIZ.phone + " &nbsp;|&nbsp; " + BIZ.email + "</div></div>" +
+        '<div class="pp-hr">' + (window.RT_LOGO ? '<img class="pp-logo" src="' + window.RT_LOGO + '" alt="ReliaTech Services">' : "") +
+        '<div class="pp-form">ESTIMATE</div><div class="pp-formno">#' + esc(rec.id) + "</div>" +
+        '<div class="pp-small">Date: ' + propDate(issued) + '</div><div class="pp-small">Expires: ' + propExp(exp) + "</div></div></div>";
     };
     const addrLines = function (a, c) { return [a, c].filter(Boolean).map(esc).join("<br>"); };
-    let h = head(true) +
-      '<div class="pp-small" style="margin-top:6px">Estimate #' + esc(rec.id) + "</div>" +
-      '<div class="pp-title">Estimate for ' + esc(bill.name || job.customer || "") + "</div>" +
-      '<div class="pp-row pp-small"><div>Date: ' + propDate(issued) + "</div><div>Expires on: " + propExp(exp) + "</div></div>" +
+    let h = head() +
       '<div class="pp-lab">BILL TO</div><div class="pp-strong">' + esc(bill.name || job.customer || "") + "</div><div>" + addrLines(bill.address, bill.city) + "</div>" +
       (bill.phone ? '<div class="pp-sm2">' + esc(bill.phone) + "</div>" : "") + (bill.email ? '<div class="pp-sm2">' + esc(bill.email) + "</div>" : "") +
       '<div class="pp-lab" style="margin-top:8px">SERVICE LOCATION</div><div>' + addrLines(loc ? loc.address : job.address, loc ? loc.city : job.city) + "</div>";
