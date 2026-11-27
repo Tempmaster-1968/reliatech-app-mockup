@@ -836,3 +836,6 @@ input.hr-in, .sheet input.hr-in { width: 72px !important; text-align: right; fon
 .nc-nav-name { font-weight: 750; font-size: 15px; color: var(--teal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nc-nav-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nc-nav .btn { width: auto; flex: 0 0 auto; min-width: 120px; padding: 0 18px; margin: 0; }
+/* Primary action pinned at the top of sheets (same bar as the New call sheet) */
+.pin-bar { gap: 8px; }
+.pin-bar .btn, .pin-bar a.btn { flex: 1 1 auto; width: auto; min-width: 0; min-height: 46px; margin: 0 !important; padding: 0 14px; display: flex; align-items: center; justify-content: center; text-decoration: none; }

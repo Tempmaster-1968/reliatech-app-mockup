@@ -732,7 +732,7 @@
       (rec.lineItems || []).filter(function (l) { return l.builder; }).map(function (l) { return '<div class="meta" style="margin-top:8px;font-weight:700">' + esc(l.label) + "</div>" + builderInternalHtml(l.builder); }).join("") +
       estimateGpHtml((rec.lineItems || []).map(function (l) { return { label: l.label, amount: l.amount, qty: 1, id: l.id, cost: l.cost, fromBook: !!l.fromBook }; })) +
       ((job.estimates || []).indexOf(rec) !== -1 ? estimateExtrasHtml(job, rec) : "") +
-      '<button class="btn" style="margin-top:12px" ' + act("closeSheet") + ">Done</button>");
+      '<button data-pin class="btn" style="margin-top:12px" ' + act("closeSheet") + ">Done</button>");
   }
 
 
@@ -2715,7 +2715,7 @@
       }).join("") +
       '<label class="field"><div class="field-lab">Tech</div><select id="uw-tech" onchange="RT.setUw(\'tech\', this.value)">' + techs.map(function (n) { return "<option" + (n === d.tech ? " selected" : "") + ">" + esc(n) + "</option>"; }).join("") + "</select></label>" +
       '<div class="field-lab">Photos</div>' + photoGridHtml("uw") +
-      '<button class="btn" ' + act("uwSave") + ">Save unit work</button>" +
+      '<button data-pin class="btn" ' + act("uwSave") + ">Save unit work</button>" +
       (!d.isNew ? '<button class="btn ghost" style="margin-top:8px" ' + act("uwDelete") + ">Delete this record</button>" : "")
     );
   }
@@ -2808,7 +2808,7 @@
       '<div class="sheet-head"><div class="sheet-title">' + (editing ? esc(assetShortName(d)) : "Add equipment") + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
       tabs + body +
       (tab !== "history" ? '<div class="note" style="margin-top:0;margin-bottom:12px">Saved on this phone only until sync is set up.</div>' +
-        '<button class="btn" ' + act("saveEquipment") + ">" + (editing ? "Save equipment" : "Add equipment") + "</button>" +
+        '<button data-pin class="btn" ' + act("saveEquipment") + ">" + (editing ? "Save equipment" : "Add equipment") + "</button>" +
         (editing ? '<button class="btn ghost" style="margin-top:8px" ' + act("removeEquipment") + ">Remove</button>" : "") : "")
     );
   }
@@ -3120,7 +3120,7 @@
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' + inp("gp", "Parts GP %", "40", "decimal") + inp("tax", "Purchase tax % (assumed)", "10.25", "decimal") + "</div>" +
       '<div class="doc"><div class="k-up">Customer sees</div><div class="row" style="font-weight:750;margin-top:6px"><div>' + esc(d.label || c.T.label) + "</div><div>" + money(c.total) + "</div></div></div>" +
       builderInternalHtml({ rows: rbBreakdownRows(c), total: c.total, cost: c.cost, gpPct: c.gpPct, flags: c.flags }) +
-      '<button class="btn" style="margin-top:12px" ' + act("rbAdd") + ">Add to estimate · " + money(c.total) + "</button>"
+      '<button data-pin class="btn" style="margin-top:12px" ' + act("rbAdd") + ">Add to estimate · " + money(c.total) + "</button>"
     );
   }
   const RT_RB = {
@@ -3282,8 +3282,8 @@
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">' + inp("gp", "Equipment/materials GP %", "40") + inp("tax", "Purchase tax % (assumed)", "10.25") + "</div>" +
       (done ? '<div class="doc"><div class="k-up">Customer sees</div><div class="row" style="font-weight:750;margin-top:6px"><div>' + esc(d.label || rpKindLabel(d)) + "</div><div>" + money(c.total) + "</div></div></div>" +
         builderInternalHtml({ rows: c.rows, total: c.total, cost: c.cost, gpPct: c.gpPct, flags: c.flags, survey: c.survey }) +
-        '<button class="btn" style="margin-top:12px" ' + act("rpAdd") + ">Add to estimate · " + money(c.total) + "</button>"
-        : '<button class="btn" style="margin-top:12px;opacity:.5" ' + act("rpAdd") + ">Price locked until the survey is done</button>")
+        '<button data-pin class="btn" style="margin-top:12px" ' + act("rpAdd") + ">Add to estimate · " + money(c.total) + "</button>"
+        : '<button data-pin class="btn" style="margin-top:12px;opacity:.5" ' + act("rpAdd") + ">Price locked until the survey is done</button>")
     );
   }
   function siteSurveySheet(job) {
@@ -3298,7 +3298,7 @@
         return '<label class="field"><div class="field-lab">' + esc(f.lab) + (f.opt ? " (optional)" : "") + '</div><input id="sv-' + f.k + '"' + (f.num ? ' inputmode="decimal"' : "") + ' value="' + esc(v) + '" oninput="RT.setSv(\'' + f.k + '\', this.value)"></label>';
       }).join("") +
       '<div class="meta" style="margin:6px 0">' + (miss.length ? miss.length + " left: " + esc(miss.join(", ")) : "All required answers done.") + "</div>" +
-      '<button class="btn" ' + act("svSave") + ">Save survey</button>"
+      '<button data-pin class="btn" ' + act("svSave") + ">Save survey</button>"
     );
   }
   Object.assign(RT_RB, {
@@ -3456,7 +3456,7 @@
       '<div class="row" style="margin-top:6px"><div>Progress payment 1 of 2: equipment delivery (50% of ' + money(job.total) + ")</div><div>" + money(amt) + "</div></div></div>" +
       '<div class="warn-banner" style="margin-top:10px">' + esc(CA_7159_NOTE) + "</div>" +
       (!(Number(job.total) > 0) ? '<div class="warn-banner">This job has no total yet. Save or approve the estimate first.</div>' : "") +
-      '<button class="btn teal" ' + act("progressCreate") + ">Create " + esc(id) + " · " + money(amt) + "</button>" +
+      '<button data-pin class="btn teal" ' + act("progressCreate") + ">Create " + esc(id) + " · " + money(amt) + "</button>" +
       '<div class="hint">Creating the invoice does not send it. Use Send invoice when the equipment is delivered.</div>');
   }
   function closeoutSheet(job) {
@@ -3486,7 +3486,7 @@
     }
     return backdrop('<div class="sheet-head"><div class="sheet-title">Work complete</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
       '<div class="muted" style="margin-bottom:10px">This ' + (open.length ? "clocks out " + open.length + " open time entr" + (open.length === 1 ? "y" : "ies") + ", " : "") + "stops clock-in, writes the final invoice draft, and moves the job to Awaiting payment. Nothing is sent.</div>" +
-      body + '<button class="btn teal" style="margin-top:12px" ' + act("workComplete") + ">Work complete · write invoice draft</button>");
+      body + '<button data-pin class="btn teal" style="margin-top:12px" ' + act("workComplete") + ">Work complete · write invoice draft</button>");
   }
   function invoicesSheet(job) {
     const inv = activeInvoice(job);
@@ -3502,7 +3502,7 @@
       (l.length > 1 ? '<div class="meta" style="margin-top:8px">Job: invoiced ' + money(m.billed) + " · paid " + money(m.paid) + " · open " + money(m.open) + "</div>" : "") +
       (inv.kind === "single" || inv.kind === "final" ? (showTimeOnInvoice(job) ? timeOnSiteTable(job) : "") : "") +
       (inv.status !== "paid" ? '<button class="btn teal" ' + act("sheet", "pay") + ">Pay now</button>" : "") +
-      '<button class="btn teal" ' + act("sheet", "send") + ">Send invoice " + esc(inv.id) + "</button>" +
+      '<button data-pin class="btn teal" ' + act("sheet", "send") + ">Send invoice " + esc(inv.id) + "</button>" +
       (inv.status !== "paid" && !job.posted ? '<button class="btn accent" ' + act("sheet", "paid") + ">Mark " + esc(inv.id) + " paid</button>" : "") +
       '<button class="btn ghost" ' + act("closeSheet") + ">Done</button>");
   }
@@ -3513,7 +3513,7 @@
         : '<div class="muted" style="margin-bottom:10px">Creates a new job linked to #' + esc(job.id) + " for the same customer and address.</div>" +
           '<div class="chips"><button class="chip' + (d.cb !== "warranty" ? " on" : "") + '" ' + act("cbKind", "callback") + ">Callback</button><button class=\"chip" + (d.cb === "warranty" ? " on" : "") + '" ' + act("cbKind", "warranty") + ">Warranty</button></div>") +
       '<label class="field"><div class="field-lab">Reason (required)</div><textarea id="reason-text" rows="3" oninput="RT.setReason(this.value)">' + esc(d.text) + "</textarea></label>" +
-      '<button class="btn ' + (kind === "reopen" ? "accent" : "teal") + '" ' + act(kind === "reopen" ? "reopenJob" : "callbackCreate") + ">" + (kind === "reopen" ? "Reopen job" : "Create linked job") + "</button>");
+      '<button data-pin class="btn ' + (kind === "reopen" ? "accent" : "teal") + '" ' + act(kind === "reopen" ? "reopenJob" : "callbackCreate") + ">" + (kind === "reopen" ? "Reopen job" : "Create linked job") + "</button>");
   }
   RT_RB._testJob = function (id) { return getJob(id); };
   RT_RB._render = function () { render(); };
@@ -3607,6 +3607,109 @@
       job.timeline = [{ id: "cbl" + Date.now(), kind: "system", time: "Just now", title: (kind === "warranty" ? "Warranty" : "Callback") + " job #" + nid, body: reason }].concat(job.timeline || []);
       state.reasonDraft = null; state.sheet = null; state.openJobId = nid; showToast("Job #" + nid + " created"); return true;
     }
+    return false;
+  }
+
+  /* ——— Scope step in the estimate build flow (customer-facing: no rates, hours, truck or diagnostic) ——— */
+  function scopeCleanLabel(t) { return String(t || "").replace(/\s*[·@-]?\s*\$?\d+(\.\d+)?\s*\/\s*hr\b/gi, "").replace(/\s*[·(]?\s*\d+(\.\d+)?\s*(hr|hrs|hours?)\b\)?/gi, "").replace(/\s{2,}/g, " ").trim(); }
+  function scopeIsFeeLine(t) { return /\b(truck|trip charge|diagnostic|service call fee|labor|per hour)\b|\/hr\b/i.test(String(t || "")); }
+  function scopeBulletsForLine(l) {
+    const b = l.builder, out = [];
+    if (b && ["replacement", "retrofit", "acadd"].indexOf(b.kind) !== -1) {
+      const d = b.inputs || {}, s = b.survey || {};
+      if (b.kind === "acadd") out.push("Add central air conditioning: furnish and install a new " + (d.tons || "") + "-ton condenser and matching evaporator coil on the existing furnace.");
+      else out.push("Furnish and install a new " + (d.tons || "") + "-ton Payne split system (gas furnace, evaporator coil and condenser)" + (b.kind === "retrofit" ? "." : ", " + (d.config === "horizontal" ? "horizontal" : "upflow") + " configuration, in the existing location."));
+      if (b.kind === "retrofit") out.push("Relocate the furnace from the closet to the attic, with supply and return connections to suit.");
+      const ft = function (k) { return Number(s[k]) > 0 ? " (about " + Number(s[k]) + " ft)" : ""; };
+      if (s.flueType === "PVC (90%+) new") out.push("Install new PVC flue venting" + ft("flueFt") + ".");
+      else if (s.flueType === "PVC (90%+) reuse") out.push("Reconnect to the existing PVC venting after inspection.");
+      else if (s.flueType === "B-vent (80%) new") out.push("Install new B-vent flue" + ft("flueFt") + ".");
+      else if (s.flueType === "B-vent (80%) reuse") out.push("Reconnect to the existing B-vent flue after inspection.");
+      let cond = "";
+      if (/existing drain OK/.test(s.condRoute || "")) cond = "Connect the condensate drain to the existing drain line";
+      else if (/new drain line/.test(s.condRoute || "")) cond = "Run a new condensate drain line" + ft("drainFt");
+      else if (/Pump/.test(s.condRoute || "")) cond = "Install a condensate pump and drain line";
+      else if (/Difficult/.test(s.condRoute || "")) cond = "Route the condensate drain (difficult route)";
+      if (cond) out.push(cond + (s.condTerm ? ", terminating at " + s.condTerm : "") + ".");
+      if (s.secPan === "New pan") out.push("Install a secondary drain pan.");
+      if (s.floatSw === "New float switch") out.push("Install a float switch (shuts the system off if the drain backs up).");
+      else if (s.floatSw === "Existing OK") out.push("Reuse the existing float switch after testing.");
+      if (s.lineSet === "Reuse (flush)") out.push("Reuse and flush the existing refrigerant line set.");
+      else if (/^New/.test(s.lineSet || "")) out.push("Install a new refrigerant line set" + ft("lineSetFt") + ".");
+      if (s.lineSetCover === "Yes") out.push("Install a line set cover.");
+      if (s.disconnect === "New disconnect") out.push("Install a new outdoor disconnect.");
+      else if (s.disconnect === "Existing OK") out.push("Reuse the existing disconnect.");
+      if (s.circuit === "New condenser circuit") out.push("Install a new dedicated condenser circuit.");
+      if (s.pad === "New pad") out.push("Set the condenser on a new pad.");
+      else if (s.pad === "New stand / wall brackets") out.push("Mount the condenser on a new stand or wall brackets.");
+      else if (s.pad === "Existing OK") out.push("Set the condenser on the existing pad.");
+      if (s.plenum === "Beyond standard (custom)") out.push("Fabricate and install a custom plenum and transition.");
+      else if (s.plenum === "Standard") out.push("Connect supply and return plenums and transitions.");
+      if (/^New, /.test(s.platform || "")) out.push("Build a new attic equipment platform.");
+      else if (s.platform === "Extend / repair") out.push("Extend or repair the attic equipment platform.");
+      if (s.gas === "Existing OK") out.push("Reconnect gas at the existing shutoff.");
+      else if (/Needs work/.test(s.gas || "")) out.push("Gas piping work as needed to connect the new furnace.");
+      if (s.permit === "Permit + HERS") out.push("Pull the mechanical permit and coordinate HERS verification.");
+      else if (s.permit === "Permit only") out.push("Pull the mechanical permit.");
+      if (s.haulAway === "Yes (included)") out.push("Remove and haul away the old equipment.");
+      out.push("Evacuate, charge, start up and commission the system, and verify operation.");
+      if (s.warrantyReg === "Yes (included)") out.push("Register the manufacturer warranty.");
+      else if (s.warrantyReg) out.push("Customer to register the manufacturer warranty.");
+      return out;
+    }
+    if (b && b.kind === "repair") {
+      const d = b.inputs || {}; const T = rbType(d.type);
+      out.push("Replace the " + (d.partName ? d.partName : T.label.replace(/ replacement$/i, "").replace(/^Other \/ manual$/, "failed component")).toLowerCase().replace(/^(.)/, function (m) { return m; }) + (d.partModel ? " (" + d.partModel + ")" : "") + ".");
+      if (T.refrig) out.push("Recover refrigerant as needed, replace the filter drier, evacuate, and recharge to the manufacturer’s specification.");
+      out.push("Test operation and verify performance.");
+      return out;
+    }
+    out.push("Furnish and install: " + scopeCleanLabel(draftLabel(l)) + ".");
+    out.push("Test operation and verify performance.");
+    return out;
+  }
+  function scopeDraftFromLines(job, lines) {
+    const addr = [job.address, job.city].filter(Boolean).join(", ");
+    const parts = ["Scope of work · Job #" + job.id + (addr ? " · " + addr : ""), ""];
+    let n = 0;
+    (lines || []).forEach(function (l) {
+      const amt = lineTotal(l), lab = scopeCleanLabel(draftLabel(l));
+      if (amt < 0) { parts.push("Discount: " + lab + " (" + money(amt) + ")"); parts.push(""); return; }
+      if (!(amt > 0) || (!l.builder && scopeIsFeeLine(draftLabel(l)))) return;
+      n++;
+      parts.push("Option " + n + ": " + lab + " · " + money(amt) + " all-in (equipment or parts, labor and materials)");
+      scopeBulletsForLine(l).forEach(function (x) { parts.push("• " + x); });
+      parts.push("");
+    });
+    parts.push("Price shown for each option is all-in. Work not listed above is not included.");
+    return parts.join("\n");
+  }
+  function estScopeSheet(job) {
+    const sb = state.scopeBuild || { text: "" };
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Scope · draft v1</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<button class="btn accent" data-pin ' + act("previewEst") + ">Preview estimate ›</button>" +
+      '<div class="muted" style="margin-bottom:8px">Starter scope from your lines' + (state.packDraft.some(function (l) { return l.builder && l.builder.survey; }) ? " and the site survey" : "") + ". Edit it here. It is saved with the estimate as a Draft version; mark it Final later on the saved estimate. The customer sees one all-in price per option, no rates or hours.</div>" +
+      '<label class="field"><textarea id="sb-text" rows="16" oninput="RT.setScopeBuild(this.value)">' + esc(sb.text || "") + "</textarea></label>" +
+      '<div style="display:flex;gap:8px"><button class="btn ghost" style="flex:1;margin:0" ' + act("scopeRedraft") + ">Re-draft from lines</button><button class=\"btn ghost\" style=\"flex:1;margin:0\" " + act("scopeBack") + ">‹ Back to lines</button></div>");
+  }
+  RT_RB.setScopeBuild = function (v) { state.scopeBuild = state.scopeBuild || {}; state.scopeBuild.text = v; state.scopeBuild.edited = true; };
+  RT_RB._sheetOpen = function () { return !!state.sheet; };
+  function handleScopeStep(name, arg) {
+    const job = getJob(state.openJobId);
+    if (name === "scopeStep") {
+      if (!job || !state.packDraft.length) return true;
+      const sb = state.scopeBuild;
+      if (!sb || !sb.edited) {
+        const rec = (job.estimates || []).find(function (e) { return e.id === job.estimateId && !e.superseded; });
+        const prev = rec && latestScope(rec, false);
+        state.scopeBuild = prev && !(sb && sb.fresh) ? { text: prev.text, edited: false, fromPrev: true } : { text: scopeDraftFromLines(job, state.packDraft), edited: false };
+      }
+      state.sheet = "estScope"; render(); return true;
+    }
+    if (name === "scopeRedraft") { if (job) state.scopeBuild = { text: scopeDraftFromLines(job, state.packDraft), edited: false, fresh: true }; render(); return true; }
+    if (name === "scopeBack") { state.sheet = "priceBook"; render(); return true; }
+    if (name === "openPriceBook") { state.scopeBuild = null; return false; }
     return false;
   }
 
@@ -4358,7 +4461,7 @@
         return '<button class="chip' + (d.status === x[0] ? " on" : "") + '" ' + act("partStatus", x[0]) + ">" + x[1] + "</button>";
       }).join("") + "</div>" +
       (d.po ? '<div class="muted" style="margin-bottom:10px">On PO ' + esc(d.po) + "</div>" : "") +
-      '<button class="btn teal" ' + act("savePart") + ">Save part</button>" +
+      '<button data-pin class="btn teal" ' + act("savePart") + ">Save part</button>" +
       (d.isNew ? "" : '<button class="btn ghost" style="margin-top:8px" ' + act("deletePart") + ">Remove from job</button>")
     );
   }
@@ -4399,7 +4502,7 @@
       '<div class="muted" style="margin:6px 0 10px">Opens a draft in your mail app. Nothing is sent until you press Send.</div>' +
       (v && v.email ? '<a class="btn teal" style="display:flex;text-decoration:none" href="' + esc(href) + '">Open email to ' + esc(v.name) + "</a>" : "") +
       '<button class="btn ghost" style="margin-top:8px" ' + act("copyPo") + ">Copy PO text</button>" +
-      (parts.length ? '<button class="btn" style="margin-top:8px" ' + act("markPoOrdered") + ">Mark these " + parts.length + " as ordered on " + esc(d.po) + "</button>" : "")
+      (parts.length ? '<button data-pin class="btn" style="margin-top:8px" ' + act("markPoOrdered") + ">Mark these " + parts.length + " as ordered on " + esc(d.po) + "</button>" : "")
     );
   }
   function vendorsSection() {
@@ -4420,7 +4523,7 @@
       '<label class="field"><div class="field-lab">Counter phone (optional)</div><input id="vd-phone" type="tel" autocomplete="off" value="' + esc(d.phone || "") + '" oninput="RT.setVendorField(\'phone\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Account #</div><input id="vd-account" autocomplete="off" value="' + esc(d.account || "") + '" oninput="RT.setVendorField(\'account\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">What you buy there</div><input id="vd-buys" autocomplete="off" placeholder="e.g. Payne equipment, copper, filters" value="' + esc(d.buys || "") + '" oninput="RT.setVendorField(\'buys\', this.value)"></label>' +
-      '<button class="btn teal" ' + act("saveVendor") + ">Save branch</button>" +
+      '<button data-pin class="btn teal" ' + act("saveVendor") + ">Save branch</button>" +
       (d.isNew ? "" : '<button class="btn ghost" style="margin-top:8px" ' + act("deleteVendor") + ">Remove branch</button>")
     );
   }
@@ -4823,7 +4926,7 @@
       '<label class="field"><div class="field-lab">Approved by</div><input id="ap-by" autocomplete="off" value="' + esc(d.by || "") + '" oninput="RT.setApproveField(\'by\', this.value)"></label>' +
       '<div class="h2" style="margin:4px 0 12px">Approved total ' + money(tot) + "</div>" +
       '<div class="note" style="margin:-6px 0 12px">' + (estimateIsOnOtherVisit(job) ? "This estimate was written on a visit that already has work or an invoice, so approval creates a new linked job (#" + esc(nextJobId(state.jobs)) + ")." : "Approval turns job #" + esc(job.id) + " into the approved job.") + " Scope, PDF link, and parts for the approved options move to the job.</div>" +
-      '<button class="btn teal" ' + act("confirmApproveEst") + ">Confirm approval</button>"
+      '<button data-pin class="btn teal" ' + act("confirmApproveEst") + ">Confirm approval</button>"
     );
   }
   function scopeEditSheet(job) {
@@ -4832,7 +4935,7 @@
       '<div class="sheet-head"><div class="sheet-title">Scope · ' + esc(d.estId) + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
       '<div class="muted" style="margin-bottom:8px">Saving makes a new Draft version. Earlier versions are kept.</div>' +
       '<label class="field"><textarea id="sc-text" rows="14" oninput="RT.setScopeText(this.value)">' + esc(d.text || "") + "</textarea></label>" +
-      '<button class="btn teal" ' + act("saveScope") + ">Save as new Draft version</button>" +
+      '<button data-pin class="btn teal" ' + act("saveScope") + ">Save as new Draft version</button>" +
       '<button class="btn ghost" style="margin-top:8px" ' + act("refineScope", d.estId) + ">Send to ReliaTech to refine</button>"
     );
   }
@@ -4862,7 +4965,7 @@
       '<div class="note" style="margin:0 0 10px">The app can’t message your ReliaTech assistant directly yet. Type your question, tap Copy, then paste it into your ReliaTech chat. The job details are included.</div>' +
       '<label class="field"><div class="field-lab">Your question</div><textarea id="ask-q" rows="4" placeholder="e.g. Board shows code 33, what should I check?" oninput="RT.setAskText(this.value)">' + esc(state.askText || "") + "</textarea></label>" +
       '<div class="field-lab">Job details that go with it</div><div class="doc" style="white-space:pre-wrap;font-size:12px;line-height:17px">' + esc(jobContextText(job)) + "</div>" +
-      '<button class="btn teal" ' + act("askCopy") + ">Copy for ReliaTech chat</button>" +
+      '<button data-pin class="btn teal" ' + act("askCopy") + ">Copy for ReliaTech chat</button>" +
       '<button class="btn ghost" style="margin-top:8px" ' + act("askShare") + ">Share…</button>"
     );
   }
@@ -6006,7 +6109,19 @@
 
   /* remaining sheets + handlers appended next */
 
+  function pinPrimary(h) {
+    const found = [];
+    h = h.replace(/<(button|a)\b[^>]*\sdata-pin\b[\s\S]*?<\/\1>/g, function (m) { found.push(m.replace(" data-pin", "")); return ""; });
+    if (!found.length) return h;
+    const bar = '<div class="nc-nav pin-bar">' + found.join("") + "</div>";
+    let at = 0;
+    const hs = h.indexOf('<div class="sheet-head">');
+    if (hs !== -1) { const e = h.indexOf("</button></div>", hs); if (e !== -1) at = e + 15; }
+    if (h.substr(at, 18) === '<div class="steps"') { const e2 = h.indexOf("</div>", at); if (e2 !== -1) at = e2 + 6; }
+    return h.slice(0, at) + bar + h.slice(at);
+  }
   function backdrop(inner) {
+    inner = pinPrimary(inner);
     return '<div class="backdrop" id="backdrop"><div class="sheet" id="sheet">' +
       '<div class="handle"><span></span></div>' + inner + "</div></div>";
   }
@@ -6186,7 +6301,7 @@
         return '<button class="chip' + (typ === t[0] ? " on" : "") + '" ' + act("noteType", t[0]) + ">" + esc(t[1]) + "</button>";
       }).join("") + "</div>" +
       body + nameplate +
-      '<button class="btn" ' + act("saveNote") + ">Save note</button>");
+      '<button data-pin class="btn" ' + act("saveNote") + ">Save note</button>");
   }
 
   function photoSheet() {
@@ -6198,7 +6313,7 @@
         : '<div class="photo-ph">' + icon("photo", 28) + "<span>Take a photo or choose one from the library</span></div>") +
       '<label class="btn ghost" style="display:block;text-align:center;margin:8px 0 12px">Take or choose a photo<input type="file" accept="image/*" aria-label="Job photo" style="position:absolute;opacity:0;width:0;height:0" onchange="RT.setPhotoFile(this)"></label>' +
       '<label class="field"><div class="field-lab">Caption (optional)</div><input id="photo-cap" value="' + esc(d.caption || "") + '" oninput="RT.setPhotoCaption(this.value)"></label>' +
-      (d.data ? '<button class="btn" ' + act("savePhoto") + ">Save photo to this job</button>" : ""));
+      (d.data ? '<button data-pin class="btn" ' + act("savePhoto") + ">Save photo to this job</button>" : ""));
   }
   function askSheet(job) {
     const q = "What should I check first?";
@@ -6237,9 +6352,9 @@
       "</div>" +
       (job.paidMethod ? '<div class="muted" style="margin-top:12px">Marked paid' + (job.paidDate ? " on " + esc(job.paidDate) : "") + " · " + esc(job.paidMethod) + (job.status === "paid" ? "" : "") + ".</div>" : "") +
       (existing && isPayable(job) ? '<button class="btn teal" ' + act("sheet", "pay") + ">Pay now</button>" : "") +
-      (existing ? '<button class="btn teal" ' + act("sheet", "send") + ">Send invoice</button>" : "") +
+      (existing ? '<button data-pin class="btn teal" ' + act("sheet", "send") + ">Send invoice</button>" : "") +
       (existing && (isPayable(job) || job.status === "invoiced") ? '<button class="btn accent" ' + act("sheet", "paid") + ">Mark paid</button>" : "") +
-      (existing ? '<button class="btn' + (isPayable(job) ? " ghost" : "") + '" ' + act("closeSheet") + ">Done</button>" : '<button class="btn teal" ' + act("closeoutOpen") + ">Work complete · write invoice</button>"));
+      (existing ? '<button class="btn' + (isPayable(job) ? " ghost" : "") + '" ' + act("closeSheet") + ">Done</button>" : '<button data-pin class="btn teal" ' + act("closeoutOpen") + ">Work complete · write invoice</button>"));
   }
 
   function paySheet(job) {
@@ -6286,7 +6401,7 @@
         return '<button class="chip teal' + (d.method === m ? " on" : "") + '" ' + act("setPaidMethod", m) + ">" + esc(m) + "</button>";
       }).join("") + "</div>" +
       '<label class="field"><div class="field-lab">Date</div><input id="paid-date" type="date" value="' + esc(d.date || todayYmd()) + '" oninput="RT.setPaidDate(this.value)"></label>' +
-      '<button class="btn accent" ' + act("markPaid") + ">Mark paid</button>");
+      '<button data-pin class="btn accent" ' + act("markPaid") + ">Mark paid</button>");
   }
 
   function sendSheet(job) {
@@ -6350,7 +6465,7 @@
           return '<label class="field"><div class="field-lab">' + esc(f[1]) + (f[2] ? " (" + f[2] + ")" : "") + '</div><input value="' + esc(d.values[f[0]] || "") + '" oninput="RT.setReadVal(\'' + f[0] + '\', this.value)"></label>';
         }).join("");
       }).join("") +
-      '<button class="btn" ' + act("saveReading") + ">Save reading set</button>");
+      '<button data-pin class="btn" ' + act("saveReading") + ">Save reading set</button>");
   }
 
   function fullSetSheet(job, set) {
@@ -6445,7 +6560,7 @@
       '<label class="field"><div class="field-lab">Description</div><input id="pack-custom-name" value="' + esc(state.packCustomName || "") + '" oninput="RT.setPackCustom(\'name\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Amount</div><input id="pack-custom-amount" inputmode="decimal" value="' + esc(state.packCustomAmount || "") + '" oninput="RT.setPackCustom(\'amount\', this.value)"></label>' +
       '<button class="btn ghost" style="margin-bottom:10px" ' + act("addCustomLine") + ">Add custom line</button>" +
-      (state.packDraft.length ? '<button class="btn accent" style="margin-top:8px" ' + act("previewEst") + ">Preview estimate</button>" : ""));
+      (state.packDraft.length ? '<button class="btn accent" data-pin ' + act("scopeStep") + ">Next · Scope ›</button>" : ""));
   }
 
 
@@ -6468,8 +6583,9 @@
       '<div class="row" style="margin-top:12px;font-weight:750"><div>Total</div><div>' + money(total) + "</div></div></div>" +
       lines.filter(function (l) { return l.builder; }).map(function (l) { return '<div class="meta" style="margin-top:8px;font-weight:700">' + esc(l.label) + "</div>" + builderInternalHtml(l.builder); }).join("") +
       estimateGpHtml(lines) +
+      (state.scopeBuild && state.scopeBuild.text ? '<div class="doc"><div class="k-up">Scope · will save as a Draft version</div><div style="white-space:pre-wrap;font-size:13px;margin-top:6px">' + esc(state.scopeBuild.text) + '</div><button class="link-btn" ' + act("scopeStep") + ">‹ Edit scope</button></div>" : "") +
       '<div class="note">' + PRICE_BOOK_NOTE + " This preview stays on the phone and is not sent.</div>" +
-      '<button class="btn" style="margin-top:12px" ' + act("saveEstimate") + ">Save estimate to job</button>");
+      '<button class="btn" data-pin ' + act("saveEstimate") + ">Save estimate to job</button>");
   }
 
   function equipmentSheet() {
@@ -6534,7 +6650,7 @@
       '<label class="field"><div class="field-lab">Depart</div><input id="te-clockOut" type="datetime-local" value="' + esc(d.clockOut || "") + '" oninput="RT.setTimeEdit(\'clockOut\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Reason (required)</div><textarea id="te-reason" rows="3" placeholder="e.g. Forgot to clock out at the end of the day" oninput="RT.setTimeEdit(\'reason\', this.value)">' + esc(d.reason || "") + "</textarea></label>" +
       correctionTrailHtml(entry) +
-      '<button class="btn" style="margin-top:12px" ' + act(request ? "saveCorrectionRequest" : "saveTimeEdit") + ">" + (request ? "Submit request" : "Save changes") + "</button>");
+      '<button data-pin class="btn" style="margin-top:12px" ' + act(request ? "saveCorrectionRequest" : "saveTimeEdit") + ">" + (request ? "Submit request" : "Save changes") + "</button>");
   }
 
   function voiceSheet() {
@@ -6597,7 +6713,7 @@
       '<button class="dash' + (d.example ? " sel" : "") + '" style="margin-bottom:14px" ' + act("toggleAddressExample") + ">" +
         (d.example ? "Marked as example only · removable" : "Mark as example data (optional)") +
       "</button>" +
-      '<button class="btn teal" ' + act("saveAddress") + ">" + (editing ? "Save address" : "Add address") + "</button>"
+      '<button data-pin class="btn teal" ' + act("saveAddress") + ">" + (editing ? "Save address" : "Add address") + "</button>"
     );
   }
   function moveAddressSheet() {
@@ -6781,7 +6897,7 @@
         (p.refSell ? "<div>Refrigerant " + p.refLbs + " lb × " + money(p.refCost) + " cost → sell " + money(p.refSell) + "</div>" : "") +
         (ready ? '<div style="margin-top:6px;font-weight:700">' + (useFirst ? "First repair " : "Add-on ") + money(price) + "</div>" : "") +
       "</div>" +
-      '<button class="btn accent" style="margin-top:12px" ' + act("confirmCustomQuote") + ">" + (ready ? "Add to estimate · " + money(price) : "Enter the OEM part cost") + "</button>"
+      '<button data-pin class="btn accent" style="margin-top:12px" ' + act("confirmCustomQuote") + ">" + (ready ? "Add to estimate · " + money(price) : "Enter the OEM part cost") + "</button>"
     );
   }
   function flatRateEditSheet(d, isNew, floorWarn) {
@@ -6833,7 +6949,7 @@
       '<label class="field"><div class="field-lab">Sell price' + sellLab + "</div><input id=\"pb-sell\" inputmode=\"decimal\" " + (locked ? "readonly " : "") + 'value="' + esc(sell != null ? String(sell) : (d.sell === 0 || d.sell ? String(d.sell) : "")) + '" oninput="RT.setPriceDraft(\'sell\', this.value)"></label>' +
       '<label class="field"><div class="field-lab">Detail</div><textarea id="pb-detail" rows="3" oninput="RT.setPriceDraft(\'detail\', this.value)">' + esc(d.detail || "") + "</textarea></label>" +
       (d.source ? '<div class="note">Source: ' + esc(d.source) + (d.sourceFile ? " (" + esc(d.sourceFile) + ")" : "") + "</div>" : "") +
-      '<button class="btn teal" ' + act("saveBookItem") + ">" + (isNew ? "Add item" : "Save") + "</button>" +
+      '<button data-pin class="btn teal" ' + act("saveBookItem") + ">" + (isNew ? "Add item" : "Save") + "</button>" +
       (d.status === "needs_ok" && !isNew ? '<button class="btn accent" style="margin-top:8px" ' + act("approveBookItem") + ">Approve</button>" : "")
     );
   }
@@ -7033,6 +7149,7 @@
     if (s === "saved") return savedSheet();
     if (s === "customQuoteAdd") return customQuoteAddSheet();
     if (s === "priceBook") return job ? priceBookSheet(job) : "";
+    if (s === "estScope") return job ? estScopeSheet(job) : "";
     if (s === "estimatePreview") return job ? estimatePreviewSheet(job) : "";
     if (s === "fullSet") {
       const set = job && (job.readingSets || []).find(function (x) { return x.id === state._setId; });
@@ -7057,7 +7174,7 @@
         '<div class="cal-note">This saves the time on this phone’s visit list only. It does not write to Google Calendar. After the customer confirms, ask the assistant to put it on steveseguine51@gmail.com. ' + esc(availabilitySummary()) + "</div>" +
         '<label class="field"><div class="field-lab">Date</div><input id="sv-date" type="date" value="' + esc(d.date) + '" oninput="RT.setSched(\'date\', this.value)"></label>' +
         '<label class="field"><div class="field-lab">Arrive (PT)</div><input id="sv-time" type="time" value="' + esc(d.time) + '" oninput="RT.setSched(\'time\', this.value)"></label>' +
-        '<button class="btn accent" ' + act("saveSchedule") + ">Save time on this visit</button>"
+        '<button class="btn accent" data-pin ' + act("saveSchedule") + ">Save time on this visit</button>"
       );
     }
     return "";
@@ -7113,6 +7230,7 @@
   }
 
   function handle(name, arg) {
+    if (handleScopeStep(name, arg)) return;
     if (handleCloseout(name, arg)) return;
     if (handleRepairBuilder(name, arg)) return;
     if (handleReplacementBuilder(name, arg)) return;
@@ -7604,6 +7722,10 @@
       const payload = { id: job.estimateId, lineItems: JSON.parse(JSON.stringify(job.lineItems)), total: job.total, billToCustomerId: job.billToCustomerId || job.customerId, createdAt: isoNow(), superseded: false };
       if (rec) Object.assign(rec, payload);
       else job.estimates.push(payload);
+      const recS = job.estimates.find(function (e) { return e.id === job.estimateId && !e.superseded; });
+      const sbT = state.scopeBuild && String(state.scopeBuild.text || "").trim();
+      if (recS && sbT) { const sv = recS.scopeVersions || []; const lastS = sv[sv.length - 1]; if (!lastS || lastS.text !== sbT) recS.scopeVersions = sv.concat([{ v: (lastS ? lastS.v : 0) + 1, text: sbT, status: "Draft", at: isoNow(), fromBuild: true }]); }
+      state.scopeBuild = null;
       if (job.status === "new" || job.status === "diagnosis") job.status = "estimate";
       job.timeline = [{ id: "e" + Date.now(), kind: "system", time: "Just now", title: "Estimate saved", body: "Estimate " + job.estimateId + " for " + money(job.total) + " saved from the price book." }].concat(job.timeline);
       state.sheet = null;
@@ -8519,8 +8641,12 @@
     fetch("index.html?check=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : ""; }).then(function (t) {
       const m = t && t.match(/app\.js\?v=([^"&]+)/); if (!m || m[1] === cur) return;
       const key = "rt-reloaded-for-" + m[1];
+      if (window.__rtReloadPending) return; window.__rtReloadPending = true;
       try { if (sessionStorage.getItem(key)) return; sessionStorage.setItem(key, "1"); } catch (e) {}
-      location.reload();
+      (function go() {
+        if (window.RT && typeof window.RT._sheetOpen === "function" && window.RT._sheetOpen()) { setTimeout(go, 3000); return; }
+        location.reload();
+      })();
     }).catch(function () {});
   }
   setTimeout(check, 1500);
