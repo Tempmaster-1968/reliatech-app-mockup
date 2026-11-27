@@ -4029,8 +4029,19 @@
     const st = visitStatus(v);
     return (st !== "done" && st !== "cancelled") ? v : null;
   }
+  /* Only imported Housecall Pro / seed jobs can be "past HCP history". Jobs created in this app also use 557xx numbers
+     and were being hidden from the board and Home as if they were old HCP jobs. */
+  let _importedJobIds = null;
+  function isImportedJobId(id) {
+    if (!_importedJobIds) {
+      _importedJobIds = {};
+      [].concat(INITIAL_JOBS || [], (window.RT_DATA && window.RT_DATA.moneyJobs) || [], (window.RT_PLANS && window.RT_PLANS.planJobs) || []).forEach(function (j) { if (j && j.id != null) _importedJobIds[String(j.id)] = true; });
+    }
+    return !!_importedJobIds[String(id)];
+  }
   function isPastHcpHistory(job) {
     if (!job || !isHcpId(job.id)) return false;
+    if (!job.planJob && !isImportedJobId(job.id)) return false;
     if (linkedOpenVisit(job)) return false;
     const due = Number(job.dueAmount || 0);
     if (due > 0 && job.status !== "paid" && job.status !== "done") return false;
@@ -4121,6 +4132,10 @@
     const v = linkedOpenVisit(job);
     if (v && visitStatus(v) === "scheduled" && isWithinBoardWindow(parseStamp(v.scheduledStart))) return true;
     return false;
+  }
+  /* A new call that is not scheduled yet still belongs on the board and Home (it used to show only under Show all / search). */
+  function isUnscheduledNewCall(job) {
+    return !!job && isActiveJob(job) && (job.status === "new" || job.status === "diagnosis") && !job.planJob && !isBoardJob(job);
   }
   function unpaidBalanceJobs() {
     return (state.jobs || []).filter(function (j) {
@@ -5298,6 +5313,7 @@
     const upcoming = active.filter(function (j) {
       if (j.status === "estimate") return false;
       if (isInProgressWork(j)) return true;
+      if (isUnscheduledNewCall(j)) return true;
       if (j.planJob) return false;
       const d = jobScheduleDate(j);
       return d && d.getTime() >= today.getTime() && d.getTime() < weekEnd.getTime();
@@ -5619,7 +5635,7 @@
       if (mode === "unpaid") return unpaidBalanceJobs().some(function (u) { return u.id === j.id; });
       if (j.status === "estimate") return false;
       if (j.planJob && !isInProgressWork(j)) return false;
-      return isBoardJob(j);
+      return isBoardJob(j) || isUnscheduledNewCall(j);
     });
     list = mode === "unpaid" && !searching ? unpaidBalanceJobs() : sortJobsList(list);
     const due = boardPlanVisits();
