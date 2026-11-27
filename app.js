@@ -3764,7 +3764,7 @@
     const disc = estimateDiscounts(rec);
     const P = proposalSections(sc ? sc.text : "", opts.length);
     const head = function (first) {
-      return '<div class="pp-head"><div><div class="pp-biz">' + BIZ.name + "</div><div class=\"pp-small\">" + BIZ.addr + "<br>" + BIZ.phoneRaw + " &nbsp;|&nbsp; " + BIZ.email + "</div>" +
+      return '<div class="pp-head"><div><div class="pp-biz">' + BIZ.name + "</div><div class=\"pp-small\">" + BIZ.addr + "<br>" + BIZ.phone + " &nbsp;|&nbsp; " + BIZ.email + "</div>" +
         (first ? "" : '<div class="pp-small">Estimate #' + esc(rec.id) + "</div>") + "</div>" +
         (window.RT_LOGO ? '<img class="pp-logo" src="' + window.RT_LOGO + '" alt="ReliaTech Services">' : "") + "</div>";
     };
@@ -3786,10 +3786,13 @@
       const s1 = P.found ? pick(o, i) : null;
       const body = P.found ? (s1 ? s1.lines : []) : (opts.length === 1 ? P.intro : []);
       shown += body.length;
-      const title = (s1 && s1.title) || scopeCleanLabel(o.label);
-      h += '<div class="pp-card"><div class="pp-opt">Option #' + (i + 1) + '</div><div class="pp-price">' + money(price) + '</div><div class="pp-svc">Services</div>' +
-        '<div class="pp-item">' + esc(title) + '</div><div class="pp-body">' + proposalLinesHtml(body) + "</div>" +
-        '<div class="pp-tot pp-sub"><div>Subtotal</div><div>' + money(price) + '</div></div><div class="pp-tot pp-total"><div>Total</div><div>' + money(price) + "</div></div></div>";
+      const title = (s1 && s1.title) || scopeCleanLabel(o.label) || ("Option " + (i + 1));
+      o.ppTitle = title; o.ppPrice = price;
+      const norm = function (x) { return String(x || "").replace(/^[\s\-•*–—]+/, "").replace(/[\s.:;,]+$/, "").toLowerCase(); };
+      let lines = body.slice(); while (lines.length && !lines[0].trim()) lines.shift();
+      if (lines.length && norm(lines[0]) === norm(title)) { lines.shift(); while (lines.length && !lines[0].trim()) lines.shift(); }
+      h += '<div class="pp-card"><div class="pp-ohead"><div class="pp-otitle">' + esc(title) + '</div><div class="pp-oprice">' + money(price) + "</div></div>" +
+        '<div class="pp-body">' + proposalLinesHtml(lines) + "</div></div>";
     });
     if (introCard && !P.found) h += '<div class="pp-card"><div class="pp-svc">Scope of work</div><div class="pp-body">' + proposalLinesHtml(P.intro) + "</div></div>";
     const left = P.order.filter(function (k) { return !used[k]; });
@@ -3799,9 +3802,10 @@
       h += '<div class="pp-card"><div class="pp-svc">Scope of work</div><div class="pp-body">' + proposalLinesHtml(arr) + "</div></div>";
     }
     if (!shown && sc && String(sc.text || "").trim()) h += '<div class="pp-card"><div class="pp-svc">Scope of work</div><div class="pp-body" style="white-space:pre-wrap">' + esc(String(sc.text).replace(/\r\n?|\u2028|\u2029/g, "\n")) + "</div></div>";
-    if (opts.length > 1 || disc.length) {
+    {
       const together = Math.round((opts.reduce(function (t, o) { return t + o.amount; }, 0) + feeSum + disc.reduce(function (t, l) { return t + Number(l.amount); }, 0)) * 100) / 100;
-      h += '<div class="pp-card"><div class="pp-svc2">' + (opts.length > 2 ? "If all options are approved" : opts.length > 1 ? "If both options are approved" : "Discount") + "</div>" +
+      h += '<div class="pp-card pp-sum">' + (opts.length > 1 ? '<div class="pp-svc2">' + (opts.length > 2 ? "If all options are approved" : "If both options are approved") + "</div>" : "") +
+        (opts.length > 1 ? opts.map(function (o) { return '<div class="pp-tot"><div>' + esc(o.ppTitle) + "</div><div>" + money(o.ppPrice) + "</div></div>"; }).join("") : "") +
         disc.map(function (l) { return '<div class="pp-tot"><div>' + esc(l.label) + "</div><div>−" + money(Math.abs(Number(l.amount))) + "</div></div>"; }).join("") +
         '<div class="pp-tot pp-total"><div>' + (opts.length > 2 ? "All options together" : opts.length > 1 ? "Both options together" : "Total") + "</div><div>" + money(together) + "</div></div></div>";
     }
@@ -3840,7 +3844,7 @@
     const top0 = page.getBoundingClientRect().top, total = page.scrollHeight;
     const big = [], small = [];
     Array.prototype.forEach.call(page.children, function (el) { const r = el.getBoundingClientRect(); big.push(r.bottom - top0); small.push(r.top - top0); });
-    page.querySelectorAll(".pp-ln, .pp-gap, .pp-item, .pp-svc, .pp-tot, .pp-lines > div, .pp-small, .pp-price, .pp-opt").forEach(function (el) { const r = el.getBoundingClientRect(); small.push(r.bottom - top0); });
+    page.querySelectorAll(".pp-ln, .pp-gap, .pp-item, .pp-svc, .pp-tot, .pp-lines > div, .pp-small, .pp-ohead").forEach(function (el) { const r = el.getBoundingClientRect(); small.push(r.bottom - top0); });
     const cuts = []; let s = 0;
     while (total - s > pagePx) {
       const lim = s + pagePx;
