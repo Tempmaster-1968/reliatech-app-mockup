@@ -401,7 +401,9 @@
       if ((c.assets && c.assets.length) || (c.mentions && c.mentions.length)) {
         const first = c.addresses[0];
         first.assets = (first.assets || []).concat(c.assets || []);
-        first.mentions = (first.mentions || []).concat(c.mentions || []);
+        /* Saved customers re-merge their seed mentions on every load; add only ones not already listed so they do not pile up. */
+        const seenM = {};
+        first.mentions = (first.mentions || []).concat(c.mentions || []).filter(function (m) { const k = JSON.stringify(m); if (seenM[k]) return false; seenM[k] = 1; return true; });
         c.assets = [];
         c.mentions = [];
       }
@@ -4388,6 +4390,437 @@
   }
 
 
+  /* ——— REL-17: online sync (Supabase). One signed-in user (Steve). Every record (job, customer, plan, visit,
+     price book item, vendor, unfiled capture, plus settings / techs / tech records / retired job numbers) is saved
+     as one row in public.rt_records. Last write wins by the time the record was edited on the device.
+     Safety: the first sign-in on a device saves a backup copy on the device first, never deletes local records,
+     and a delete only marks the row deleted (the server keeps the last copy). Photos stay on the device (phase 2). ——— */
+  const SYNC = (function () {
+    const PROD_URL = "https://zzrmilzpaqhdckljdyff.supabase.co";
+    const PROD_KEY = "sb_publishable_rswFUXe3Br1vcNTwuILOeA_G6TnsOTz";
+    const TEST = location.protocol === "file:";
+    const SB_URL = (TEST && localStorage.getItem("rt-sync-test-url")) || PROD_URL;
+    const SB_KEY = PROD_KEY;
+    const META_KEY = "reliatech-sync-v1";
+    const ARR = ["customers", "jobs", "plans", "visits", "priceBook", "unfiledCaptures", "vendors"];
+    const META = ["settings", "techs", "techRecords", "retiredJobIds"];
+    const MAX_DELETES = 10;
+    const OVERLAP_MS = 120000;
+    let meta = loadMeta();
+    let client = null, clientP = null;
+    let busy = false, again = false, timer = null, diffTimer = null;
+    let ui = { email: "", password: "", working: false, msg: "" };
+
+    function loadMeta() {
+      let m = null;
+      try { m = JSON.parse(localStorage.getItem(META_KEY) || "null"); } catch (e) { m = null; }
+      m = m || {};
+      m.index = m.index || {}; m.queue = m.queue || []; m.done = m.done || {};
+      return m;
+    }
+    function saveMeta() { try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch (e) {} }
+    function hash(str) { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0; return h.toString(36) + "." + str.length; }
+    function nowIso() { return new Date().toISOString(); }
+    function enqueue(key) { if (meta.queue.indexOf(key) === -1) meta.queue.push(key); }
+    function dequeue(key) { const i = meta.queue.indexOf(key); if (i !== -1) meta.queue.splice(i, 1); }
+    function splitKey(key) { const i = key.indexOf("/"); return [key.slice(0, i), key.slice(i + 1)]; }
+
+    /* Current records on this device as { key: value }. */
+    function localRecords() {
+      const out = {};
+      ARR.forEach(function (c) { (state[c] || []).forEach(function (x) { if (x && x.id != null && x.id !== "") out[c + "/" + x.id] = x; }); });
+      META.forEach(function (m) { out["meta/" + m] = state[m] == null ? null : state[m]; });
+      return out;
+    }
+
+    /* Compare the app data with what was last synced and queue what changed. */
+    function diffLocal() {
+      if (!meta.enabled || !meta.userId || !meta.done[meta.userId]) return 0;
+      const recs = localRecords(), t = nowIso();
+      let n = 0;
+      Object.keys(recs).forEach(function (key) {
+        const h = hash(JSON.stringify(recs[key]));
+        const ix = meta.index[key];
+        if (!ix || ix.h !== h) { meta.index[key] = { h: h, t: t, s: ix && ix.s ? 1 : 0 }; enqueue(key); n++; }
+      });
+      const gone = Object.keys(meta.index).filter(function (key) { return key.indexOf("meta/") !== 0 && !recs[key] && !meta.index[key].d; });
+      if (gone.length > MAX_DELETES) {
+        meta.heldDeletes = gone.length;
+      } else {
+        meta.heldDeletes = 0;
+        gone.forEach(function (key) { meta.index[key] = { h: "deleted", t: t, d: 1, s: meta.index[key].s ? 1 : 0 }; enqueue(key); n++; });
+      }
+      if (n) saveMeta();
+      return n;
+    }
+
+    function loadLib() {
+      if (window.supabase && window.supabase.createClient) return Promise.resolve();
+      return new Promise(function (res, rej) {
+        const tok = (document.querySelector('script[src*="app.js?v="]') || { getAttribute: function () { return ""; } }).getAttribute("src").replace(/^.*v=/, "");
+        const s = document.createElement("script");
+        s.src = "vendor/supabase.js?v=" + tok;
+        s.onload = function () { res(); };
+        s.onerror = function () { rej(new Error("Could not load the sync library. Check the connection.")); };
+        document.head.appendChild(s);
+      });
+    }
+    function getClient() {
+      if (client) return Promise.resolve(client);
+      if (!clientP) clientP = loadLib().then(function () {
+        client = window.supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: "reliatech-sync-auth" } });
+        return client;
+      }).catch(function (e) { clientP = null; throw e; });
+      return clientP;
+    }
+
+    function backupFirst() {
+      const snap = JSON.parse(JSON.stringify(snapshotState()));
+      const rec = { id: "before-sync-" + Date.now(), savedAt: nowIso(), reason: "before first sync", data: snap };
+      try { localStorage.setItem("reliatech-backup-before-sync", JSON.stringify(rec)); } catch (e) {}
+      return new Promise(function (res) {
+        if (!window.indexedDB) { res(false); return; }
+        let r;
+        try { r = indexedDB.open("reliatech-backups", 1); } catch (e) { res(false); return; }
+        r.onupgradeneeded = function () { if (!r.result.objectStoreNames.contains("backups")) r.result.createObjectStore("backups", { keyPath: "id" }); };
+        r.onerror = function () { res(false); };
+        r.onsuccess = function () {
+          try {
+            const t = r.result.transaction("backups", "readwrite");
+            t.objectStore("backups").put(rec);
+            t.oncomplete = function () { res(true); };
+            t.onerror = function () { res(false); };
+          } catch (e) { res(false); }
+        };
+      });
+    }
+
+    function pullSince(c, since) {
+      const rows = [];
+      function page(from) {
+        let q = c.from("rt_records").select("collection,id,data,deleted,client_updated_at,updated_at").order("updated_at", { ascending: true }).order("collection", { ascending: true }).order("id", { ascending: true });
+        if (since) q = q.gt("updated_at", since);
+        return q.range(from, from + 499).then(function (r) {
+          if (r.error) throw r.error;
+          const d = r.data || [];
+          d.forEach(function (x) { rows.push(x); });
+          return d.length === 500 ? page(from + 500) : rows;
+        });
+      }
+      return page(0);
+    }
+
+    function tMs(s) { const n = Date.parse(s); return Number.isFinite(n) ? n : 0; }
+
+    /* Put one remote row into the app. Returns true when the app data changed. */
+    function applyRow(row, initial, report) {
+      const key = row.collection + "/" + row.id;
+      const ix = meta.index[key];
+      const rt = row.client_updated_at;
+      if (row.collection === "meta") {
+        if (META.indexOf(row.id) === -1) return false;
+        if (ix && meta.queue.indexOf(key) !== -1 && tMs(ix.t) > tMs(rt)) return false;
+        if (row.deleted || row.data == null) return false;
+        let val = row.data;
+        if (row.id === "retiredJobIds") {
+          const u = (state.retiredJobIds || []).slice();
+          (Array.isArray(val) ? val : []).forEach(function (id) { if (u.indexOf(id) === -1) u.push(id); });
+          val = u;
+        } else if (row.id === "settings") {
+          val = Object.assign({}, SETTINGS_DEFAULTS, val);
+        }
+        if (initial && ix == null && JSON.stringify(state[row.id]) !== JSON.stringify(val) && row.id !== "retiredJobIds") report.conflicts.push(key);
+        const changed = JSON.stringify(state[row.id]) !== JSON.stringify(val);
+        state[row.id] = val;
+        meta.index[key] = { h: hash(JSON.stringify(val)), t: rt, s: 1 };
+        if (JSON.stringify(val) !== JSON.stringify(row.data)) { meta.index[key].t = nowIso(); enqueue(key); } else dequeue(key);
+        return changed;
+      }
+      const c = row.collection;
+      if (ARR.indexOf(c) === -1) return false;
+      const list = state[c] || (state[c] = []);
+      const at = list.findIndex(function (x) { return x && String(x.id) === String(row.id); });
+      const queued = meta.queue.indexOf(key) !== -1;
+      if (ix && tMs(ix.t) > tMs(rt)) {
+        /* This device has a newer edit waiting to upload. Two devices can both make a new job with the same number
+           while one is offline; keep both by moving this device's never-uploaded job to the next free number. */
+        if (c === "jobs" && queued && !ix.s && at !== -1 && !row.deleted && row.data && !initial && !sameJobOwner(list[at], row.data)) return renumberLocal(at, row, report);
+        /* Same record already online: upload this newer copy as a normal edit. */
+        if (!ix.s) ix.s = 1;
+        return false;
+      }
+      if (row.deleted) {
+        if (at !== -1 && initial) { meta.index[key] = { h: hash(JSON.stringify(list[at])), t: rt, s: 1 }; dequeue(key); return false; }
+        meta.index[key] = { h: "deleted", t: rt, d: 1, s: 1 }; dequeue(key);
+        if (at === -1) return false;
+        if (report.deletes >= MAX_DELETES) { report.heldDeletes++; delete meta.index[key]; return false; }
+        report.deletes++;
+        list.splice(at, 1);
+        if (c === "jobs" && (state.retiredJobIds || []).indexOf(row.id) === -1) state.retiredJobIds = (state.retiredJobIds || []).concat([row.id]);
+        return true;
+      }
+      if (row.data == null) return false;
+      if (c === "jobs" && queued && ix && !ix.s && at !== -1 && !initial && tMs(ix.t) <= tMs(rt)) {
+        if (!sameJobOwner(list[at], row.data)) return renumberLocal(at, row, report);
+      }
+      const val = JSON.parse(JSON.stringify(row.data));
+      if (at !== -1 && JSON.stringify(list[at]) === JSON.stringify(val)) { meta.index[key] = { h: hash(JSON.stringify(val)), t: rt, s: 1 }; dequeue(key); return false; }
+      if (at !== -1 && initial && (!ix || !ix.s) && JSON.stringify(list[at]) !== JSON.stringify(val)) report.conflicts.push(key);
+      const before = at !== -1 ? JSON.stringify(list[at]) : null;
+      if (at !== -1) list[at] = val; else if (c === "jobs") list.unshift(val); else list.push(val);
+      meta.index[key] = { h: hash(JSON.stringify(val)), t: rt, s: 1 };
+      dequeue(key);
+      return before !== JSON.stringify(val);
+    }
+    function sameJobOwner(a, b) { return String((a && (a.customerId || a.customer)) || "") === String((b && (b.customerId || b.customer)) || ""); }
+    function renumberLocal(at, row, report) {
+      const mine = state.jobs[at];
+      const oldId = mine.id;
+      state.jobs.splice(at, 1);
+      const theirs = JSON.parse(JSON.stringify(row.data));
+      state.jobs.unshift(theirs);
+      const newId = nextJobId(state.jobs.concat([mine]));
+      mine.id = newId;
+      state.jobs.unshift(mine);
+      meta.index["jobs/" + oldId] = { h: hash(JSON.stringify(theirs)), t: row.client_updated_at, s: 1 };
+      dequeue("jobs/" + oldId);
+      meta.index["jobs/" + newId] = { h: hash(JSON.stringify(mine)), t: nowIso() };
+      enqueue("jobs/" + newId);
+      if (state.openJobId === oldId) state.openJobId = newId;
+      report.renumbered.push(oldId + "→" + newId);
+      return true;
+    }
+
+    function pushQueue(c) {
+      const recs = localRecords();
+      const keys = meta.queue.slice();
+      if (!keys.length) return Promise.resolve(0);
+      const batch = keys.map(function (key) {
+        const ix = meta.index[key] || { t: nowIso() };
+        const p = splitKey(key);
+        const alive = Object.prototype.hasOwnProperty.call(recs, key) && !ix.d;
+        return { collection: p[0], id: p[1], data: alive ? recs[key] : null, deleted: !alive, client_updated_at: ix.t, device: deviceName(), is_new: !ix.s };
+      });
+      let i = 0;
+      function next() {
+        if (i >= batch.length) return Promise.resolve(batch.length);
+        const part = batch.slice(i, i + 100);
+        return c.rpc("rt_push", { records: part }).then(function (r) {
+          if (r.error) throw r.error;
+          const wrote = {};
+          (Array.isArray(r.data) ? r.data : []).forEach(function (w) { wrote[w[0] + "/" + w[1]] = 1; });
+          part.forEach(function (b) {
+            const key = b.collection + "/" + b.id, ix = meta.index[key];
+            /* Not written: the online copy is newer, or another device already used this new key. The next full download sorts it out. */
+            if (!wrote[key]) { meta.fullPull = true; return; }
+            if (ix && ix.t === b.client_updated_at) { ix.s = 1; dequeue(key); }
+          });
+          saveMeta();
+          i += 100;
+          return next();
+        });
+      }
+      return next();
+    }
+    function deviceName() { const u = navigator.userAgent || ""; return /iPhone/.test(u) ? "iPhone" : /iPad/.test(u) ? "iPad" : /Android/.test(u) ? "Android" : /Mac/.test(u) ? "Mac" : /Windows/.test(u) ? "Windows" : "Browser"; }
+
+    function quietToApply() {
+      if (state.sheet || state.proposal) return false;
+      const a = document.activeElement;
+      return !(a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable));
+    }
+
+    /* One full pass: upload waiting changes, then download changes from other devices. */
+    function syncNow(why) {
+      if (!meta.enabled || !meta.userId) return Promise.resolve(false);
+      if (busy) { again = true; return Promise.resolve(false); }
+      if (!quietToApply()) { schedule(4000); return Promise.resolve(false); }
+      busy = true;
+      let c;
+      return getClient().then(function (cl) {
+        c = cl;
+        return c.auth.getSession();
+      }).then(function (r) {
+        const s = r && r.data && r.data.session;
+        if (!s || !s.user || s.user.id !== meta.userId) throw Object.assign(new Error("Signed out. Sign in again to keep syncing."), { signedOut: true });
+        if (!meta.done[meta.userId]) return firstSync(c);
+        diffLocal();
+        /* A full download when a push was refused or records went missing here (missing records come back from the online copy). */
+        const full = !meta.cursor || meta.fullPull || meta.heldDeletes;
+        const since = full ? null : new Date(tMs(meta.cursor) - OVERLAP_MS).toISOString();
+        const missingBefore = meta.heldDeletes || 0;
+        /* Download first, so a new job number already used on another device is caught before uploading. */
+        return pullSince(c, since).then(function (rows) {
+          if (!quietToApply()) { schedule(4000); return; }
+          const report = { conflicts: [], renumbered: [], deletes: 0, heldDeletes: 0 };
+          let changed = false;
+          rows.forEach(function (row) {
+            if (applyRow(row, false, report)) changed = true;
+            if (!meta.cursor || tMs(row.updated_at) > tMs(meta.cursor)) meta.cursor = row.updated_at;
+          });
+          if (report.heldDeletes) meta.heldRemoteDeletes = (meta.heldRemoteDeletes || 0) + report.heldDeletes;
+          if (full) meta.fullPull = false;
+          finishPass(changed, report);
+          diffLocal();
+          if (missingBefore && !meta.heldDeletes) { meta.note = missingBefore + " records missing on this device were restored from the online copy."; showToast("Restored " + missingBefore + " missing records from the online copy"); }
+          if (meta.queue.length) return pushQueue(c).then(function () { if (meta.fullPull) schedule(1500); });
+        });
+      }).then(function () {
+        meta.lastError = ""; meta.lastSyncAt = nowIso(); saveMeta();
+        return true;
+      }).catch(function (e) {
+        const em = (e && e.message) || "unknown";
+        if (e && e.signedOut) { meta.enabled = false; ui.msg = "You were signed out. Sign in again to resume sync. Changes made here are kept and will upload."; }
+        meta.lastError = (e && e.signedOut) ? e.message : ((navigator.onLine === false || /fetch|network|load failed/i.test(em)) ? "Can’t reach the sync server right now. Changes are saved on this device and will upload later." : ("Sync problem: " + em + ". Changes are kept on this device."));
+        saveMeta();
+        return false;
+      }).then(function (ok) {
+        busy = false;
+        if (state.screen === "settings") render();
+        if (again) { again = false; schedule(500); }
+        return ok;
+      });
+    }
+    function finishPass(changed, report) {
+      saveMeta();
+      if (changed) {
+        render();
+        if (report.renumbered.length) showToast("Job number already used on another device. Renumbered " + report.renumbered.join(", "));
+      }
+    }
+
+    /* First sign-in on this device: backup, then merge. Nothing on this device is deleted. */
+    function firstSync(c) {
+      return backupFirst().then(function () {
+        return pullSince(c, null);
+      }).then(function (rows) {
+        const report = { conflicts: [], renumbered: [], deletes: 0, heldDeletes: 0 };
+        let changed = false;
+        const seen = {};
+        rows.forEach(function (row) {
+          seen[row.collection + "/" + row.id] = 1;
+          if (applyRow(row, true, report)) changed = true;
+          if (!meta.cursor || tMs(row.updated_at) > tMs(meta.cursor)) meta.cursor = row.updated_at;
+        });
+        const recs = localRecords(), t = nowIso();
+        Object.keys(recs).forEach(function (key) {
+          if (seen[key]) return;
+          meta.index[key] = { h: hash(JSON.stringify(recs[key])), t: t };
+          enqueue(key);
+        });
+        meta.firstSync = { at: t, downloaded: rows.length, uploaded: meta.queue.length, replacedByServer: report.conflicts.length, conflicts: report.conflicts.slice(0, 50) };
+        meta.done[meta.userId] = true;
+        finishPass(changed, report);
+        return pushQueue(c);
+      });
+    }
+
+    function schedule(ms) { if (timer) clearTimeout(timer); timer = setTimeout(function () { timer = null; syncNow("timer"); }, ms); }
+
+    const adapter = {
+      name: "supabase",
+      push: function () {
+        if (!meta.enabled) return;
+        if (diffTimer) clearTimeout(diffTimer);
+        diffTimer = setTimeout(function () { diffTimer = null; if (diffLocal()) schedule(300); }, 1500);
+      }
+    };
+
+    function start() {
+      if (!meta.enabled || !meta.userId) return;
+      RTStore.setRemote(adapter);
+      schedule(1200);
+    }
+    window.addEventListener("online", function () { if (meta.enabled) schedule(500); });
+    document.addEventListener("visibilitychange", function () { if (meta.enabled && document.visibilityState === "visible") schedule(800); });
+    setInterval(function () { if (meta.enabled && document.visibilityState !== "hidden") syncNow("interval"); }, 60000);
+
+    function signIn() {
+      const email = (ui.email || state.settings.steveEmail || "").trim();
+      const pw = ui.password || "";
+      if (!email || !pw) { ui.msg = "Enter the email and password for the sync account."; render(); return; }
+      ui.working = true; ui.msg = "Signing in…"; render();
+      getClient().then(function (c) {
+        return c.auth.signInWithPassword({ email: email, password: pw });
+      }).then(function (r) {
+        if (r.error) throw r.error;
+        const u = r.data && r.data.user;
+        if (!u) throw new Error("No account returned");
+        ui.password = "";
+        if (meta.userId && meta.userId !== u.id) { meta.index = {}; meta.queue = []; meta.cursor = null; }
+        meta.enabled = true; meta.userId = u.id; meta.email = u.email || email; meta.lastError = "";
+        saveMeta();
+        RTStore.setRemote(adapter);
+        ui.msg = meta.done[u.id] ? "Signed in. Syncing…" : "Signed in. Saving a backup on this device, then syncing…";
+        render();
+        return syncNow("signin");
+      }).then(function (ok) {
+        ui.working = false;
+        if (ok && meta.firstSync && meta.firstSync.at && !ui.reported) {
+          ui.reported = true;
+          ui.msg = "Sync is on. Uploaded " + meta.firstSync.uploaded + ", downloaded " + meta.firstSync.downloaded + ".";
+        } else if (ok) ui.msg = "Sync is on.";
+        else ui.msg = meta.lastError || "Signed in, but the first sync did not finish. It will retry.";
+        render();
+      }).catch(function (e) {
+        ui.working = false; ui.password = "";
+        const m = (e && e.message) || "Sign-in failed";
+        ui.msg = /invalid login|invalid_credentials/i.test(m) ? "Wrong email or password." : (/fetch|network|load/i.test(m) ? "Can’t reach the sync server. Check the connection and try again." : m);
+        render();
+      });
+    }
+    function signOut() {
+      if (!window.confirm("Turn off sync on this device? Everything stays on this device. Changes made here will not upload until you sign in again.")) return;
+      meta.enabled = false; saveMeta();
+      RTStore.setRemote(null);
+      getClient().then(function (c) { return c.auth.signOut({ scope: "local" }); }).catch(function () {}).then(function () { ui.msg = "Sync is off on this device."; render(); });
+    }
+
+    function when(iso) {
+      if (!iso) return "never";
+      try { return new Date(iso).toLocaleString("en-US", { timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) + " PT"; } catch (e) { return iso; }
+    }
+    function section() {
+      const on = meta.enabled && meta.userId;
+      let h = '<div class="section">Online sync</div>';
+      if (!on) {
+        h += '<div class="muted" style="margin:-4px 0 12px">Sign in to keep jobs, customers, plans, the price book, and settings the same on your iPhone and desktop. The first sign-in saves a backup copy on this device, then uploads. Nothing on this device is deleted. Photos stay on this device for now.</div>' +
+          '<label class="field"><div class="field-lab">Email</div><input id="sync-email" type="email" autocomplete="username" autocapitalize="none" value="' + esc(ui.email || meta.email || state.settings.steveEmail || "") + '" oninput="RT.syncField(\'email\', this.value)"></label>' +
+          '<label class="field"><div class="field-lab">Password</div><input id="sync-pw" type="password" autocomplete="current-password" value="" oninput="RT.syncField(\'password\', this.value)"></label>' +
+          '<button class="btn" style="margin-bottom:8px" ' + (ui.working ? "disabled " : "") + act("syncSignIn") + ">" + (ui.working ? "Signing in…" : "Sign in and turn on sync") + "</button>";
+      } else {
+        const waiting = meta.queue.length;
+        h += '<div class="panel" style="margin-bottom:8px"><div class="h2" style="margin:0 0 4px">Sync is on</div>' +
+          '<div class="meta">Signed in as ' + esc(meta.email || "") + "</div>" +
+          '<div class="meta">Last synced: ' + esc(when(meta.lastSyncAt)) + "</div>" +
+          '<div class="meta">' + (waiting ? waiting + " change" + (waiting > 1 ? "s" : "") + " waiting to upload" : "All changes uploaded") + "</div>" +
+          (meta.lastError ? '<div class="meta" style="color:#c2410c">' + esc(meta.lastError) + "</div>" : "") +
+          (meta.heldDeletes ? '<div class="meta" style="color:#c2410c">' + meta.heldDeletes + " records went missing on this device at once. As a safety stop their deletes were NOT uploaded; the next sync restores them from the online copy.</div>" : "") +
+          (meta.note ? '<div class="meta">' + esc(meta.note) + "</div>" : "") +
+          (meta.heldRemoteDeletes ? '<div class="meta" style="color:#c2410c">' + meta.heldRemoteDeletes + " deletes from another device were held back as a safety stop. Nothing was removed here.</div>" : "") +
+          "</div>" +
+          '<div class="row" style="gap:8px;margin-bottom:8px"><button class="btn" style="flex:1" ' + (busy ? "disabled " : "") + act("syncNow") + ">" + (busy ? "Syncing…" : "Sync now") + '</button><button class="btn ghost" style="flex:1" ' + act("syncSignOut") + ">Turn off sync</button></div>";
+      }
+      if (ui.msg) h += '<div class="cal-note" style="margin-bottom:12px">' + esc(ui.msg) + "</div>";
+      return h;
+    }
+    function handleSync(name, arg) {
+      if (name === "syncSignIn") { signIn(); return true; }
+      if (name === "syncNow") { ui.msg = ""; syncNow("button").then(function (ok) { ui.msg = ok ? "Synced." : (meta.lastError || ""); render(); }); render(); return true; }
+      if (name === "syncSignOut") { signOut(); return true; }
+      return false;
+    }
+    return {
+      start: start, section: section, handle: handleSync, syncNow: syncNow,
+      field: function (k, v) { if (k === "email" || k === "password") ui[k] = v; },
+      _meta: function () { return JSON.parse(JSON.stringify(meta)); },
+      _testRemove: TEST ? function (c, ids) { state[c] = (state[c] || []).filter(function (x) { return ids.indexOf(String(x.id)) === -1; }); render(); } : null,
+      _busy: function () { return busy; }
+    };
+  })();
+  SYNC.start();
+
+
   function snapshotState() {
     return {
         v: 1,
@@ -6539,6 +6972,7 @@
       '<label class="field"><div class="field-lab">Add an independent tech</div><input id="new-tech" type="text" placeholder="Tech name" value="" oninput="RT.setNewTech(this.value)"></label>' +
       '<button class="dash" style="margin-top:-4px;margin-bottom:16px" ' + act("addTech") + ">Add tech</button>" +
       vendorsSection() +
+      SYNC.section() +
       backupSection() +
       duplicatesSection() +
       '<div class="section">Availability</div>' +
@@ -7960,6 +8394,7 @@
 
   function handle(name, arg) {
     if (handleProposal(name, arg)) return;
+    if (SYNC.handle(name, arg)) return;
     if (handleArchive(name, arg)) return;
     if (handleScopeStep(name, arg)) return;
     if (handleCloseout(name, arg)) return;
@@ -9342,6 +9777,7 @@
   }
   Object.assign(window.RT, RT_EQUIP);
   Object.assign(window.RT, RT_RB);
+  Object.assign(window.RT, { syncField: SYNC.field, _sync: SYNC });
   const _handleV1 = handle;
   handle = function (n, a) { _handleV1(n, a); postHandleEquipV2(n); if (n === "saveNote") migrateLegacyPhotos().then(function (k) { if (k) render(); }).catch(function () {}); };
   const _render0 = render;
