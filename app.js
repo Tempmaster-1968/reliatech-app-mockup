@@ -14,7 +14,10 @@
     invoiced: { label: "Awaiting payment", short: "Await.", step: 5, bar: "#C45C1A", bg: "#FAE8DB", text: "#8A3A0C", bgDark: "#3A2418", textDark: "#F0B090" },
     paid: { label: "Paid", short: "Paid", step: 6, bar: "#1F7A4D", bg: "#E3F5EC", text: "#145C38", bgDark: "#143326", textDark: "#8FDBB0" },
     posted: { label: "Posted", short: "Posted", step: 6, bar: "#1F4D3A", bg: "#E1ECE6", text: "#123A2A", bgDark: "#12261D", textDark: "#9FD1B8" },
-    superseded: { label: "Replaced", short: "Repl.", step: 2, bar: "#6B7280", bg: "#EEF0F2", text: "#4B5563", bgDark: "#2A2E32", textDark: "#C5CBD1" }
+    superseded: { label: "Replaced", short: "Repl.", step: 2, bar: "#6B7280", bg: "#EEF0F2", text: "#4B5563", bgDark: "#2A2E32", textDark: "#C5CBD1" },
+    canceled: { label: "Canceled", short: "Can.", step: 0, bar: "#6B7280", bg: "#EEF0F2", text: "#3F3F46", bgDark: "#2A2E32", textDark: "#E4E4E7" },
+    cancelled: { label: "Canceled", short: "Can.", step: 0, bar: "#6B7280", bg: "#EEF0F2", text: "#3F3F46", bgDark: "#2A2E32", textDark: "#E4E4E7" },
+    declined: { label: "Declined", short: "Decl.", step: 2, bar: "#8A3A0C", bg: "#FAE8DB", text: "#6B2A08", bgDark: "#3A2418", textDark: "#F0B090" }
   };
   const PIPELINE = [
     { step: 0, label: "New" }, { step: 1, label: "Diag." }, { step: 2, label: "Est." },
@@ -208,7 +211,9 @@
     const maxRt = lists.reduce(function (m, j) { return Math.max(m, reliaTechJobNum(j.id)); }, 55720);
     const held = [].concat((PLAN_SEED && PLAN_SEED.voidedJobIds) || [], (PLAN_SEED && PLAN_SEED.reservedJobIds) || []);
     const maxHeld = held.reduce(function (m, id) { return Math.max(m, reliaTechJobNum(id)); }, 0);
-    return String(Math.max(maxRt, maxHeld) + 1);
+    const retired = (state && state.retiredJobIds) || [];
+    const maxRetired = retired.reduce(function (m, id) { return Math.max(m, reliaTechJobNum(id)); }, 0);
+    return String(Math.max(maxRt, maxHeld, maxRetired) + 1);
   }
   function lineTotal(l) {
     if (!l) return 0;
@@ -703,7 +708,7 @@
       const payer = getCustomer(e.billToCustomerId);
       const current = e.id === job.estimateId && !e.superseded;
       return '<button class="list-card" ' + act("viewEstimate", e.id) + '><div class="job-body"><div class="row"><div class="h2" style="margin:0">' + esc(e.id) + "</div>" +
-        (current ? pill("Current", "#0C5C5C", "#E6F4F4") : pill("Earlier", "#5C5C5C", "var(--field)")) + "</div>" +
+        (e.approval ? pill("Approved", "#1B5C30", "#E5F6EA") : estimateFullyDeclined(e) ? pill("Declined", "#6B2A08", "#FAE8DB") : estimateIsExpired(e) ? pill("Expired", "#8A3A0C", "#FAE8DB") : current ? pill("Current", "#0C5C5C", "#E6F4F4") : pill("Earlier", "#5C5C5C", "var(--field)")) + "</div>" +
         '<div class="muted">Bill to ' + esc(payer ? payer.name : "—") + (e.total != null ? " · " + money(e.total) : "") + "</div></div></button>";
     }).join("") + "</div>";
   }
@@ -2264,6 +2269,8 @@
     techs: (_saved && Array.isArray(_saved.techs) && _saved.techs.length) ? _saved.techs : [DEFAULT_TECH],
     techRecords: [],
     boardMode: "board",
+    archivedFilter: "all",
+    retiredJobIds: (_saved && Array.isArray(_saved.retiredJobIds)) ? _saved.retiredJobIds.slice() : [],
     noteDraft: emptyNoteDraft("visit"),
     timeEdit: null,
     voice: { listening: false, text: "", fallback: false, error: "" },
@@ -3518,6 +3525,8 @@
       '<button data-pin class="btn ' + (kind === "reopen" ? "accent" : "teal") + '" ' + act(kind === "reopen" ? "reopenJob" : "callbackCreate") + ">" + (kind === "reopen" ? "Reopen job" : "Create linked job") + "</button>");
   }
   RT_RB._testJob = function (id) { return getJob(id); };
+  RT_RB._testPushJob = function (j) { if (j && j.id) { state.jobs = [j].concat(state.jobs.filter(function (x) { return x.id !== j.id; })); persist(); } };
+  RT_RB._testRetired = function () { return (state.retiredJobIds || []).slice(); };
   RT_RB._render = function () { render(); };
   RT_RB.setReason = function (v) { state.reasonDraft = state.reasonDraft || { text: "", cb: "callback" }; state.reasonDraft.text = v; };
   const LOCKED_ACTS = ["clockIn", "clockOut", "openPriceBook", "rbOpen", "rpOpen", "svOpen", "saveEstimate", "makeInvoice", "addPart", "editPart", "deletePart", "partStatus", "savePart", "partsFromEstimate", "editTime", "requestCorrection", "uwAdd", "uwEdit", "uwDelete", "uwSave", "toggleTimeOnInvoice", "workComplete", "closeoutOpen", "progressOpen", "progressCreate", "markPaid", "postJob"];
@@ -4041,6 +4050,344 @@
     return false;
   }
 
+  /* ——— Cancel job, decline estimate, Archived list, follow-ups (p2o) ———
+     Job numbers are never reused (retiredJobIds). Nothing here sends money or messages. */
+  const CANCEL_REASONS = ["Customer canceled", "No response", "Went with someone else", "Duplicate or test", "Other"];
+  const DECLINE_REASONS = ["Price", "Timing", "Went elsewhere", "Repair instead of replace", "No response", "Other"];
+  const FOLLOW_OPTS = [{ id: "none", label: "No reminder" }, { id: "30", label: "30 days" }, { id: "60", label: "60 days" }];
+  function isCanceledStatus(s) { return s === "canceled" || s === "cancelled"; }
+  function isArchivedJob(job) { return !!job && (isCanceledStatus(job.status) || job.status === "declined"); }
+  function jobHasInvoiceOrMoney(job) {
+    if (!job) return false;
+    ensureInvoices(job);
+    const m = jobMoney(job);
+    if (m.paid > 0 || m.billed > 0 || m.open > 0) return true;
+    if (job.invoiceId || Number(job.dueAmount) > 0) return true;
+    return invList(job).length > 0;
+  }
+  function applyCancelMoney(job, choice) {
+    ensureInvoices(job);
+    if (choice === "refunded") {
+      invList(job).forEach(function (inv) {
+        if (inv.status === "paid") { inv.status = "refunded"; inv.refundedAt = ptNow(); inv.refundedNote = "Recorded as refunded when the job was canceled. No payment was sent or taken by the app."; }
+        else { inv.status = "void"; inv.voidedAt = ptNow(); inv.due = 0; }
+      });
+      job.dueAmount = 0;
+    } else if (choice === "close") {
+      invList(job).forEach(function (inv) {
+        if (inv.status !== "paid" && inv.status !== "refunded") { inv.status = "closed"; inv.closedAt = ptNow(); inv.due = 0; }
+      });
+      job.dueAmount = 0;
+    }
+    /* "keep": leave invoices as they are */
+  }
+  function estimateExpiryDate(rec) {
+    if (!rec) return null;
+    if (rec.expires) {
+      const y = ymdToLocalDate(String(rec.expires).slice(0, 10));
+      if (y) return y;
+      const p = parseStamp(rec.expires);
+      if (p) return p;
+    }
+    const sc = latestScope(rec, true) || latestScope(rec, false);
+    const raw = (sc && (sc.finalAt || sc.at)) || rec.createdAt;
+    const d = raw ? parseStamp(raw) : null;
+    if (!d) return null;
+    return new Date(d.getTime() + 30 * DAY_MS);
+  }
+  function estimateFullyDeclined(rec) {
+    if (!rec) return false;
+    if (rec.decline && rec.decline.all) return true;
+    const opts = estimateOptions(rec);
+    const dec = (rec.declinedOptions || (rec.decline && rec.decline.options) || []);
+    return opts.length > 0 && opts.every(function (o) { return dec.indexOf(o.n) !== -1; });
+  }
+  function estimateIsOpen(rec) {
+    return !!rec && !rec.superseded && !rec.approval && !estimateFullyDeclined(rec);
+  }
+  function estimateIsExpired(rec) {
+    if (!estimateIsOpen(rec)) return false;
+    const exp = estimateExpiryDate(rec);
+    if (!exp) return false;
+    return exp.getTime() < startOfTodayLocal().getTime();
+  }
+  function jobHasOpenEstimateItems(job, skipId) {
+    return (job.estimates || []).some(function (e) { return e.id !== skipId && estimateIsOpen(e); });
+  }
+  function startEstimateRevision(job, rec) {
+    if (!job || !rec) return null;
+    archiveCurrentEstimate(job);
+    const newId = nextEstimateId(job);
+    const rev = {
+      id: newId,
+      lineItems: JSON.parse(JSON.stringify(rec.lineItems || job.lineItems || [])),
+      total: rec.total != null ? rec.total : job.total,
+      billToCustomerId: rec.billToCustomerId || job.billToCustomerId || job.customerId,
+      createdAt: isoNow(),
+      superseded: false,
+      revisedFrom: rec.id,
+      scopeVersions: rec.scopeVersions ? JSON.parse(JSON.stringify(rec.scopeVersions)) : undefined,
+      pdfUrl: "",
+      expires: addDaysYmd(todayYmd(), 30)
+    };
+    job.estimates = (job.estimates || []).concat([rev]);
+    job.estimateId = newId;
+    job.lineItems = JSON.parse(JSON.stringify(rev.lineItems));
+    job.total = rev.total;
+    if (["canceled", "cancelled", "declined", "new", "diagnosis"].indexOf(job.status) !== -1) job.status = "estimate";
+    job.timeline = [{ id: "rev" + Date.now(), kind: "system", time: "Just now", title: "Estimate revised", body: rec.id + " kept as earlier; " + newId + " started from it." }].concat(job.timeline || []);
+    return rev;
+  }
+  function followUpsDue() {
+    const today = todayYmd();
+    const out = [];
+    (state.jobs || []).forEach(function (j) {
+      if (isCanceledStatus(j.status)) return;
+      (j.estimates || []).forEach(function (e) {
+        if (e.superseded || e.approval) return;
+        const expired = estimateIsExpired(e);
+        const due = e.followUpDue && !e.followUpDone && e.followUpDue <= today;
+        if (!due && !expired) return;
+        if (estimateFullyDeclined(e) && !due) return;
+        out.push({ job: j, rec: e, due: e.followUpDue || "", expired: expired, kind: due ? "follow" : "expired" });
+      });
+    });
+    out.sort(function (a, b) { return String(a.due || "").localeCompare(String(b.due || "")); });
+    return out;
+  }
+  function followUpItemHtml(x) {
+    const when = x.kind === "expired" ? "Expired" : ("Follow-up due " + (x.due === todayYmd() ? "today" : formatYmd(x.due)));
+    return '<div class="panel" style="margin:0"><button class="link-btn" style="display:block;width:100%;text-align:left;margin:0;min-height:0;padding:0" ' + act("viewEstimateFromHome", x.job.id + "|" + x.rec.id) + '><div class="job-name" style="margin:0;font-size:16px">' + esc(x.job.customer) + '</div><div class="muted" style="margin-top:2px">' + esc(x.rec.id + " · " + when + (x.rec.decline ? " · declined" : "")) + "</div></button>" +
+      (estimateIsOpen(x.rec) ? '<div style="display:flex;gap:8px;margin-top:10px"><button class="btn ghost" style="flex:1;margin:0" ' + act("openFollowUp", x.job.id + "|" + x.rec.id) + ">Follow up</button>" +
+        '<button class="btn" style="flex:1;margin:0" ' + act("openDeclineEst", x.job.id + "|" + x.rec.id) + ">Decline…</button></div>" : "") + "</div>";
+  }
+  function archivedJobs(filter) {
+    return (state.jobs || []).filter(function (j) {
+      if (!isArchivedJob(j)) return false;
+      if (filter === "canceled") return isCanceledStatus(j.status);
+      if (filter === "declined") return j.status === "declined";
+      return true;
+    }).sort(function (a, b) {
+      const ta = (a.cancel && a.cancel.at) || (a.declineClose && a.declineClose.at) || "";
+      const tb = (b.cancel && b.cancel.at) || (b.declineClose && b.declineClose.at) || "";
+      return String(tb).localeCompare(String(ta));
+    });
+  }
+  function cancelJobSheet(job) {
+    const d = state.cancelDraft || { reason: "", note: "", money: "keep" };
+    const hasMoney = jobHasInvoiceOrMoney(job);
+    const m = hasMoney ? jobMoney(job) : null;
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Cancel job #' + esc(job.id) + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="muted" style="margin-bottom:10px">The job leaves the board and moves to Archived. Notes, photos and estimates are kept. The job number is not reused.</div>' +
+      '<div class="field-lab">Reason</div><div class="chips" style="margin-bottom:12px">' + CANCEL_REASONS.map(function (r) {
+        return '<button class="chip' + (d.reason === r ? " on" : "") + '" ' + act("cancelReason", r) + ">" + esc(r) + "</button>";
+      }).join("") + "</div>" +
+      '<label class="field"><div class="field-lab">Note (optional)</div><textarea id="cx-note" rows="3" oninput="RT.setCancelNote(this.value)">' + esc(d.note || "") + "</textarea></label>" +
+      (hasMoney ? '<div class="warn-banner" style="margin-bottom:12px"><b>This job has an invoice or a payment on file</b> (invoiced ' + money(m.billed) + " · paid " + money(m.paid) + " · open " + money(m.open) + "). This only records what happened. The app does not take, send, or refund money.</div>" +
+        '<div class="field-lab">What should we record for the invoice?</div><div class="stack" style="margin-bottom:12px">' +
+        [["keep", "Keep the fee as the invoice"], ["refunded", "Mark refunded"], ["close", "Close out"]].map(function (x) {
+          return '<button class="dash' + (d.money === x[0] ? " sel" : "") + '" ' + act("cancelMoney", x[0]) + ">" + (d.money === x[0] ? "✓ " : "") + x[1] + "</button>";
+        }).join("") + "</div>" : "") +
+      '<button data-pin class="btn accent" ' + act("confirmCancelJob") + ">Cancel job #" + esc(job.id) + "</button>"
+    );
+  }
+  function deleteJobSheet(job) {
+    const d = state.cancelDraft || {};
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Delete job #' + esc(job.id) + '?</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="warn-banner" style="margin-bottom:12px"><b>This cannot be undone.</b> Job #' + esc(job.id) + " is removed from this phone, including its notes, photos and estimates stored here. The job number stays used and is never given to a new job.</div>" +
+      '<button class="dash' + (d.confirmDelete ? " sel" : "") + '" style="margin-bottom:12px" ' + act("toggleDeleteConfirm") + ">" + (d.confirmDelete ? "✓ " : "") + "I understand this cannot be undone</button>" +
+      '<button data-pin class="btn danger" ' + (d.confirmDelete ? "" : "disabled ") + act("confirmDeleteJob") + ">Delete permanently</button>" +
+      '<button class="btn ghost" ' + act("closeSheet") + ">Keep in Archived</button>"
+    );
+  }
+  function declineEstSheet(job) {
+    const d = state.declineDraft; if (!d) return "";
+    const rec = currentEstimateRec(job, d.estId); if (!rec) return "";
+    const opts = estimateOptions(rec);
+    const already = rec.declinedOptions || [];
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Decline ' + esc(rec.id) + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="muted" style="margin-bottom:10px">The estimate stays on the job. If you decline only some options, the others stay open for approval.</div>' +
+      '<div class="field-lab">Reason</div><div class="chips" style="margin-bottom:12px">' + DECLINE_REASONS.map(function (r) {
+        return '<button class="chip' + (d.reason === r ? " on" : "") + '" ' + act("declineReason", r) + ">" + esc(r) + "</button>";
+      }).join("") + "</div>" +
+      (opts.length > 1 ? '<div class="field-lab">Options declined</div><div class="stack" style="margin-bottom:12px">' + opts.map(function (o) {
+        const on = d.options.indexOf(o.n) !== -1;
+        const was = already.indexOf(o.n) !== -1;
+        return '<button class="dash' + (on ? " sel" : "") + '" ' + act("declineToggleOpt", String(o.n)) + ">" + (on ? "✓ " : "") + "Option " + o.n + " · " + esc(scopeCleanLabel(o.label)) + " · " + money(o.amount) + (was ? " (already declined)" : "") + "</button>";
+      }).join("") + "</div>" : "") +
+      '<label class="field"><div class="field-lab">Note (optional)</div><textarea id="dl-note" rows="3" oninput="RT.setDeclineNote(this.value)">' + esc(d.note || "") + "</textarea></label>" +
+      '<div class="field-lab">Follow-up reminder</div><div class="chips" style="margin-bottom:12px">' + FOLLOW_OPTS.map(function (f) {
+        return '<button class="chip' + (d.follow === f.id ? " on" : "") + '" ' + act("declineFollow", f.id) + ">" + esc(f.label) + "</button>";
+      }).join("") + "</div>" +
+      '<button data-pin class="btn accent" ' + act("confirmDeclineEst") + ">Record decline</button>" +
+      '<button class="btn ghost" style="margin-top:8px" ' + act("reviseInstead", rec.id) + ">Revise instead (E" + String((function () { const m = String(rec.id).match(/-E(\d+)$/); return m ? Number(m[1]) + 1 : 2; })()).padStart(2, "0") + ")</button>"
+    );
+  }
+  function closeDeclinedSheet(job) {
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Close job #' + esc(job.id) + '?</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="muted" style="margin-bottom:12px">Nothing else is open on this job. Close it as Declined (it moves to Archived) or keep it open, for example to bill a diagnostic.</div>' +
+      '<button data-pin class="btn accent" ' + act("closeJobDeclined") + ">Close as Declined</button>" +
+      '<button class="btn ghost" style="margin-top:8px" ' + act("keepJobOpen") + ">Keep job open</button>"
+    );
+  }
+  function followUpSheet(job) {
+    const d = state.followDraft; if (!d) return "";
+    const rec = currentEstimateRec(job, d.estId); if (!rec) return "";
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">Follow up · ' + esc(rec.id) + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      (estimateIsExpired(rec) ? '<div class="note" style="margin-bottom:10px">This estimate is past its expiration.</div>' : "") +
+      '<div class="field-lab">Remind me</div><div class="chips" style="margin-bottom:12px">' + FOLLOW_OPTS.map(function (f) {
+        return '<button class="chip' + (d.follow === f.id ? " on" : "") + '" ' + act("followPick", f.id) + ">" + esc(f.label) + "</button>";
+      }).join("") + "</div>" +
+      '<button data-pin class="btn teal" ' + act("saveFollowUp") + ">Save reminder</button>" +
+      '<button class="btn ghost" style="margin-top:8px" ' + act("openDeclineEst", job.id + "|" + rec.id) + ">Decline instead…</button>"
+    );
+  }
+  RT_RB.setCancelNote = function (v) { state.cancelDraft = state.cancelDraft || {}; state.cancelDraft.note = v; };
+  RT_RB.setDeclineNote = function (v) { state.declineDraft = state.declineDraft || {}; state.declineDraft.note = v; };
+  function handleArchive(name, arg) {
+    const job = getJob(state.openJobId);
+    if (name === "openCancelJob") {
+      if (!job) return true;
+      if (job.posted) { showToast("Reopen first"); return true; }
+      if (isArchivedJob(job)) { showToast("This job is already in Archived. Tap Restore to work on it again."); return true; }
+      state.cancelDraft = { reason: "", note: "", money: "keep" };
+      state.sheet = "cancelJob"; render(); return true;
+    }
+    if (name === "cancelReason") { state.cancelDraft = state.cancelDraft || {}; state.cancelDraft.reason = arg; render(); return true; }
+    if (name === "cancelMoney") { state.cancelDraft = state.cancelDraft || {}; state.cancelDraft.money = arg; render(); return true; }
+    if (name === "confirmCancelJob") {
+      if (!job) return true;
+      if (job.posted) { showToast("Reopen first"); return true; }
+      const d = state.cancelDraft || {};
+      if (!d.reason) { showToast("Choose a reason"); return true; }
+      if (d.reason === "Other" && !String(d.note || "").trim()) { showToast("Add a short note for Other"); return true; }
+      const money = jobHasInvoiceOrMoney(job);
+      if (money && !d.money) { showToast("Choose what to record for the invoice"); return true; }
+      if (money) applyCancelMoney(job, d.money || "keep");
+      job.cancel = { at: isoNow(), atLabel: ptNow(), by: actingAs(), reason: d.reason, note: String(d.note || "").trim(), prevStatus: job.status, money: money ? (d.money || "keep") : "" };
+      job.status = "canceled";
+      job.timeline = [{ id: "cx" + Date.now(), kind: "system", time: "Just now", title: "Canceled", body: d.reason + (d.note ? " — " + d.note : "") + (money ? " · invoice: " + (d.money === "refunded" ? "marked refunded" : d.money === "close" ? "closed out" : "fee kept") : "") }].concat(job.timeline || []);
+      state.cancelDraft = null; state.sheet = null; render();
+      showToast("Job #" + job.id + " canceled · in Archived"); return true;
+    }
+    if (name === "openRestoreJob") {
+      if (!job || !isArchivedJob(job)) return true;
+      const prev = (job.cancel && job.cancel.prevStatus) || (job.declineClose && job.declineClose.prevStatus) || "new";
+      job.status = prev === "canceled" || prev === "cancelled" || prev === "declined" ? "new" : prev;
+      job.timeline = [{ id: "rs" + Date.now(), kind: "system", time: "Just now", title: "Restored", body: "Returned to " + (STATUS[job.status] ? STATUS[job.status].label : job.status) + "." }].concat(job.timeline || []);
+      job.cancel = job.cancel ? Object.assign({}, job.cancel, { restoredAt: isoNow() }) : job.cancel;
+      job.declineClose = job.declineClose ? Object.assign({}, job.declineClose, { restoredAt: isoNow() }) : job.declineClose;
+      render(); showToast("Job #" + job.id + " restored"); return true;
+    }
+    if (name === "openDeleteJob") {
+      if (!job) return true;
+      if (!(isCanceledStatus(job.status) && job.cancel && job.cancel.reason === "Duplicate or test")) { showToast("Only jobs canceled as Duplicate or test can be deleted"); return true; }
+      state.cancelDraft = { confirmDelete: false }; state.sheet = "deleteJob"; render(); return true;
+    }
+    if (name === "toggleDeleteConfirm") { state.cancelDraft = state.cancelDraft || {}; state.cancelDraft.confirmDelete = !state.cancelDraft.confirmDelete; render(); return true; }
+    if (name === "confirmDeleteJob") {
+      if (!job || !state.cancelDraft || !state.cancelDraft.confirmDelete) { showToast("Confirm that this cannot be undone"); return true; }
+      if (!(isCanceledStatus(job.status) && job.cancel && job.cancel.reason === "Duplicate or test")) return true;
+      const id = job.id;
+      if ((state.retiredJobIds || []).indexOf(id) === -1) state.retiredJobIds = (state.retiredJobIds || []).concat([id]);
+      state.jobs = state.jobs.filter(function (j) { return j.id !== id; });
+      state.openJobId = null; state.sheet = null; state.cancelDraft = null;
+      if (state.boardMode !== "archived") state.boardMode = "archived";
+      render(); showToast("Job #" + id + " deleted. That number will not be reused."); return true;
+    }
+    if (name === "openDeclineEst") {
+      let jid = state.openJobId, eid = arg;
+      if (arg && String(arg).indexOf("|") !== -1) { const p = String(arg).split("|"); jid = p[0]; eid = p[1]; state.openJobId = jid; }
+      const j = getJob(jid); const rec = j && currentEstimateRec(j, eid || (j && j.estimateId));
+      if (!rec) return true;
+      if (j.posted) { showToast("Reopen first"); return true; }
+      if (rec.approval) { showToast("Undo approval first to decline this estimate"); return true; }
+      if (rec.superseded) { showToast("This is an earlier estimate"); return true; }
+      const opts = estimateOptions(rec);
+      const already = rec.declinedOptions || [];
+      const openN = opts.filter(function (o) { return already.indexOf(o.n) === -1; }).map(function (o) { return o.n; });
+      const start = openN.length ? openN : opts.map(function (o) { return o.n; });
+      state.declineDraft = { estId: rec.id, reason: "", note: "", follow: "none", options: start };
+      state.viewEstimateId = rec.id; state.sheet = "declineEst"; render(); return true;
+    }
+    if (name === "declineReason") { if (state.declineDraft) state.declineDraft.reason = arg; render(); return true; }
+    if (name === "declineFollow") { if (state.declineDraft) state.declineDraft.follow = arg; render(); return true; }
+    if (name === "declineToggleOpt") {
+      const d = state.declineDraft; if (!d) return true;
+      const n = Number(arg); const i = d.options.indexOf(n);
+      if (i === -1) d.options = d.options.concat([n]); else d.options = d.options.filter(function (x) { return x !== n; });
+      render(); return true;
+    }
+    if (name === "confirmDeclineEst") {
+      const d = state.declineDraft; const j = job; const rec = j && d && currentEstimateRec(j, d.estId);
+      if (!rec) return true;
+      if (!d.reason) { showToast("Choose a reason"); return true; }
+      if (d.reason === "Other" && !String(d.note || "").trim()) { showToast("Add a short note for Other"); return true; }
+      const opts = estimateOptions(rec);
+      let picked = opts.length <= 1 ? opts.map(function (o) { return o.n; }) : (d.options || []).slice();
+      if (!picked.length) { showToast("Choose at least one option to decline"); return true; }
+      rec.declinedOptions = (rec.declinedOptions || []).concat(picked.filter(function (n) { return (rec.declinedOptions || []).indexOf(n) === -1; }));
+      const all = estimateFullyDeclined(rec);
+      rec.decline = { at: isoNow(), atLabel: ptNow(), by: actingAs(), reason: d.reason, note: String(d.note || "").trim(), options: rec.declinedOptions.slice(), all: all };
+      if (d.follow === "30" || d.follow === "60") { rec.followUpDue = addDaysYmd(todayYmd(), Number(d.follow)); rec.followUpDone = false; rec.followUpSetAt = isoNow(); }
+      else { rec.followUpDue = ""; }
+      const names = opts.filter(function (o) { return picked.indexOf(o.n) !== -1; }).map(function (o) { return "Option " + o.n; }).join(", ");
+      j.timeline = [{ id: "dl" + Date.now(), kind: "system", time: "Just now", title: all ? "Estimate declined" : "Options declined", body: rec.id + " · " + names + " · " + d.reason + (d.note ? " — " + d.note : "") + (rec.followUpDue ? " · follow up " + rec.followUpDue : "") }].concat(j.timeline || []);
+      state.declineDraft = null;
+      const leftover = !all || jobHasOpenEstimateItems(j, rec.id) || jobHasInvoiceOrMoney(j) || ["approved", "progress", "done", "invoiced", "paid"].indexOf(j.status) !== -1;
+      if (all && !leftover) { state.sheet = "closeDeclined"; state.viewEstimateId = rec.id; render(); showToast(rec.id + " declined"); return true; }
+      state.viewEstimateId = rec.id; state.sheet = "viewEstimate"; render();
+      showToast(all ? rec.id + " declined" : "Declined options recorded · others still open"); return true;
+    }
+    if (name === "closeJobDeclined") {
+      if (!job) return true;
+      job.declineClose = { at: isoNow(), atLabel: ptNow(), by: actingAs(), prevStatus: job.status };
+      job.status = "declined";
+      job.timeline = [{ id: "dc" + Date.now(), kind: "system", time: "Just now", title: "Closed as declined", body: "Moved to Archived." }].concat(job.timeline || []);
+      state.sheet = null; render(); showToast("Job #" + job.id + " closed as Declined · in Archived"); return true;
+    }
+    if (name === "keepJobOpen") {
+      state.viewEstimateId = state.viewEstimateId || (job && job.estimateId); state.sheet = job && state.viewEstimateId ? "viewEstimate" : null; render();
+      showToast("Job kept open"); return true;
+    }
+    if (name === "reviseInstead") {
+      const j = job; const rec = j && currentEstimateRec(j, arg || (state.declineDraft && state.declineDraft.estId));
+      if (!rec) return true;
+      if (j.posted) { showToast("Reopen first"); return true; }
+      const rev = startEstimateRevision(j, rec);
+      state.declineDraft = null; state.viewEstimateId = rev.id; state.sheet = "viewEstimate"; render();
+      showToast("Started " + rev.id + " from " + rec.id + ". Build estimate to change the lines."); return true;
+    }
+    if (name === "openFollowUp") {
+      let jid = state.openJobId, eid = arg;
+      if (arg && String(arg).indexOf("|") !== -1) { const p = String(arg).split("|"); jid = p[0]; eid = p[1]; state.openJobId = jid; }
+      const j = getJob(jid); const rec = j && currentEstimateRec(j, eid);
+      if (!rec) return true;
+      state.followDraft = { estId: rec.id, follow: rec.followUpDue ? (function () { const n = Math.round((ymdToLocalDate(rec.followUpDue).getTime() - startOfTodayLocal().getTime()) / DAY_MS); return n > 45 ? "60" : n > 0 ? "30" : "30"; })() : "30" };
+      state.viewEstimateId = rec.id; state.sheet = "estFollowUp"; render(); return true;
+    }
+    if (name === "followPick") { if (state.followDraft) state.followDraft.follow = arg; render(); return true; }
+    if (name === "saveFollowUp") {
+      const d = state.followDraft; const rec = job && d && currentEstimateRec(job, d.estId);
+      if (!rec) return true;
+      if (d.follow === "30" || d.follow === "60") { rec.followUpDue = addDaysYmd(todayYmd(), Number(d.follow)); rec.followUpDone = false; rec.followUpSetAt = isoNow(); showToast("Reminder set for " + rec.followUpDue); }
+      else { rec.followUpDue = ""; rec.followUpDone = true; showToast("Reminder cleared"); }
+      state.followDraft = null; state.viewEstimateId = rec.id; state.sheet = "viewEstimate"; render(); return true;
+    }
+    if (name === "viewEstimateFromHome") {
+      const p = String(arg || "").split("|"); const j = getJob(p[0]); if (!j) return true;
+      state.tab = "jobs"; state.openJobId = j.id; state.viewEstimateId = p[1]; state.sheet = "viewEstimate"; state.screen = null; render(); return true;
+    }
+    if (name === "setArchivedFilter") { state.archivedFilter = arg || "all"; render(); return true; }
+    return false;
+  }
+
+
   function snapshotState() {
     return {
         v: 1,
@@ -4055,7 +4402,8 @@
         showCompleted: false,
         priceBook: state.priceBook,
         unfiledCaptures: state.unfiledCaptures,
-        vendors: state.vendors || []
+        vendors: state.vendors || [],
+        retiredJobIds: state.retiredJobIds || []
     };
   }
   function persist() {
@@ -4388,7 +4736,7 @@
   }
   function isCompletedJob(job) {
     if (!job) return true;
-    if (job.status === "paid" || job.status === "done" || job.status === "cancelled" || job.status === "canceled" || job.status === "superseded" || job.supersededBy) return true;
+    if (job.status === "paid" || job.status === "done" || job.status === "cancelled" || job.status === "canceled" || job.status === "declined" || job.status === "superseded" || job.supersededBy) return true;
     return isPastHcpHistory(job);
   }
   function isUpcomingPlanHold(job) {
@@ -4468,7 +4816,7 @@
   function unpaidBalanceJobs() {
     return (state.jobs || []).filter(function (j) {
       if (Number(j.dueAmount || 0) <= 0) return false;
-      if (j.status === "paid" || j.status === "done" || j.status === "cancelled" || j.status === "canceled" || j.status === "superseded" || j.supersededBy) return false;
+      if (j.status === "paid" || j.status === "done" || j.status === "cancelled" || j.status === "canceled" || j.status === "declined" || j.status === "superseded" || j.supersededBy) return false;
       if (isBoardJob(j)) return false;
       return true;
     }).sort(function (a, b) {
@@ -5219,7 +5567,12 @@
         '<button class="link-btn tap" style="margin:0 0 10px" ' + act("undoApproval", rec.id) + ">Undo approval</button>";
     } else {
       h += '<div class="muted" style="margin:-4px 0 8px">Awaiting approval. Scope, PDF link, and parts move to the job only after approval.</div>' +
-        '<button class="btn teal" style="margin-bottom:8px" ' + act("openApproveEst", rec.id) + ">Approve…</button>" +
+        (estimateFullyDeclined(rec) ? '<div class="note" style="margin:0 0 8px">Declined ' + esc((rec.decline && rec.decline.atLabel) || "") + (rec.decline && rec.decline.reason ? " · " + esc(rec.decline.reason) : "") + "</div>"
+          : (estimateIsExpired(rec) ? '<div class="note" style="margin:0 0 8px"><b>Expired</b> — past ' + esc(formatDate((estimateExpiryDate(rec) || new Date()).toISOString())) + " with no answer.</div>" : "") +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">' +
+            '<button class="btn teal" style="margin:0" ' + act("openApproveEst", rec.id) + ">Approve…</button>" +
+            '<button class="btn ghost" style="margin:0" ' + act("openDeclineEst", rec.id) + ">Decline…</button></div>" +
+            (estimateIsExpired(rec) ? '<button class="dash" style="margin-bottom:8px" ' + act("openFollowUp", job.id + "|" + rec.id) + ">Follow up</button>" : "")) +
         '<button class="dash" style="margin-bottom:8px" ' + act("openEstShare", rec.id) + ">Text / share…</button>" +
         '<div class="note" style="margin:-4px 0 12px">Nothing is sent by the app. You get a short message and the Drive PDF link to copy. When the customer replies, record it with Approve….</div>';
     }
@@ -5741,6 +6094,11 @@
     h += '<div style="display:flex;gap:10px;margin-bottom:10px">' +
       tile("unpaid", "Unpaid", money(unpaidTotal), unpaid.length + " invoice" + (unpaid.length === 1 ? "" : "s"), "flex:1") +
       tile("estimates", "Open estimates", money(estTotal), estimates.length + " to follow up", "flex:1") + "</div>";
+    const fus = followUpsDue();
+    if (fus.length) {
+      h += '<div class="section-row"><div class="section" style="margin:0">Follow-ups due</div><div class="meta">' + fus.length + "</div></div>";
+      h += '<div class="stack" style="margin-bottom:12px">' + fus.map(followUpItemHtml).join("") + "</div>";
+    }
     h += head("Estimates to follow up", "estimates", L.estimates.items.length);
     h += preview("estimates", 4);
     h += head("Unpaid invoices", "unpaid", L.unpaid.items.length);
@@ -5953,9 +6311,16 @@
       const hit = !q || [j.id, j.customer, j.address, j.city, j.problem].join(" ").toLowerCase().indexOf(q) !== -1;
       if (!hit) return false;
       if (searching) return true;
+      if (mode === "archived") {
+        const f = state.archivedFilter || "all";
+        if (f === "canceled") return isCanceledStatus(j.status);
+        if (f === "declined") return j.status === "declined";
+        return isArchivedJob(j);
+      }
+      if (isArchivedJob(j)) return false;
       if (mode === "all") {
         if (state.filter === "all") return true;
-        if (state.filter === "open") return j.status !== "paid" && j.status !== "superseded" && j.status !== "cancelled" && j.status !== "canceled" && !j.supersededBy;
+        if (state.filter === "open") return j.status !== "paid" && j.status !== "superseded" && j.status !== "cancelled" && j.status !== "canceled" && j.status !== "declined" && !j.supersededBy;
         return j.status === state.filter;
       }
       if (mode === "unpaid") return unpaidBalanceJobs().some(function (u) { return u.id === j.id; });
@@ -5987,16 +6352,23 @@
       ? '<div class="chips">' + FILTERS.map(function (f) {
           return '<button class="chip' + (state.filter === f[0] ? " on" : "") + '" ' + act("filter", f[0]) + ">" + esc(f[1]) + "</button>";
         }).join("") + "</div>"
+      : (mode === "archived" && !searching)
+        ? '<div class="chips">' + [["all", "All"], ["canceled", "Canceled"], ["declined", "Declined"]].map(function (f) {
+            return '<button class="chip' + ((state.archivedFilter || "all") === f[0] ? " on" : "") + '" ' + act("setArchivedFilter", f[0]) + ">" + esc(f[1]) + "</button>";
+          }).join("") + "</div>"
       : "";
-    const heading = searching ? "Search results" : mode === "all" ? "All jobs" : mode === "unpaid" ? "Unpaid balances" : "Active and next 14 days";
+    const heading = searching ? "Search results" : mode === "all" ? "All jobs" : mode === "unpaid" ? "Unpaid balances" : mode === "archived" ? "Archived" : "Active and next 14 days";
     const empty = searching ? "No jobs match that search." :
       mode === "unpaid" ? "No unpaid balances sitting outside the board." :
       mode === "all" ? "No jobs in this filter." :
+      mode === "archived" ? "No canceled or declined jobs yet." :
       "No in-progress work or scheduled jobs in the next 14 days. Overdue and due-soon plan visits are listed above. Everything else stays in search, on customer pages, and behind Show all.";
+    const archN = archivedJobs("all").length;
     const links = searching ? "" : '<div class="board-links">' +
       (mode !== "board" ? '<button class="link-btn" style="margin:0" ' + act("setBoardMode", "board") + ">Back to board</button>" : "") +
       (mode !== "all" ? '<button class="link-btn" style="margin:0" ' + act("setBoardMode", "all") + ">Show all</button>" : "") +
       (mode !== "unpaid" ? '<button class="link-btn" style="margin:0" ' + act("setBoardMode", "unpaid") + ">Unpaid balances" + (unpaid.length ? " · " + unpaid.length : "") + "</button>" : "") +
+      (mode !== "archived" ? '<button class="link-btn" style="margin:0" ' + act("setBoardMode", "archived") + ">Archived" + (archN ? " · " + archN : "") + "</button>" : "") +
       "</div>";
     return topBar({ kicker: "ReliaTech Services", title: "Jobs", badge: SHOW_SAMPLE_BADGE, settings: true }) +
       actingAsBar() +
@@ -6019,6 +6391,7 @@
       '<div class="job-prob">' + esc(job.problem) + "</div>" +
       '<div class="row"><div class="addr">' + esc(job.address) + "</div>" + (job.total ? '<div class="amt">' + money(job.total) + "</div>" : "") + "</div>" +
       (jobWhenLine(job) ? '<div class="job-when">' + jobWhenLine(job) + "</div>" : "") +
+      (isArchivedJob(job) ? '<div class="job-when">' + esc(isCanceledStatus(job.status) ? ("Canceled" + (job.cancel && job.cancel.reason ? " · " + job.cancel.reason : "") + (job.cancel && job.cancel.atLabel ? " · " + job.cancel.atLabel : "")) : ("Declined" + (job.declineClose && job.declineClose.atLabel ? " · " + job.declineClose.atLabel : ""))) + "</div>" : "") +
       "</div><div class=\"chev\">" + icon("chevron", 18) + "</div></button>";
   }
   function jobStatusPill(job, st, col) {
@@ -6234,6 +6607,9 @@
       (job.invoiceId || job.status === "invoiced" || job.status === "paid" || isPayable(job) ? '<button class="btn" ' + act("sheet", "send") + ">Send invoice</button>" : "") +
       (isPayable(job) || job.status === "invoiced" ? '<button class="btn accent" ' + act("sheet", "paid") + ">Mark paid</button>" : "") +
       '<button class="btn ask" ' + act("sheet", "ask") + ">" + icon("chat", 18) + "<span>Ask ReliaTech</span></button>" +
+      (isArchivedJob(job)
+        ? '<button class="btn" ' + act("openRestoreJob") + ">Restore job</button>" + (isCanceledStatus(job.status) && job.cancel && job.cancel.reason === "Duplicate or test" ? '<button class="btn danger" ' + act("openDeleteJob") + ">Delete permanently…</button>" : "")
+        : (job.posted ? '<div class="note">Posted jobs cannot be canceled. Reopen first.</div>' : '<button class="btn ghost" ' + act("openCancelJob") + ">Cancel job…</button>")) +
       "</div></div></div>";
   }
 
@@ -7465,6 +7841,11 @@
     if (s === "viewEstimate") { const j = getJob(state.openJobId); return j ? viewEstimateSheet(j) : ""; }
     if (s === "approveEst") { const j = getJob(state.openJobId); return j ? approveEstSheet(j) : ""; }
     if (s === "estShare") { const j = getJob(state.openJobId); return j ? estShareSheet(j) : ""; }
+    if (s === "cancelJob") { const j = getJob(state.openJobId); return j ? cancelJobSheet(j) : ""; }
+    if (s === "deleteJob") { const j = getJob(state.openJobId); return j ? deleteJobSheet(j) : ""; }
+    if (s === "declineEst") { const j = getJob(state.openJobId); return j ? declineEstSheet(j) : ""; }
+    if (s === "closeDeclined") { const j = getJob(state.openJobId); return j ? closeDeclinedSheet(j) : ""; }
+    if (s === "estFollowUp") { const j = getJob(state.openJobId); return j ? followUpSheet(j) : ""; }
     if (s === "scopeEdit") { const j = getJob(state.openJobId); return j ? scopeEditSheet(j) : ""; }
     if (s === "ask") { const j = getJob(state.openJobId); return j ? askSheetHandoff(j) : ""; }
     const job = getJob(state.openJobId);
@@ -7567,7 +7948,7 @@
     const root = document.getElementById("app");
     if (!root) return;
     const toast = state.toast ? '<div class="toast">' + esc(state.toast) + "</div>" : "";
-    const key = [state.tab, state.screen, state.openJobId, state.openCustomerId, state.openAddressId, state.sheet, state.viewEstimateId, state.dashListKey].join("|");
+    const key = [state.tab, state.screen, state.openJobId, state.openCustomerId, state.openAddressId, state.sheet, state.viewEstimateId, state.dashListKey, state.boardMode, state.archivedFilter].join("|");
     const keep = renderScrollKeep(root);
     root.innerHTML = mainHtml() + sheetHtml() + photoViewHtml() + toast;
     if (key === state._viewKey) renderScrollRestore(root, keep);
@@ -7579,6 +7960,7 @@
 
   function handle(name, arg) {
     if (handleProposal(name, arg)) return;
+    if (handleArchive(name, arg)) return;
     if (handleScopeStep(name, arg)) return;
     if (handleCloseout(name, arg)) return;
     if (handleRepairBuilder(name, arg)) return;
