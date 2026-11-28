@@ -1900,7 +1900,7 @@
   function matchBoardJobs(query) {
     const q = String(query || "").trim();
     if (!q) return [];
-    return state.jobs.filter(isBoardJob).map(function (j) { return { job: j, score: scoreJobVoice(q, j) }; })
+    return state.jobs.filter(function (j) { return isBoardJob(j) || isPendingSchedule(j) || isMissedAppt(j); }).map(function (j) { return { job: j, score: scoreJobVoice(q, j) }; })
       .filter(function (x) { return x.score >= 50; })
       .sort(function (a, b) { return b.score - a.score; });
   }
@@ -2031,7 +2031,7 @@
       return result({ job: contextJob });
     }
     if (contextCust) {
-      const boardHits = state.jobs.filter(isBoardJob).filter(function (j) { return j.customerId === contextCust.id; });
+      const boardHits = state.jobs.filter(function (j) { return isBoardJob(j) || isPendingSchedule(j) || isMissedAppt(j); }).filter(function (j) { return j.customerId === contextCust.id; });
       if (boardHits.length === 1) return result({ job: boardHits[0], customer: contextCust });
       if (boardHits.length > 1) return result({ needsPick: true, matches: boardHits, customer: contextCust });
       return result({
@@ -4821,6 +4821,210 @@
   SYNC.start();
 
 
+  /* ——— p2q: Pending scheduling lane + Schedule section on the job. ———
+     An approved job with no appointment shows in "Pending scheduling" on the Jobs board and Home. The job has a Schedule
+     section (date, arrival window, tech). Saving sets scheduledStart / scheduledEnd / scheduledTech on the job (these sync
+     like the rest of the job). Status stays Approved until someone clocks in. Nothing here writes to Google Calendar. ——— */
+  const SCHED_DURATIONS = [[60, "1 hr"], [120, "2 hr"], [180, "3 hr"], [240, "4 hr"]];
+  function jobHasAppt(job) { return !!(job && job.scheduledStart && parseStamp(job.scheduledStart)); }
+  function isSchedulableJob(job) {
+    if (!job || job.planJob || job.supersededBy || isArchivedJob(job)) return false;
+    if (!isActiveJob(job)) return false;
+    if (linkedOpenVisit(job)) return false;
+    return job.status === "new" || job.status === "diagnosis" || job.status === "approved" || (job.status === "progress" && jobHasAppt(job));
+  }
+  function isPendingSchedule(job) {
+    if (!job || job.status !== "approved" || job.planJob) return false;
+    if (!isActiveJob(job) || isInProgressWork(job) || linkedOpenVisit(job)) return false;
+    return !jobScheduleDate(job);
+  }
+  function isMissedAppt(job) {
+    if (!job || job.status !== "approved" || job.planJob) return false;
+    if (!isActiveJob(job) || isInProgressWork(job) || linkedOpenVisit(job) || jobTimeEntries(job).length) return false;
+    const d = jobScheduleDate(job);
+    return !!d && d.getTime() < startOfTodayLocal().getTime();
+  }
+  function isScheduledLater(job) {
+    if (!job || job.status !== "approved" || job.planJob) return false;
+    if (!isActiveJob(job) || isInProgressWork(job) || linkedOpenVisit(job)) return false;
+    const d = jobScheduleDate(job);
+    return !!d && d.getTime() >= boardHorizon().getTime();
+  }
+  function approvedAtOf(job) {
+    const rec = (job.estimates || []).find(function (e) { return e && e.id === job.approvedEstimateId && e.approval; });
+    if (rec && rec.approval && rec.approval.at) return rec.approval.at;
+    const src = state.jobs.find(function (x) { return x.id === job.linkedFromJobId; });
+    const r2 = src && (src.estimates || []).find(function (e) { return e && e.id === job.linkedEstimateId && e.approval; });
+    return (r2 && r2.approval && r2.approval.at) || "";
+  }
+  function pendingScheduleJobs() {
+    return (state.jobs || []).filter(function (j) { return isPendingSchedule(j) || isMissedAppt(j); }).sort(function (a, b) {
+      return String(approvedAtOf(a) || "9").localeCompare(String(approvedAtOf(b) || "9"));
+    });
+  }
+  function scheduledLaterJobs() {
+    return (state.jobs || []).filter(isScheduledLater).sort(function (a, b) { return jobScheduleDate(a).getTime() - jobScheduleDate(b).getTime(); });
+  }
+  function apptParts(d) {
+    const p = tzParts(d); let h = Number(p.hour); const ap = h >= 12 ? "PM" : "AM";
+    if (h === 0) h = 12; else if (h > 12) h -= 12;
+    return { t: h + ":" + p.minute, ap: ap };
+  }
+  function apptDayLabel(d) {
+    return new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric" }).format(d);
+  }
+  function apptLabel(job) {
+    const s = job && parseStamp(job.scheduledStart); if (!s) return "";
+    const e = job.scheduledEnd ? parseStamp(job.scheduledEnd) : null;
+    const a = apptParts(s);
+    let when = a.t + " " + a.ap;
+    if (e && e.getTime() > s.getTime()) { const b = apptParts(e); when = (a.ap === b.ap) ? a.t + "–" + b.t + " " + b.ap : a.t + " " + a.ap + " – " + b.t + " " + b.ap; }
+    return apptDayLabel(s) + " · " + when + " PT";
+  }
+  function pendingItemHtml(j) {
+    const missed = isMissedAppt(j);
+    const at = approvedAtOf(j);
+    const bits = [j.problem || ""];
+    if (missed) bits.unshift("Missed " + apptLabel(j));
+    else if (at) bits.push("Approved " + formatDate(at));
+    if (Number(j.total) > 0) bits.push(money(Number(j.total)));
+    return dashItem("#" + j.id + " · " + j.customer, esc(bits.filter(Boolean).join(" · ")), missed ? "Reschedule ›" : "Schedule ›", "dashOpenJob", j.id + "|schedule", missed ? "red" : "amber");
+  }
+  function pendingLaneHtml() {
+    const list = pendingScheduleJobs(), later = scheduledLaterJobs();
+    if (!list.length && !later.length) return "";
+    let h = "";
+    if (list.length) {
+      h += '<div class="section-row" id="pending-lane"><div class="section" style="margin:0">Pending scheduling</div><div class="meta">' + list.length + "</div></div>" +
+        '<div class="muted" style="margin:0 2px 8px">Approved work with no appointment yet. Tap one to pick a date and time.</div>' +
+        '<div class="stack" style="margin-bottom:16px">' + list.map(pendingItemHtml).join("") + "</div>";
+    }
+    if (later.length) {
+      h += '<div class="section-row"><div class="section" style="margin:0">Scheduled later</div><div class="meta">' + later.length + "</div></div>" +
+        '<div class="stack" style="margin-bottom:16px">' + later.map(function (j) {
+          return dashItem("#" + j.id + " · " + j.customer, esc(j.problem || ""), esc(apptLabel(j)), "dashOpenJob", j.id + "|schedule", "");
+        }).join("") + "</div>";
+    }
+    return h;
+  }
+  function jobScheduleSection(job) {
+    if (!isSchedulableJob(job)) return "";
+    const has = jobHasAppt(job);
+    const approved = job.status === "approved";
+    let h = '<div id="job-schedule" style="scroll-margin-top:12px">';
+    if (has) {
+      h += '<div class="panel" style="margin-bottom:16px;border-left:4px solid #2F8F4E"><div class="row"><div class="h2" style="margin:0">Scheduled</div><div class="meta">' + esc(job.scheduledTech || "No tech picked") + "</div></div>" +
+        '<div style="font-size:17px;font-weight:700;margin:6px 0 2px">' + esc(apptLabel(job)) + "</div>" +
+        (isMissedAppt(job) ? '<div class="warn-inline" style="margin:4px 0">That time has passed and nobody has clocked in. Reschedule or clock in.</div>' : "") +
+        '<div class="muted" style="margin:4px 0 10px">Saved in this app. It is not on Google Calendar yet. Tap Copy for assistant, paste it to your ReliaTech chat, and it will add the event (customer is not invited).</div>' +
+        '<div class="quick"><button class="btn" ' + act("openJobSchedule") + ">Reschedule</button>" +
+        '<button class="btn ghost" ' + act("clearJobSchedule") + ">Clear</button></div>" +
+        '<button class="dash" style="margin-top:8px" ' + act("copyCalRequest") + ">Copy for assistant (calendar)</button></div>";
+    } else if (approved) {
+      h += '<div class="panel" style="margin-bottom:16px;border-left:4px solid #D49A12"><div class="h2" style="margin:0 0 4px">Ready to schedule</div>' +
+        '<div class="muted" style="margin-bottom:10px">Approved' + (approvedAtOf(job) ? " " + esc(formatDate(approvedAtOf(job))) : "") + ". No appointment yet. Status stays Approved until someone clocks in.</div>" +
+        '<button class="btn teal" ' + act("openJobSchedule") + ">Schedule…</button></div>";
+    } else {
+      h += '<div class="section-row"><div class="section" style="margin:0">Appointment</div></div>' +
+        '<div class="muted" style="margin:0 0 8px">' + (job.schedule ? "Requested: " + esc(job.schedule) + ". " : "") + "No date and time set yet.</div>" +
+        '<button class="dash" style="margin-bottom:16px" ' + act("openJobSchedule") + ">Set appointment</button>";
+    }
+    return h + "</div>";
+  }
+  function techPickList(current) {
+    const names = (state.techs || []).map(function (x) { return typeof x === "string" ? x : (x && x.name) || ""; }).filter(Boolean);
+    if (!names.length) names.push(DEFAULT_TECH);
+    if (current && names.indexOf(current) === -1) names.push(current);
+    return names;
+  }
+  function addMinutesHm(hm, mins) {
+    const p = String(hm || "").split(":"); if (p.length < 2) return "";
+    let n = Number(p[0]) * 60 + Number(p[1]) + mins; if (n > 23 * 60 + 59) n = 23 * 60 + 59;
+    return pad2(Math.floor(n / 60)) + ":" + pad2(n % 60);
+  }
+  function hmToMin(hm) { const p = String(hm || "").split(":"); return p.length < 2 ? NaN : Number(p[0]) * 60 + Number(p[1]); }
+  function openScheduleDraft(job) {
+    let date = "", start = "", end = "";
+    const s = job.scheduledStart ? parseStamp(job.scheduledStart) : null;
+    if (s) {
+      const p = tzParts(s); date = p.year + "-" + p.month + "-" + p.day; start = p.hour + ":" + p.minute;
+      const e = job.scheduledEnd ? parseStamp(job.scheduledEnd) : null;
+      if (e) { const q = tzParts(e); end = q.hour + ":" + q.minute; }
+    }
+    if (!start) start = (state.settings && state.settings.weekdayStart) || "16:30";
+    if (!end || hmToMin(end) <= hmToMin(start)) end = addMinutesHm(start, 120);
+    state.jobSchedDraft = { jobId: job.id, date: date, start: start, end: end, tech: job.scheduledTech || state.currentTech || DEFAULT_TECH };
+    state.sheet = "jobSchedule";
+  }
+  function jobScheduleSheet(job) {
+    const d = state.jobSchedDraft; if (!d) return "";
+    const has = jobHasAppt(job);
+    const dur = hmToMin(d.end) - hmToMin(d.start);
+    const techs = techPickList(d.tech);
+    return backdrop(
+      '<div class="sheet-head"><div class="sheet-title">' + (has ? "Reschedule" : "Schedule") + " job #" + esc(job.id) + '</div><button class="icon-btn ghost" ' + act("closeSheet") + ' aria-label="Close">' + icon("close", 18) + "</button></div>" +
+      '<div class="h2" style="margin-bottom:2px">' + esc(job.customer) + "</div>" +
+      '<div class="muted" style="margin-bottom:10px">' + esc(job.problem || "") + (job.address ? " · " + esc([job.address, job.city].filter(Boolean).join(", ")) : "") + "</div>" +
+      '<div class="cal-note">Times are Pacific. This saves the appointment in the app only and does not write to Google Calendar. After the customer confirms, tap Copy for assistant on the job and paste it to your ReliaTech chat. ' + esc(availabilitySummary()) + "</div>" +
+      '<label class="field"><div class="field-lab">Date</div><input id="js-date" type="date" min="' + esc(todayInput()) + '" value="' + esc(d.date) + '" oninput="RT.setJobSched(\'date\', this.value)"></label>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+      '<label class="field"><div class="field-lab">Arrive</div><input id="js-start" type="time" value="' + esc(d.start) + '" oninput="RT.setJobSched(\'start\', this.value)"></label>' +
+      '<label class="field"><div class="field-lab">Window ends</div><input id="js-end" type="time" value="' + esc(d.end) + '" oninput="RT.setJobSched(\'end\', this.value)"></label></div>' +
+      '<div class="field-lab">Window length</div><div class="chips" style="margin-bottom:12px">' + SCHED_DURATIONS.map(function (x) {
+        return '<button class="chip' + (dur === x[0] ? " on" : "") + '" ' + act("jobSchedDur", String(x[0])) + ">" + x[1] + "</button>";
+      }).join("") + "</div>" +
+      '<label class="field"><div class="field-lab">Tech</div><select id="js-tech" onchange="RT.setJobSched(\'tech\', this.value)">' + techs.map(function (n) { return "<option" + (n === d.tech ? " selected" : "") + ">" + esc(n) + "</option>"; }).join("") + "</select></label>" +
+      '<button data-pin class="btn teal" ' + act("saveJobSchedule") + ">" + (has ? "Save new time" : "Save appointment") + "</button>" +
+      (has ? '<button class="btn ghost" style="margin-top:8px" ' + act("clearJobSchedule") + ">Clear appointment</button>" : "")
+    );
+  }
+  function calRequestText(job) {
+    return "Please add this to my Google Calendar (" + ((state.settings && state.settings.steveEmail) || "steveseguine51@gmail.com") + "). Do not invite the customer.\n" +
+      "#" + job.id + " " + job.customer + " — " + (job.problem || "") + "\n" + apptLabel(job) + "\n" + [job.address, job.city].filter(Boolean).join(", ") +
+      (job.scheduledTech ? "\nTech: " + job.scheduledTech : "");
+  }
+  function handleSchedule(name, arg) {
+    if (name === "openJobSchedule" || name === "saveJobSchedule" || name === "clearJobSchedule" || name === "jobSchedDur" || name === "copyCalRequest") {
+      const job = getJob(state.openJobId); if (!job) return true;
+      if (name === "openJobSchedule") {
+        if (!isSchedulableJob(job)) { showToast("This job cannot be scheduled in its current status"); return true; }
+        openScheduleDraft(job); render(); return true;
+      }
+      if (name === "jobSchedDur") {
+        const d = state.jobSchedDraft; if (!d) return true;
+        d.end = addMinutesHm(d.start, Number(arg) || 120); render(); return true;
+      }
+      if (name === "copyCalRequest") { if (jobHasAppt(job)) copyText(calRequestText(job), "Copied. Paste it to your ReliaTech chat."); return true; }
+      if (name === "clearJobSchedule") {
+        if (!jobHasAppt(job)) return true;
+        if (!window.confirm("Clear the appointment on job #" + job.id + "? It goes back to " + (job.status === "approved" ? "Pending scheduling." : "unscheduled."))) return true;
+        const was = apptLabel(job);
+        job.scheduledStart = ""; job.scheduledEnd = ""; job.scheduledTech = "";
+        job.timeline = [t("tappt" + Date.now(), "system", "Just now", "Appointment cleared", "Was " + was + ".")].concat(job.timeline || []);
+        state.jobSchedDraft = null; state.sheet = null;
+        render(); showToast("Appointment cleared"); return true;
+      }
+      /* saveJobSchedule */
+      const d = state.jobSchedDraft; if (!d || d.jobId !== job.id) return true;
+      if (!d.date) { showToast("Pick a date"); return true; }
+      if (d.date < todayInput()) { showToast("That date has already passed"); return true; }
+      if (!d.start || !d.end) { showToast("Pick the arrival and end times"); return true; }
+      if (hmToMin(d.end) <= hmToMin(d.start)) { showToast("The window must end after it starts"); return true; }
+      const s = fromInputValue(d.date + "T" + d.start), e = fromInputValue(d.date + "T" + d.end);
+      if (!s || !e) { showToast("Could not read that time"); return true; }
+      const had = jobHasAppt(job), was = had ? apptLabel(job) : "";
+      job.scheduledStart = s; job.scheduledEnd = e; job.scheduledTech = d.tech || state.currentTech || DEFAULT_TECH;
+      const lab = apptLabel(job);
+      job.timeline = [t("tappt" + Date.now(), "system", "Just now", had ? "Rescheduled" : "Appointment set", lab + " · " + job.scheduledTech + (had ? ". Was " + was : "") + ". Saved in the app. Not on Google Calendar yet.")].concat(job.timeline || []);
+      state.jobSchedDraft = null; state.sheet = null;
+      render();
+      showToast((had ? "Rescheduled · " : "Scheduled · ") + lab + (isWithinBoardWindow(parseStamp(s)) ? "" : ". More than 14 days out, so it shows under Scheduled later."));
+      return true;
+    }
+    return false;
+  }
+  function setJobSched(k, v) { if (state.jobSchedDraft && (k === "date" || k === "start" || k === "end" || k === "tech")) state.jobSchedDraft[k] = v; }
+
   function snapshotState() {
     return {
         v: 1,
@@ -5151,6 +5355,7 @@
   function isPastHcpHistory(job) {
     if (!job || !isHcpId(job.id)) return false;
     if (!job.planJob && !isImportedJobId(job.id)) return false;
+    if (job.approvedEstimateId || (job.estimates || []).some(function (e) { return e && e.approval; })) return false;
     if (linkedOpenVisit(job)) return false;
     const due = Number(job.dueAmount || 0);
     if (due > 0 && job.status !== "paid" && job.status !== "done") return false;
@@ -6384,6 +6589,7 @@
       if (sec === "invoice" && (j.invoiceId || j.status === "invoiced" || j.status === "paid")) { state.sheet = "invoice"; }
       else if (sec === "parts") state._scrollTo = "job-parts";
       else if (sec === "estimate") state._scrollTo = "job-estimates";
+      else if (sec === "schedule") state._scrollTo = "job-schedule";
       render(); return true;
     }
     if (name === "dashToggleProspects") { state._dashAllProspects = !state._dashAllProspects; render(); return true; }
@@ -6493,7 +6699,7 @@
     const bidH = hourJobs.reduce(function (s, j) { return s + billedLaborHours(j); }, 0);
     const actH = hourJobs.reduce(function (s, j) { return s + loggedHours(j); }, 0);
 
-    return { today: today, upcoming: upcoming, todays: todays, weekVisits: weekVisits, partAlerts: partAlerts, onOrder: onOrder, estimates: estimates, unpaid: unpaid, unpaidTotal: unpaidTotal, estTotal: estTotal, renewals: renewals, dueVisits: dueVisits, noPlan: noPlan, paidUnique: paidUnique, sales: sales, estJobs: estJobs, won: won, hourJobs: hourJobs, bidH: bidH, actH: actH };
+    return { pending: pendingScheduleJobs(), today: today, upcoming: upcoming, todays: todays, weekVisits: weekVisits, partAlerts: partAlerts, onOrder: onOrder, estimates: estimates, unpaid: unpaid, unpaidTotal: unpaidTotal, estTotal: estTotal, renewals: renewals, dueVisits: dueVisits, noPlan: noPlan, paidUnique: paidUnique, sales: sales, estJobs: estJobs, won: won, hourJobs: hourJobs, bidH: bidH, actH: actH };
   }
   function dashboardScreen() {
     const D = dashData();
@@ -6514,6 +6720,7 @@
         (items.length > n ? '<button class="link-btn tap" style="margin:-4px 2px 12px" ' + act("dashList", key) + ">Show all " + items.length + " ›</button>" : "");
     }
     let h = "";
+    if (L.pending.items.length) { h += head("Pending scheduling", "pending", L.pending.items.length); h += preview("pending", 5); }
     h += head("Upcoming work", "week", L.week.items.length);
     h += '<div style="display:flex;gap:10px;margin-bottom:10px">' +
       tile("today", "Today", String(todays.length), "Tap for today’s jobs", "flex:1") +
@@ -6568,6 +6775,7 @@
       const c = getCustomer(v.customerId);
       return dashItem((c ? c.name : "Customer") + " · Plan visit", esc(v.label || ""), esc(formatPrettyDateTime(v.scheduledStart)), "openVisit", v.id, "");
     }
+    L.pending = { title: "Pending scheduling", empty: "Nothing is waiting to be scheduled.", items: (D.pending || []).map(pendingItemHtml) };
     L.today = { title: "Today’s jobs", empty: "Nothing scheduled today.", items: D.todays.map(upcomingItem) };
     L.week = { title: "Active and this week", empty: "Nothing scheduled in the next 7 days.", items: D.upcoming.map(upcomingItem).concat(D.weekVisits.map(visitItem)) };
     L.partsAlerts = { title: "Parts to order or chase", empty: "No parts waiting. Add parts on a job to track them here.", items: D.partAlerts.map(function (x) {
@@ -6808,6 +7016,7 @@
       '<div class="content"><div class="pad pad-fab">' +
       '<div class="search">' + icon("search", 16) + '<input id="search-q" type="search" placeholder="Search jobs or addresses" value="' + esc(state.query) + '" oninput="RT.setQuery(this.value)"></div>' +
       unfiledSection() +
+      (!searching && mode === "board" ? pendingLaneHtml() : "") +
       '<div class="jobs-toolbar"><div class="section" style="margin:0">' + heading + "</div>" + links + "</div>" +
       chips +
       '<div class="stack" style="margin-bottom:16px">' + (list.length ? list.map(jobCard).join("") : '<div class="muted">' + esc(empty) + "</div>") + "</div>" +
@@ -6836,6 +7045,7 @@
       if (vs === "due") return pill("Plan visit due", "#0C5C5C", "#E6F4F4");
       if (vs === "scheduled") return pill("Scheduled", col.text, col.bg);
     }
+    if (job && job.status === "approved" && jobHasAppt(job) && !job.planJob) return pill("Scheduled", col.text, col.bg);
     return pill(st.label, col.text, col.bg);
   }
   function jobWhenLine(job) {
@@ -6848,8 +7058,8 @@
     }
     if (st === "due") return formatWindow(v);
     if (job.scheduledStart) {
-      const d = parseStamp(job.scheduledStart);
-      if (d && d.getTime() >= Date.now() - 60 * 60 * 1000) return formatPrettyDateTime(job.scheduledStart) + " PT";
+      const d = parseStamp(job.scheduledEnd) || parseStamp(job.scheduledStart);
+      if (d && d.getTime() >= Date.now() - 60 * 60 * 1000) return job.scheduledEnd ? apptLabel(job) : formatPrettyDateTime(job.scheduledStart) + " PT";
     }
     const ev = (job.timeline || []).find(function (t) { return t && t.title === "Scheduled" && t.time; });
     const sd = ev ? parseLooseDate(ev.time) : null;
@@ -7014,8 +7224,10 @@
       jobPartiesHeader(job) +
       '<div class="h1">' + esc(job.problem) + "</div>" +
       (job.phone ? '<div class="teal">' + esc(job.phone) + "</div>" : "") +
-      '<div style="margin-bottom:16px">' + pill(st.label, col.text, col.bg) + (job.schedule ? '<span class="muted" style="margin-left:8px;font-size:12px">' + esc(job.schedule) + "</span>" : "") + "</div>" +
+      '<div style="margin-bottom:16px">' + (job.status === "approved" && jobHasAppt(job) && !job.planJob ? pill("Scheduled", col.text, col.bg) : pill(st.label, col.text, col.bg)) +
+        (jobHasAppt(job) && job.scheduledEnd ? '<span class="muted" style="margin-left:8px;font-size:12px">' + esc(apptLabel(job)) + "</span>" : (job.schedule ? '<span class="muted" style="margin-left:8px;font-size:12px">' + esc(job.schedule) + "</span>" : "")) + "</div>" +
       closeoutBannerHtml(job) +
+      jobScheduleSection(job) +
       jobEquipmentSection(job) +
       timeSection(job) +
       partsSection(job) +
@@ -8282,6 +8494,7 @@
     if (s === "estFollowUp") { const j = getJob(state.openJobId); return j ? followUpSheet(j) : ""; }
     if (s === "scopeEdit") { const j = getJob(state.openJobId); return j ? scopeEditSheet(j) : ""; }
     if (s === "ask") { const j = getJob(state.openJobId); return j ? askSheetHandoff(j) : ""; }
+    if (s === "jobSchedule") { const j = getJob(state.openJobId); return j ? jobScheduleSheet(j) : ""; }
     const job = getJob(state.openJobId);
     if (s === "note") return noteSheet();
     if (s === "part") return job ? partSheet() : "";
@@ -8395,6 +8608,7 @@
   function handle(name, arg) {
     if (handleProposal(name, arg)) return;
     if (SYNC.handle(name, arg)) return;
+    if (handleSchedule(name, arg)) return;
     if (handleArchive(name, arg)) return;
     if (handleScopeStep(name, arg)) return;
     if (handleCloseout(name, arg)) return;
@@ -9777,7 +9991,7 @@
   }
   Object.assign(window.RT, RT_EQUIP);
   Object.assign(window.RT, RT_RB);
-  Object.assign(window.RT, { syncField: SYNC.field, _sync: SYNC });
+  Object.assign(window.RT, { syncField: SYNC.field, _sync: SYNC, setJobSched: setJobSched, _pending: function () { return pendingScheduleJobs().map(function (j) { return j.id; }); } });
   const _handleV1 = handle;
   handle = function (n, a) { _handleV1(n, a); postHandleEquipV2(n); if (n === "saveNote") migrateLegacyPhotos().then(function (k) { if (k) render(); }).catch(function () {}); };
   const _render0 = render;
